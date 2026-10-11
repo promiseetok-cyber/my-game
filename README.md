@@ -73,7 +73,7 @@ This sequence is required before describing the product as a massive multiplayer
 
 ## Research and design guardrails
 
-The civic desk includes links to the INEC election calendar and FAQ, the EU Election Observation Mission’s 2023 final report, the Electoral Act 2022 (PLAC-hosted copy), coverage of the 2023 Supreme Court ruling, and Freedom House’s 2025 country report. As of **10 October 2026**, INEC lists Presidential/National Assembly elections for **16 January 2027** and Governorship/State House of Assembly elections for **6 February 2027**. No real 2027 outcome is represented.
+The civic desk includes links to the INEC election calendar and FAQ, the EU Election Observation Mission’s 2023 final report, the Electoral Act 2022 (PLAC-hosted copy), coverage of the 2023 Supreme Court ruling, and Freedom House’s 2025 country report. As of **11 October 2026**, INEC lists Presidential/National Assembly elections for **16 January 2027** and Governorship/State House of Assembly elections for **6 February 2027**. No real 2027 outcome is represented.
 
 “Dirty politicking” is framed as reported practices and institutional pressure points—not as an inherent Nigerian cultural trait. The vote-buying mechanic is abstract, explicitly illegal/high-risk, and provides no operational guidance. Real communities are not treated as uniform ethnic, religious, regional, or voting blocs. All in-game parties, NPCs, endorsements, and results are invented.
 
