@@ -81,6 +81,26 @@ function makeTree(x, z, height, foliageColor, material) {
   return group;
 }
 
+function makePalmTree(x, z, height, foliageColor) {
+  const group = new THREE.Group();
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.18, height, 7), new THREE.MeshStandardMaterial({ color: '#886746', roughness: 0.94 }));
+  trunk.position.y = height / 2;
+  trunk.castShadow = true;
+  group.add(trunk);
+  const leaves = new THREE.MeshStandardMaterial({ color: foliageColor, roughness: 0.93, side: THREE.DoubleSide });
+  for (let frond = 0; frond < 7; frond += 1) {
+    const angle = (frond / 7) * Math.PI * 2;
+    const leaf = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.06, 0.22), leaves);
+    leaf.position.set(Math.cos(angle) * 0.42, height * 0.94, Math.sin(angle) * 0.42);
+    leaf.rotation.y = -angle;
+    leaf.rotation.z = -0.42;
+    leaf.castShadow = true;
+    group.add(leaf);
+  }
+  group.position.set(x, 0, z);
+  return group;
+}
+
 function makeBuilding(rand, x, z, index, palette) {
   const group = new THREE.Group();
   const w = 2.1 + rand() * 2.5;
@@ -175,6 +195,30 @@ function makeBuilding(rand, x, z, index, palette) {
       bar.position.set(gateBar * 0.16, 0.36, plotD / 2 + 0.05);
       group.add(bar);
     }
+    if (index % 2 === 0) {
+      const generator = box(0.45, 0.34, 0.32, '#4f554d', { castShadow: false, metalness: 0.14 });
+      generator.position.set(plotW / 2 - 0.38, 0.18, plotD / 2 - 0.36);
+      group.add(generator);
+      const exhaust = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.18, 6), new THREE.MeshStandardMaterial({ color: '#3d413b' }));
+      exhaust.position.set(plotW / 2 - 0.46, 0.44, plotD / 2 - 0.36);
+      group.add(exhaust);
+    }
+  }
+  if (index % 5 === 2) {
+    const acUnit = box(0.48, 0.28, 0.24, '#ded9c9', { castShadow: false, metalness: 0.08 });
+    acUnit.position.set(w / 2 + 0.12, 1.75, -d * 0.15);
+    group.add(acUnit);
+    for (let vent = -1; vent <= 1; vent += 1) {
+      const slat = box(0.26, 0.025, 0.025, '#6d756d', { castShadow: false });
+      slat.position.set(w / 2 + 0.25, 1.75 + vent * 0.06, -d * 0.15 + 0.13);
+      group.add(slat);
+    }
+  }
+  if (index % 7 === 0) {
+    const dish = new THREE.Mesh(new THREE.CircleGeometry(0.27, 12), new THREE.MeshStandardMaterial({ color: '#a6aaa0', metalness: 0.4, roughness: 0.52, side: THREE.DoubleSide }));
+    dish.position.set(-w * 0.22, h + 0.19, -d * 0.22);
+    dish.rotation.x = -0.7;
+    group.add(dish);
   }
   group.position.set(x, 0, z);
   group.userData.groundHeight = palette.grass;
@@ -230,6 +274,21 @@ function makeStreetLight(scene, x, z) {
   const lamp = box(0.48, 0.16, 0.26, '#d7d8c3', { castShadow: false });
   lamp.position.set(x + 0.67, 4.08, z);
   scene.add(lamp);
+}
+
+function makeUtilityPole(scene, x, z) {
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.14, 4.5, 7), new THREE.MeshStandardMaterial({ color: '#827760', roughness: 0.92 }));
+  pole.position.set(x, 2.25, z);
+  pole.castShadow = true;
+  scene.add(pole);
+  const crossarm = box(1.05, 0.1, 0.14, '#655e4e', { castShadow: false });
+  crossarm.position.set(x, 4.42, z);
+  scene.add(crossarm);
+  for (const insulatorX of [-0.38, 0, 0.38]) {
+    const insulator = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.15, 6), new THREE.MeshStandardMaterial({ color: '#c9c6b5', roughness: 0.75 }));
+    insulator.position.set(x + insulatorX, 4.55, z);
+    scene.add(insulator);
+  }
 }
 
 function makeNigerianFlag(scene, x, z, scale = 1) {
@@ -610,6 +669,20 @@ function buildWorld(root, state, onVenueSelect, playerRef, remoteRef, playerColo
     scene.add(marker);
   }
   [[-13.8, -4.1], [13.9, -3.4], [-14.2, 13.5], [14.3, 14.1], [3.5, 16.2]].forEach(([x, z]) => makeStreetLight(scene, x, z));
+  const utilityXs = [-18, -9, 0, 9, 18];
+  utilityXs.forEach((x) => makeUtilityPole(scene, x, 3.15));
+  const wireMaterial = new THREE.LineBasicMaterial({ color: '#40453e', transparent: true, opacity: 0.72 });
+  for (let span = 0; span < utilityXs.length - 1; span += 1) {
+    for (let wire = 0; wire < 3; wire += 1) {
+      const wireY = 4.62 + wire * 0.1;
+      const curve = new THREE.QuadraticBezierCurve3(
+        new THREE.Vector3(utilityXs[span], wireY, 3.15),
+        new THREE.Vector3((utilityXs[span] + utilityXs[span + 1]) / 2, wireY - 0.38, 3.15),
+        new THREE.Vector3(utilityXs[span + 1], wireY, 3.15),
+      );
+      scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(curve.getPoints(10)), wireMaterial));
+    }
+  }
   makeBusStop(scene, 8.6, 1.6);
 
   const sidewalkMaterial = new THREE.MeshStandardMaterial({ color: '#c9b996', roughness: 0.94 });
@@ -661,7 +734,11 @@ function buildWorld(root, state, onVenueSelect, playerRef, remoteRef, playerColo
     const z = (rand() - 0.5) * 37;
     if (Math.abs(x) < 4.6 || Math.abs(z) < 4.6 || Math.abs(z + 10.5) < 3.1) continue;
     if (Math.abs(x) > 22 || Math.abs(z) > 22) continue;
-    const tree = makeTree(x, z, 1.9 + rand() * 1.7, palette.foliage, sceneMaterials);
+    const southernTerrain = ['coastal', 'southwest', 'southeast'].includes(stateInfo.terrain);
+    const usePalm = southernTerrain && rand() > 0.72;
+    const tree = usePalm
+      ? makePalmTree(x, z, 3.2 + rand() * 1.8, palette.foliage)
+      : makeTree(x, z, 1.9 + rand() * 1.7, palette.foliage, sceneMaterials);
     tree.scale.setScalar(0.73 + rand() * 0.42);
     scene.add(tree);
   }
