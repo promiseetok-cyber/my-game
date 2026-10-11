@@ -91,9 +91,23 @@ function makeBuilding(rand, x, z, index, palette) {
   const wall = box(w, h, d, wallColors[Math.floor(rand() * wallColors.length)]);
   wall.position.y = h / 2;
   group.add(wall);
-  const roof = box(w + 0.12, 0.18, d + 0.12, '#655c4f');
+  const roof = box(w + 0.12, 0.18, d + 0.12, ['#655c4f', '#716a5d', '#535d56'][index % 3]);
   roof.position.y = h + 0.09;
   group.add(roof);
+  // Flat-roofed compounds, modest balconies, and shade canopies are common visual cues in many Nigerian city neighbourhoods.
+  if (floors >= 2 && index % 4 === 2) {
+    const balcony = box(w * 0.62, 0.12, 0.55, '#c8b99f', { castShadow: false });
+    balcony.position.set(0, 1.47, d / 2 + 0.24);
+    group.add(balcony);
+    const rail = box(w * 0.62, 0.07, 0.055, '#525b53', { castShadow: false });
+    rail.position.set(0, 1.82, d / 2 + 0.5);
+    group.add(rail);
+    for (const side of [-1, 0, 1]) {
+      const post = box(0.055, 0.38, 0.055, '#525b53', { castShadow: false });
+      post.position.set(side * w * 0.25, 1.63, d / 2 + 0.5);
+      group.add(post);
+    }
+  }
   const awningColor = ['#d86f4c', '#eab94b', '#4d9980', '#577aaf'][Math.floor(rand() * 4)];
   if (rand() > 0.38) {
     const awning = box(w * 0.85, 0.16, 0.36, awningColor, { castShadow: false });
@@ -105,16 +119,62 @@ function makeBuilding(rand, x, z, index, palette) {
   const rows = Math.max(1, Math.floor(h / 0.9));
   for (let row = 0; row < rows; row += 1) {
     for (let col = 0; col < columns; col += 1) {
+      const windowX = -w / 2 + 0.38 + col * ((w - 0.55) / Math.max(1, columns - 1));
+      const windowY = 0.54 + row * 0.73;
       const win = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.31, 0.055), windowMat);
-      win.position.set(-w / 2 + 0.38 + col * ((w - 0.55) / Math.max(1, columns - 1)), 0.54 + row * 0.73, d / 2 + 0.035);
+      win.position.set(windowX, windowY, d / 2 + 0.035);
       group.add(win);
+      if (index % 2 === 0 && row === 0) {
+        for (const barOffset of [-0.075, 0, 0.075]) {
+          const grille = box(0.025, 0.35, 0.035, '#59645a', { castShadow: false, metalness: 0.28, roughness: 0.55 });
+          grille.position.set(windowX + barOffset, windowY, d / 2 + 0.08);
+          group.add(grille);
+        }
+      }
     }
   }
-  if (index % 5 === 1) {
+  if (index % 4 === 1) {
     const tank = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.48, 9), new THREE.MeshStandardMaterial({ color: '#738b80', roughness: 0.55 }));
     tank.position.set(w * 0.25, h + 0.43, -d * 0.18);
     tank.castShadow = true;
     group.add(tank);
+  }
+  if (index % 3 === 0) {
+    const plotW = w + 1.25;
+    const plotD = d + 1.35;
+    const yard = new THREE.Mesh(new THREE.PlaneGeometry(plotW, plotD), new THREE.MeshStandardMaterial({ color: ['#a98260', '#9d805d', '#b49772'][index % 3], roughness: 0.98 }));
+    yard.rotation.x = -Math.PI / 2;
+    yard.position.set(0, 0.018, 0.05);
+    yard.receiveShadow = true;
+    group.add(yard);
+    const compoundColor = ['#c8b99f', '#b7b09b', '#c7b99f'][index % 3];
+    const wallHeight = 0.58;
+    const wallThickness = 0.14;
+    const gateWidth = 1.2;
+    const frontRun = Math.max(0.8, (plotW - gateWidth) / 2);
+    const sideWallL = box(wallThickness, wallHeight, plotD, compoundColor, { castShadow: false });
+    sideWallL.position.set(-plotW / 2, wallHeight / 2, 0.05);
+    const sideWallR = sideWallL.clone();
+    sideWallR.position.x = plotW / 2;
+    const rearWall = box(plotW, wallHeight, wallThickness, compoundColor, { castShadow: false });
+    rearWall.position.set(0, wallHeight / 2, -plotD / 2 + 0.05);
+    group.add(sideWallL, sideWallR, rearWall);
+    for (const side of [-1, 1]) {
+      const frontWall = box(frontRun, wallHeight, wallThickness, compoundColor, { castShadow: false });
+      frontWall.position.set(side * (gateWidth / 2 + frontRun / 2), wallHeight / 2, plotD / 2 + 0.05);
+      group.add(frontWall);
+      const gatePost = box(0.18, 0.86, 0.18, '#88785e', { castShadow: false });
+      gatePost.position.set(side * gateWidth / 2, 0.43, plotD / 2 + 0.05);
+      group.add(gatePost);
+    }
+    const gateRail = box(gateWidth * 0.88, 0.065, 0.055, '#46524b', { castShadow: false, metalness: 0.25 });
+    gateRail.position.set(0, 0.73, plotD / 2 + 0.05);
+    group.add(gateRail);
+    for (let gateBar = -3; gateBar <= 3; gateBar += 1) {
+      const bar = box(0.035, 0.62, 0.045, '#46524b', { castShadow: false, metalness: 0.25 });
+      bar.position.set(gateBar * 0.16, 0.36, plotD / 2 + 0.05);
+      group.add(bar);
+    }
   }
   group.position.set(x, 0, z);
   group.userData.groundHeight = palette.grass;
@@ -159,6 +219,58 @@ function makeCar(color, kind = 'sedan', accent = '#f1d846') {
   return g;
 }
 
+function makeStreetLight(scene, x, z) {
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.075, 4.3, 7), new THREE.MeshStandardMaterial({ color: '#59625a', metalness: 0.2, roughness: 0.72 }));
+  pole.position.set(x, 2.15, z);
+  pole.castShadow = true;
+  scene.add(pole);
+  const arm = box(0.85, 0.075, 0.075, '#59625a', { castShadow: false, metalness: 0.2 });
+  arm.position.set(x + 0.35, 4.17, z);
+  scene.add(arm);
+  const lamp = box(0.48, 0.16, 0.26, '#d7d8c3', { castShadow: false });
+  lamp.position.set(x + 0.67, 4.08, z);
+  scene.add(lamp);
+}
+
+function makeNigerianFlag(scene, x, z, scale = 1) {
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.035 * scale, 0.05 * scale, 3.2 * scale, 7), new THREE.MeshStandardMaterial({ color: '#a9aa9a', metalness: 0.42, roughness: 0.48 }));
+  pole.position.set(x, 1.6 * scale, z);
+  scene.add(pole);
+  const width = 0.84 * scale;
+  const height = 0.48 * scale;
+  ['#008751', '#f4f0df', '#008751'].forEach((color, index) => {
+    const panel = box(width / 3, height, 0.025 * scale, color, { castShadow: false });
+    panel.position.set(x + width / 2 + width * (index - 1) / 3, 2.78 * scale, z);
+    scene.add(panel);
+  });
+}
+
+function makeBusStop(scene, x, z) {
+  const shelter = new THREE.Group();
+  const roof = box(3.1, 0.15, 1.25, '#2d6d4c', { castShadow: false });
+  roof.position.y = 2.1;
+  shelter.add(roof);
+  for (const px of [-1.35, 1.35]) {
+    for (const pz of [-0.48, 0.48]) {
+      const post = box(0.09, 2.0, 0.09, '#77796c', { castShadow: false });
+      post.position.set(px, 1.0, pz);
+      shelter.add(post);
+    }
+  }
+  const bench = box(1.7, 0.11, 0.38, '#a37a4f', { castShadow: false });
+  bench.position.set(0, 0.65, -0.22);
+  shelter.add(bench);
+  const sign = box(1.35, 0.48, 0.07, '#1d5139', { castShadow: false });
+  sign.position.set(-0.88, 1.6, 0.56);
+  shelter.add(sign);
+  const signText = labelSprite('BUS STOP', '#d8f36b');
+  signText.position.set(-0.88, 1.6, 0.61);
+  signText.scale.set(1.2, 0.31, 1);
+  shelter.add(signText);
+  shelter.position.set(x, 0, z);
+  scene.add(shelter);
+}
+
 function makePerson(shirt = '#f3a17b', skin = '#7d5138') {
   const group = new THREE.Group();
   const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.22, 0.42, 3, 6), new THREE.MeshStandardMaterial({ color: shirt, roughness: 0.82 }));
@@ -192,6 +304,16 @@ function makeStadium(group, material) {
   stands.position.y = 0.64;
   group.add(stands);
   group.add(box(3.9, 0.12, 2.6, '#527052', { castShadow: false })).position.set(0, 0.21, 0);
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      const tower = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.075, 3.3, 6), new THREE.MeshStandardMaterial({ color: '#6d756b', metalness: 0.23, roughness: 0.62 }));
+      tower.position.set(sx * 2.9, 1.65, sz * 2.9);
+      group.add(tower);
+      const lights = box(0.55, 0.2, 0.18, '#e6dfb8', { castShadow: false, emissive: '#d2c98f', emissiveIntensity: 0.18 });
+      lights.position.set(sx * 2.9, 3.22, sz * 2.9);
+      group.add(lights);
+    }
+  }
   void material;
 }
 
@@ -255,6 +377,18 @@ function makeVenue(venue, palette, sceneMaterials, stateLabel) {
       const canopy = box(1.35, 0.16, 1.1, ['#e7a64d', '#be735a', '#658e71', '#547d99'][i]);
       canopy.position.set(0, 0.86, 0);
       stall.add(canopy);
+      for (const px of [-0.52, 0.52]) {
+        for (const pz of [-0.42, 0.42]) {
+          const post = box(0.055, 0.77, 0.055, '#785c43', { castShadow: false });
+          post.position.set(px, 0.43, pz);
+          stall.add(post);
+        }
+      }
+      for (let crate = 0; crate < 3; crate += 1) {
+        const produce = box(0.27, 0.22, 0.25, ['#c95e43', '#71924d', '#e0a342'][crate], { castShadow: false });
+        produce.position.set(-0.35 + crate * 0.34, 0.12, 0.53);
+        stall.add(produce);
+      }
       stall.position.set(-1.95 + i * 1.3, 0, (i % 2) * 1.15);
       g.add(stall);
     }
@@ -270,6 +404,24 @@ function makeVenue(venue, palette, sceneMaterials, stateLabel) {
     const fountain = new THREE.Mesh(new THREE.CylinderGeometry(0.44, 0.48, 0.55, 16), new THREE.MeshStandardMaterial({ color: '#789e9b', metalness: 0.2, roughness: 0.35 }));
     fountain.position.y = 0.34;
     g.add(fountain);
+    for (let benchIndex = 0; benchIndex < 4; benchIndex += 1) {
+      const angle = (benchIndex / 4) * Math.PI * 2;
+      const bench = new THREE.Group();
+      const seat = box(1.25, 0.1, 0.34, '#8b6749', { castShadow: false });
+      seat.position.y = 0.52;
+      bench.add(seat);
+      const back = box(1.25, 0.48, 0.09, '#8b6749', { castShadow: false });
+      back.position.set(0, 0.78, -0.13);
+      bench.add(back);
+      for (const legX of [-0.48, 0.48]) {
+        const leg = box(0.08, 0.48, 0.08, '#515c51', { castShadow: false });
+        leg.position.set(legX, 0.27, 0);
+        bench.add(leg);
+      }
+      bench.position.set(Math.cos(angle) * 1.9, 0, Math.sin(angle) * 1.9);
+      bench.rotation.y = -angle;
+      g.add(bench);
+    }
   } else {
     const base = box(2.5, 0.9, 2.2, palette.sand);
     base.position.y = 0.48;
@@ -277,6 +429,35 @@ function makeVenue(venue, palette, sceneMaterials, stateLabel) {
     const cap = box(2.75, 0.18, 2.4, '#746b58');
     cap.position.y = 1.0;
     g.add(cap);
+  }
+
+  if (['office', 'court', 'assembly', 'caucus'].includes(type)) {
+    const compoundWidth = type === 'assembly' ? 5.6 : 4.8;
+    const compoundDepth = 5.5;
+    const wallHeight = 0.52;
+    const wallColor = type === 'court' ? '#b8b9ad' : '#b7a88e';
+    const compoundSideA = box(0.13, wallHeight, compoundDepth, wallColor, { castShadow: false });
+    compoundSideA.position.set(-compoundWidth / 2, wallHeight / 2, 0.25);
+    const compoundSideB = compoundSideA.clone();
+    compoundSideB.position.x = compoundWidth / 2;
+    const compoundRear = box(compoundWidth, wallHeight, 0.13, wallColor, { castShadow: false });
+    compoundRear.position.set(0, wallHeight / 2, -compoundDepth / 2 + 0.25);
+    g.add(compoundSideA, compoundSideB, compoundRear);
+    const gateRun = (compoundWidth - 1.45) / 2;
+    for (const side of [-1, 1]) {
+      const frontWall = box(gateRun, wallHeight, 0.13, wallColor, { castShadow: false });
+      frontWall.position.set(side * (0.725 + gateRun / 2), wallHeight / 2, compoundDepth / 2 + 0.25);
+      g.add(frontWall);
+      const post = box(0.2, 0.83, 0.2, '#82755e', { castShadow: false });
+      post.position.set(side * 0.725, 0.415, compoundDepth / 2 + 0.25);
+      g.add(post);
+    }
+    for (let bar = -4; bar <= 4; bar += 1) {
+      const gateBar = box(0.035, 0.62, 0.045, '#48564d', { castShadow: false, metalness: 0.2 });
+      gateBar.position.set(bar * 0.15, 0.34, compoundDepth / 2 + 0.25);
+      g.add(gateBar);
+    }
+    if (type !== 'caucus') makeNigerianFlag(g, -1.55, 2.45, 0.68);
   }
 
   const pad = new THREE.Mesh(new THREE.CircleGeometry(type === 'stadium' ? 3.1 : 2.45, 30), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.105, depthWrite: false }));
@@ -332,7 +513,7 @@ function makeFlyover(scene, materials) {
   void materials;
 }
 
-function buildWorld(root, state, onVenueSelect, playerRef, remoteRef, playerColor, touchRef) {
+function buildWorld(root, state, onVenueSelect, playerRef, remoteRef, playerColor, touchRef, focusRef) {
   const stateInfo = STATES.find((item) => item.name === state) || STATES[0];
   const palette = PALETTES[stateInfo.terrain] || PALETTES.coastal;
   const rand = seeded(hash(`${stateInfo.name}/${stateInfo.capital}`));
@@ -408,6 +589,28 @@ function buildWorld(root, state, onVenueSelect, playerRef, remoteRef, playerColo
       scene.add(dash);
     }
   }
+
+  // Zebra crossings, open roadside drains, and speed-calming details make the streets read as lived-in civic roads.
+  for (let stripe = 0; stripe < 6; stripe += 1) {
+    const crossingA = box(0.36, 0.025, 3.5, '#e3ddc7', { castShadow: false });
+    crossingA.position.set(-3.25 + stripe * 0.66, 0.012, 0);
+    scene.add(crossingA);
+    const crossingB = box(3.6, 0.025, 0.34, '#e3ddc7', { castShadow: false });
+    crossingB.position.set(12.5, 0.012, -11.15 + stripe * 0.66);
+    scene.add(crossingB);
+  }
+  for (const side of [-1, 1]) {
+    const drain = box(48, 0.08, 0.18, '#454e47', { castShadow: false });
+    drain.position.set(0, -0.045, side * 2.34);
+    scene.add(drain);
+  }
+  for (let bump = -4; bump <= 4; bump += 1) {
+    const marker = box(0.3, 0.085, 0.2, bump % 2 === 0 ? '#e6cb60' : '#39433d', { castShadow: false });
+    marker.position.set(6.3, 0.045, bump * 0.38);
+    scene.add(marker);
+  }
+  [[-13.8, -4.1], [13.9, -3.4], [-14.2, 13.5], [14.3, 14.1], [3.5, 16.2]].forEach(([x, z]) => makeStreetLight(scene, x, z));
+  makeBusStop(scene, 8.6, 1.6);
 
   const sidewalkMaterial = new THREE.MeshStandardMaterial({ color: '#c9b996', roughness: 0.94 });
   for (const point of [-4.5, 4.5]) {
@@ -566,8 +769,8 @@ function buildWorld(root, state, onVenueSelect, playerRef, remoteRef, playerColo
   controls.target.set(0, 0.35, 0);
   controls.enableDamping = true;
   controls.dampingFactor = 0.065;
-  controls.minDistance = 21;
-  controls.maxDistance = 55;
+  controls.minDistance = 12;
+  controls.maxDistance = 62;
   controls.maxPolarAngle = Math.PI / 2.18;
   controls.minPolarAngle = Math.PI / 5;
   controls.enablePan = true;
@@ -588,6 +791,19 @@ function buildWorld(root, state, onVenueSelect, playerRef, remoteRef, playerColo
   let isMoving = false;
   let lastEmit = 0;
   let activePointer = null;
+  let isFocusingCamera = false;
+  const cameraFocusTarget = new THREE.Vector3();
+  const cameraFocusPosition = new THREE.Vector3();
+  const focusVenue = (venueId) => {
+    const venue = WORLD_VENUES.find((item) => item.id === venueId);
+    if (!venue) return;
+    moveTarget.set(clamp(venue.x - 2.5, -20, 20), 0, clamp(venue.z + 3.0, -20, 20));
+    isMoving = true;
+    cameraFocusTarget.set(venue.x, 0.35, venue.z);
+    cameraFocusPosition.set(venue.x + 12.5, 14.5, venue.z + 13.5);
+    isFocusingCamera = true;
+  };
+  if (focusRef) focusRef.current = focusVenue;
 
   const setTargetFromEvent = (event) => {
     const bounds = renderer.domElement.getBoundingClientRect();
@@ -608,7 +824,7 @@ function buildWorld(root, state, onVenueSelect, playerRef, remoteRef, playerColo
       isMoving = true;
     }
   };
-  const onPointerDown = (event) => { activePointer = { x: event.clientX, y: event.clientY, id: event.pointerId }; };
+  const onPointerDown = (event) => { isFocusingCamera = false; activePointer = { x: event.clientX, y: event.clientY, id: event.pointerId }; };
   const onPointerUp = (event) => {
     if (!activePointer || activePointer.id !== event.pointerId) return;
     const moved = Math.hypot(event.clientX - activePointer.x, event.clientY - activePointer.y);
@@ -694,6 +910,16 @@ function buildWorld(root, state, onVenueSelect, playerRef, remoteRef, playerColo
       playerRef.current = { x: player.position.x, z: player.position.z };
     }
     updateRemotePlayers(remoteRef.current);
+    if (isFocusingCamera) {
+      const focusEase = 1 - Math.exp(-2.6 * delta);
+      camera.position.lerp(cameraFocusPosition, focusEase);
+      controls.target.lerp(cameraFocusTarget, focusEase);
+      if (camera.position.distanceTo(cameraFocusPosition) < 0.12 && controls.target.distanceTo(cameraFocusTarget) < 0.08) {
+        camera.position.copy(cameraFocusPosition);
+        controls.target.copy(cameraFocusTarget);
+        isFocusingCamera = false;
+      }
+    }
     controls.update();
     renderer.render(scene, camera);
   };
@@ -702,6 +928,7 @@ function buildWorld(root, state, onVenueSelect, playerRef, remoteRef, playerColo
   return () => {
     cancelAnimationFrame(frame);
     observer.disconnect();
+    if (focusRef?.current === focusVenue) focusRef.current = null;
     renderer.domElement.removeEventListener('pointerdown', onPointerDown);
     renderer.domElement.removeEventListener('pointerup', onPointerUp);
     window.removeEventListener('keydown', onKeyDown);
@@ -722,13 +949,14 @@ function buildWorld(root, state, onVenueSelect, playerRef, remoteRef, playerColo
   };
 }
 
-export default function World({ state, onVenueSelect, onMove, remotePlayers = [], playerColor = '#d8f36b' }) {
+export default function World({ state, selectedVenueId = 'square', focusRequest = 0, onVenueSelect, onMove, remotePlayers = [], playerColor = '#d8f36b' }) {
   const mountRef = useRef(null);
   const positionRef = useRef({ x: -5.8, z: 3.5 });
   const remoteRef = useRef(remotePlayers);
   const moveCallbackRef = useRef(onMove);
   const venueCallbackRef = useRef(onVenueSelect);
   const touchRef = useRef({ x: 0, z: 0 });
+  const focusRef = useRef(null);
   const stickPointerRef = useRef(null);
   const [stickOffset, setStickOffset] = useState({ x: 0, y: 0 });
   const [worldError, setWorldError] = useState(false);
@@ -769,7 +997,7 @@ export default function World({ state, onVenueSelect, onMove, remotePlayers = []
     if (!mountRef.current) return undefined;
     setWorldError(false);
     try {
-      return buildWorld(
+      const cleanup = buildWorld(
         mountRef.current,
         state,
         (id) => venueCallbackRef.current?.(id),
@@ -777,13 +1005,20 @@ export default function World({ state, onVenueSelect, onMove, remotePlayers = []
         remoteRef,
         playerColor,
         touchRef,
+        focusRef,
       );
+      focusRef.current?.(selectedVenueId);
+      return cleanup;
     } catch (error) {
       console.error('NIGERIA 2027 3D scene failed to initialize:', error);
       setWorldError(true);
       return undefined;
     }
   }, [state, playerColor]);
+
+  useEffect(() => {
+    if (selectedVenueId) focusRef.current?.(selectedVenueId);
+  }, [selectedVenueId, focusRequest]);
 
   useEffect(() => {
     const interval = window.setInterval(() => moveCallbackRef.current?.(positionRef.current), 180);

@@ -65,6 +65,7 @@ function App() {
   const [selectedStateName, setSelectedStateName] = useState(STATES.some((item) => item.name === boot?.state) ? boot.state : 'Lagos');
   const [page, setPage] = useState('world');
   const [activeVenueId, setActiveVenueId] = useState('square');
+  const [venueFocusRequest, setVenueFocusRequest] = useState(0);
   const [feed, setFeed] = useState([
     { id: 'start-1', title: 'The campaign begins', text: 'A new candidate enters the ward with an in-game ₦1,000,000 seed fund.', type: 'start', time: 'DAY 01' },
     { id: 'start-2', title: 'A note on the world', text: 'Original fictional parties, characters, and outcomes. The game does not predict real 2027 results.', type: 'note', time: 'BRIEFING' },
@@ -207,7 +208,10 @@ function App() {
   const goToVenue = (venueId) => {
     const venue = WORLD_VENUES.find((item) => item.id === venueId);
     if (!venue) return;
-    setActiveVenueId(venueId); setPage('world'); showToast(`Visiting ${venue.label}`);
+    setActiveVenueId(venueId); setVenueFocusRequest((request) => request + 1); setPage('world'); showToast(`Travelling to ${venue.label}`);
+    if (window.matchMedia?.('(max-width: 1030px)').matches) {
+      window.setTimeout(() => document.querySelector('.world-view-frame')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80);
+    }
   };
 
   const travelToState = (stateName) => {
@@ -284,7 +288,7 @@ function App() {
     if (page === 'offices') return <OfficesPage />;
     if (page === 'civic') return <CivicPage />;
     if (page === 'atlas') return <AtlasPage query={atlasQuery} setQuery={setAtlasQuery} zone={selectedZone} setZone={setSelectedZone} selected={selectedStateName} onTravel={travelToState} />;
-    return <WorldPage stateInfo={stateInfo} venue={activeVenue} venueName={activeVenueName} onSelectVenue={goToVenue} remotePlayers={remotePlayers} onMove={sendMove} playerColor={profile.color || currentParty.color} onlineCount={onlineCount} networkStatus={networkStatus} onTravel={travelToState} daysToFederal={daysToFederal} daysToState={daysToState} storyDay={storyDay} />;
+    return <WorldPage stateInfo={stateInfo} venue={activeVenue} venueName={activeVenueName} focusRequest={venueFocusRequest} onSelectVenue={goToVenue} remotePlayers={remotePlayers} onMove={sendMove} playerColor={profile.color || currentParty.color} onlineCount={onlineCount} networkStatus={networkStatus} onTravel={travelToState} daysToFederal={daysToFederal} daysToState={daysToState} storyDay={storyDay} />;
   };
 
   return <div className="app-shell">
@@ -323,14 +327,14 @@ function StatBar({ label, value, color, icon: Icon }) {
   return <div className={`stat-row ${color}`}><div className="stat-row-label"><span><Icon size={13} />{label}</span><b>{value}<small>%</small></b></div><div className="stat-track"><span style={{ width: `${value}%` }} /></div></div>;
 }
 
-function WorldPage({ stateInfo, venue, venueName, onSelectVenue, remotePlayers, onMove, playerColor, onlineCount, networkStatus, onTravel, daysToFederal, daysToState, storyDay }) {
+function WorldPage({ stateInfo, venue, venueName, focusRequest, onSelectVenue, remotePlayers, onMove, playerColor, onlineCount, networkStatus, onTravel, daysToFederal, daysToState, storyDay }) {
   const [venueFilter, setVenueFilter] = useState('ALL');
   const venueTypes = ['ALL', 'PUBLIC', 'POLITICS', 'TRAVEL'];
   const visibleVenues = WORLD_VENUES.filter((item) => venueFilter === 'ALL' || (venueFilter === 'PUBLIC' && ['square', 'market', 'stadium'].includes(item.type)) || (venueFilter === 'POLITICS' && ['office', 'court', 'assembly', 'caucus'].includes(item.type)) || (venueFilter === 'TRAVEL' && item.type === 'airport'));
   return <div className="world-page">
     <div className="world-topline"><div className="world-live"><span className="pulse-dot" />CITY INSTANCE <b>{stateInfo.capital.toUpperCase()}</b><span className="line-sep" />{stateInfo.zone.toUpperCase()}</div><div className="world-date"><Clock3 size={13} />{dateLabel(storyDay)} <span>·</span> 15:42 WAT <span className="weather-dot" /> OVERCAST</div><div className="world-connect"><span className={`network-led ${networkStatus}`} />{networkStatus === 'online' ? `${onlineCount || 1} PLAYERS` : 'LOCAL INSTANCE'}</div></div>
-    <div className="world-view-frame"><World state={stateInfo.name} onVenueSelect={onSelectVenue} onMove={onMove} remotePlayers={remotePlayers} playerColor={playerColor} /><div className="scene-vignette" />
-      <div className="scene-location-card"><div className="scene-card-kicker"><span className="scene-pin" />YOUR DISTRICT <span>·</span> {stateInfo.zone.toUpperCase()}</div><h2>{stateInfo.capital}<span>,</span> {stateInfo.name}</h2><p>Procedural city centre · walking scale prototype</p><div className="scene-local-landmark"><MapPin size={13} /><span>FEATURED LANDMARK</span><b>{stateInfo.landmark}</b></div></div>
+    <div className="world-view-frame"><World state={stateInfo.name} selectedVenueId={venue.id} focusRequest={focusRequest} onVenueSelect={onSelectVenue} onMove={onMove} remotePlayers={remotePlayers} playerColor={playerColor} /><div className="scene-vignette" />
+      <div className="scene-location-card"><div className="scene-card-kicker"><span className="scene-pin" />YOUR DISTRICT <span>·</span> {stateInfo.zone.toUpperCase()}</div><h2>{stateInfo.capital}<span>,</span> {stateInfo.name}</h2><p>Nigerian-inspired capital district · fictional streetscape</p><div className="scene-local-landmark"><MapPin size={13} /><span>FEATURED LANDMARK</span><b>{stateInfo.landmark}</b></div></div>
       <div className="scene-brief-card"><div className="brief-head"><span className="brief-live"><Radio size={12} /> ELECTION CLOCK</span><span>INEC CALENDAR</span></div><div className="brief-countdown"><div><strong>{Number.isFinite(daysToFederal) ? Math.max(0, daysToFederal) : '—'}</strong><span>DAYS TO FEDERAL</span></div><i /><div><strong>{Number.isFinite(daysToState) ? Math.max(0, daysToState) : '—'}</strong><span>DAYS TO STATE</span></div></div><div className="brief-dates"><span>16 JAN 2027</span><span>06 FEB 2027</span></div></div>
       <div className="mini-map-card"><div className="mini-map-top"><span>CAPITAL GRID</span><span className="map-north">N ↑</span></div><svg viewBox="0 0 150 102" role="img" aria-label="Stylised local street grid"><path d="M8 26H138M8 50H138M8 75H138M31 10V92M67 10V92M103 10V92M128 10V92" stroke="rgba(241,240,215,.42)" strokeWidth="3" /><path d="M8 50H138M67 10V92" stroke="#d6f176" strokeWidth="6" /><circle cx="83" cy="40" r="5" fill="#fff5db" /><circle cx="83" cy="40" r="12" fill="none" stroke="#d6f176" strokeWidth="1.5" /><path d="M83 27l-5 8h10z" fill="#d6f176" /></svg><div className="mini-map-foot"><span><i /> YOU</span><span>NOT TO SCALE</span></div></div>
       <div className="scene-current-site"><span className="site-icon"><MapPin size={14} /></span><div><small>SELECTED LOCATION</small><strong>{venueName}</strong><span>{venue.desc}</span></div></div>
@@ -339,8 +343,8 @@ function WorldPage({ stateInfo, venue, venueName, onSelectVenue, remotePlayers, 
       <div className="scene-cinematic-label"><span>REALTIME CITY</span><b>3D</b></div><div className="scene-asset-note">STYLISED PROCEDURAL DISTRICT · NOT A SURVEY MAP</div>
     </div>
     <div className="mobile-scroll-note"><span>SCROLL FOR PLACES, MISSIONS & THE STATE ATLAS</span><ChevronDown size={12} /></div>
-    <div className="world-lower-row"><div className="location-card-grid"><div className="location-filter-row"><div><span className="eyebrow-line" />PLACES TO VISIT <b>{visibleVenues.length}</b></div><div className="location-filter">{venueTypes.map((type) => <button key={type} className={venueFilter === type ? 'active' : ''} onClick={() => setVenueFilter(type)}>{type}</button>)}</div></div><div className="venue-cards">{visibleVenues.map((place) => <button key={place.id} className={`venue-chip ${venue.id === place.id ? 'selected' : ''}`} onClick={() => onSelectVenue(place.id)}><span className={`venue-icon venue-${place.type}`}>{venueIcon(place.type)}</span><span><strong>{place.label}</strong><small>{place.short} · OPEN</small></span><ArrowRight size={13} /></button>)}</div></div>
-      <div className="world-feed-card"><div className="feed-card-head"><span><Activity size={14} />DISTRICT PULSE</span><button onClick={() => onTravel('Lagos')}>RETURN TO START <ArrowRight size={12} /></button></div><div className="district-pulse-grid"><div><strong>37</strong><small>CAPITALS</small></div><div><strong>06</strong><small>GEO-ZONES</small></div><div><strong>{onlineCount || 1}</strong><small>PLAYERS</small></div></div><p>Road traffic, pedestrians, civic spaces, and campaign venues animate continuously. Multiplayer presence is a small-room prototype.</p></div></div>
+    <div className="world-lower-row"><div className="location-card-grid"><div className="location-filter-row"><div><span className="eyebrow-line" />PLACES TO VISIT <b>{visibleVenues.length}</b></div><div className="location-filter">{venueTypes.map((type) => <button key={type} className={venueFilter === type ? 'active' : ''} onClick={() => setVenueFilter(type)}>{type}</button>)}</div></div><div className="venue-cards">{visibleVenues.map((place) => <button key={place.id} className={`venue-chip ${venue.id === place.id ? 'selected' : ''}`} onClick={() => onSelectVenue(place.id)} aria-label={`Travel to ${place.label} in the 3D city`} title={`Travel to ${place.label}`}><span className={`venue-icon venue-${place.type}`}>{venueIcon(place.type)}</span><span><strong>{place.label}</strong><small>{place.short} · VISIT IN 3D</small></span><ArrowRight size={13} /></button>)}</div></div>
+      <div className="world-feed-card"><div className="feed-card-head"><span><Activity size={14} />DISTRICT PULSE</span><button onClick={() => onTravel('Lagos')}>RETURN TO START <ArrowRight size={12} /></button></div><div className="district-pulse-grid"><div><strong>37</strong><small>CAPITALS</small></div><div><strong>06</strong><small>GEO-ZONES</small></div><div><strong>{onlineCount || 1}</strong><small>PLAYERS</small></div></div><p>Compound homes, market kiosks, civic grounds, keke, minibuses, and street traffic bring this fictional capital district to life. Multiplayer presence is a small-room prototype.</p></div></div>
   </div>;
 }
 
