@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: nigeria-2027-preview
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm run server
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production

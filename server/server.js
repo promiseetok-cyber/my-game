@@ -1,8 +1,14 @@
 import express from 'express';
+import { existsSync } from 'node:fs';
 import { createServer } from 'node:http';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Server } from 'socket.io';
 import { STATES } from '../src/data.js';
 
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const distPath = path.join(projectRoot, 'dist');
+const indexPath = path.join(distPath, 'index.html');
 const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
@@ -25,6 +31,16 @@ app.use(express.json({ limit: '32kb' }));
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, service: 'nigeria-2027-realtime-prototype', connectedPlayers: sessions.size, rooms: io.sockets.adapter.rooms.size });
 });
+
+// In production, serve the Vite build from this same origin so the game and
+// Socket.IO can share one Render Web Service. Local Vite development stays separate.
+if (existsSync(indexPath)) {
+  app.use(express.static(distPath));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api') || req.path.startsWith('/socket.io')) return next();
+    res.sendFile(indexPath, (error) => { if (error) next(error); });
+  });
+}
 
 io.on('connection', (socket) => {
   socket.data.lastMoveAt = 0;

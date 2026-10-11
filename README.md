@@ -26,6 +26,17 @@ npm run build
 npm run preview
 ```
 
+## Public preview from GitHub (Render)
+
+GitHub stores the source but does not run this React/Three.js game. Because the prototype also uses an Express + Socket.IO server, GitHub Pages alone is not enough. This repository includes a `render.yaml` Blueprint so Render can build and run the frontend and realtime demo server together.
+
+1. Sign in to [Render](https://render.com/) using GitHub and authorize access to `promiseetok-cyber/my-game`.
+2. In the Render dashboard, choose **New → Blueprint** and select this repository.
+3. Review the `nigeria-2027-preview` service and choose **Apply** / **Deploy**.
+4. When the deploy is live, open the `onrender.com` URL shown on the service page. The same link works on desktop and mobile.
+
+The Blueprint runs `npm ci && npm run build`, starts the Express/Socket.IO server, and checks `/api/health`. Later pushes to `main` can trigger redeploys. This is a small demo service: world presence/chat is in-memory and may reset when the service restarts.
+
 ## What is playable now
 
 - New-candidate onboarding with a **₦1,000,000 fictional seed fund** and three invented parties.
