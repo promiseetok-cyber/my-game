@@ -8,6 +8,7 @@ import {
   X, Zap, Briefcase, Crown, BadgeCheck, CircleHelp, Eye, ScrollText, LockKeyhole,
 } from 'lucide-react';
 import World from './World.jsx';
+import { STATE_WORLD_PROFILES } from './stateWorldProfiles.js';
 import {
   CHAPTERS, MAP_POINTS, NPCS, OFFICE_CATALOG, PARTY_OPTIONS, RESEARCH_NOTES,
   STATES, WORLD_VENUES,
@@ -17,6 +18,13 @@ const SAVE_KEY = 'nigeria-2027-life-sim-v1';
 const clamp = (n, min = 0, max = 100) => Math.max(min, Math.min(max, n));
 const money = (amount) => new Intl.NumberFormat('en-NG', { maximumFractionDigits: 0 }).format(Math.max(0, amount));
 const initials = (name = '') => name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase() || 'NC';
+const locationSlug = (name = '') => name.toLowerCase().trim().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+const wardKey = (ward) => ward ? `${ward.name}|${ward.lat}|${ward.lon}` : '';
+const focusWorldOnMobile = () => {
+  if (window.matchMedia?.('(max-width: 1030px)').matches) {
+    window.setTimeout(() => document.querySelector('.world-view-frame')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80);
+  }
+};
 const defaultProfile = {
   started: false, alias: 'New Candidate', party: PARTY_OPTIONS[0].name,
   partyTag: PARTY_OPTIONS[0].tag, color: PARTY_OPTIONS[0].color,
@@ -63,6 +71,12 @@ function App() {
   const [missionProgress, setMissionProgress] = useState(Number.isFinite(boot?.missionProgress) ? clamp(boot.missionProgress, 0, 3) : 0);
   const [storyDay, setStoryDay] = useState(Number.isFinite(boot?.storyDay) ? Math.max(1, boot.storyDay) : 1);
   const [selectedStateName, setSelectedStateName] = useState(STATES.some((item) => item.name === boot?.state) ? boot.state : 'Lagos');
+  const [stateLocalities, setStateLocalities] = useState(null);
+  const [localityLoading, setLocalityLoading] = useState(true);
+  const [localityError, setLocalityError] = useState('');
+  const [selectedLgaName, setSelectedLgaName] = useState('');
+  const [selectedWardKey, setSelectedWardKey] = useState('');
+  const [communityFocusRequest, setCommunityFocusRequest] = useState(0);
   const [page, setPage] = useState('world');
   const [activeVenueId, setActiveVenueId] = useState('square');
   const [venueFocusRequest, setVenueFocusRequest] = useState(0);
@@ -91,13 +105,51 @@ function App() {
 
   const currentChapter = CHAPTERS[Math.min(stageIndex, CHAPTERS.length - 1)];
   const stateInfo = STATES.find((item) => item.name === selectedStateName) || STATES[0];
+  const stateWorldProfile = STATE_WORLD_PROFILES[stateInfo.name] || STATE_WORLD_PROFILES.Lagos;
+  const currentLga = stateLocalities?.state === stateInfo.name ? stateLocalities.lgas?.find((item) => item.name === selectedLgaName) || null : null;
+  const currentWard = currentLga?.wards?.find((item) => wardKey(item) === selectedWardKey) || null;
+  const capitalSlug = locationSlug(stateInfo.capital);
+  const currentLgaSlug = locationSlug(currentLga?.name || '');
+  const isCapitalLga = Boolean(currentLga && (currentLgaSlug.includes(capitalSlug) || capitalSlug.includes(currentLgaSlug)));
+  const sceneLocality = currentWard && currentLga ? { state: stateInfo.name, lga: currentLga.name, ward: currentWard.name, lat: currentWard.lat, lon: currentWard.lon, settlement: isCapitalLga ? 'capital' : 'local' } : null;
+  const sceneLocationKey = `${sceneLocality ? `${sceneLocality.state}/${sceneLocality.lga}/${sceneLocality.ward}/${sceneLocality.lat}/${sceneLocality.lon}` : `${stateInfo.name}/capital`}/${communityFocusRequest}`;
   const activeVenue = WORLD_VENUES.find((item) => item.id === activeVenueId) || WORLD_VENUES[1];
   const currentParty = PARTY_OPTIONS.find((item) => item.name === profile.party) || PARTY_OPTIONS[0];
   const progressPercent = Math.min(100, (missionProgress / 3) * 100);
   const daysToFederal = Math.ceil((new Date('2027-01-16T00:00:00+01:00').getTime() - Date.now()) / 86_400_000);
   const daysToState = Math.ceil((new Date('2027-02-06T00:00:00+01:00').getTime() - Date.now()) / 86_400_000);
   const activeVenueName = activeVenue.id === 'stadium' && stateInfo.landmark.toLowerCase().includes('stadium') ? stateInfo.landmark : activeVenue.label;
-  worldConfigRef.current = { state: selectedStateName, nickname: profile.alias || 'New Candidate' };
+  worldConfigRef.current = { state: selectedStateName, nickname: profile.alias || 'New Candidate', lga: currentLga?.name || '', ward: currentWard?.name || '' };
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
+    setStateLocalities(null);
+    setSelectedLgaName('');
+    setSelectedWardKey('');
+    setLocalityLoading(true);
+    setLocalityError('');
+    fetch(`/data/locations/${locationSlug(selectedStateName)}.json`, { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error(`Location data request failed (${response.status}).`);
+        return response.json();
+      })
+      .then((payload) => {
+        if (!active) return;
+        const lgas = Array.isArray(payload?.lgas) ? payload.lgas : [];
+        const capitalSlug = locationSlug(stateInfo.capital);
+        const capitalLga = lgas.find((item) => locationSlug(item.name).includes(capitalSlug) || capitalSlug.includes(locationSlug(item.name)));
+        const firstLga = capitalLga || lgas[0];
+        setStateLocalities({ ...payload, lgas });
+        setSelectedLgaName(firstLga?.name || '');
+        setSelectedWardKey(wardKey(firstLga?.wards?.[0]));
+      })
+      .catch((error) => {
+        if (active && error.name !== 'AbortError') setLocalityError('The local directory could not be loaded. The 3D capital remains available; try reloading the page.');
+      })
+      .finally(() => { if (active) setLocalityLoading(false); });
+    return () => { active = false; controller.abort(); };
+  }, [selectedStateName, stateInfo.capital]);
 
   useEffect(() => {
     if (!profile.started) return;
@@ -110,7 +162,7 @@ function App() {
     socketRef.current = socket;
     const joinWorld = () => {
       const config = worldConfigRef.current || { state: 'Lagos', nickname: 'New Candidate' };
-      socket.emit('world:join', { state: config.state, nickname: config.nickname });
+      socket.emit('world:join', { state: config.state, nickname: config.nickname, lga: config.lga, ward: config.ward });
     };
     socket.on('connect', () => { setNetworkStatus('online'); joinWorld(); });
     socket.on('disconnect', () => { setNetworkStatus('offline'); setRemotePlayers([]); });
@@ -133,10 +185,10 @@ function App() {
 
   useEffect(() => {
     if (socketRef.current?.connected) {
-      socketRef.current.emit('world:join', { state: selectedStateName, nickname: profile.alias || 'New Candidate' });
+      socketRef.current.emit('world:join', { state: selectedStateName, nickname: profile.alias || 'New Candidate', lga: currentLga?.name || '', ward: currentWard?.name || '' });
       setRemotePlayers([]);
     }
-  }, [selectedStateName, profile.alias]);
+  }, [selectedStateName, profile.alias, currentLga?.name, currentWard?.name]);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -208,16 +260,34 @@ function App() {
   const goToVenue = (venueId) => {
     const venue = WORLD_VENUES.find((item) => item.id === venueId);
     if (!venue) return;
-    setActiveVenueId(venueId); setVenueFocusRequest((request) => request + 1); setPage('world'); showToast(`Travelling to ${venue.label}`);
-    if (window.matchMedia?.('(max-width: 1030px)').matches) {
-      window.setTimeout(() => document.querySelector('.world-view-frame')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80);
-    }
+    setActiveVenueId(venueId); setVenueFocusRequest((request) => request + 1); setPage('world'); showToast(`Travelling to ${venue.label}`); focusWorldOnMobile();
   };
 
   const travelToState = (stateName) => {
-    setSelectedStateName(stateName); setActiveVenueId('square'); setPage('world');
+    if (stateName !== selectedStateName) { setSelectedStateName(stateName); setSelectedLgaName(''); setSelectedWardKey(''); }
+    setActiveVenueId('square'); setVenueFocusRequest((request) => request + 1); setCommunityFocusRequest((request) => request + 1); setPage('world');
     const next = STATES.find((item) => item.name === stateName);
-    if (next) { addFeed(`Travelled to ${next.name}`, `Your campaign arrived in ${next.capital}. This is a stylised procedural district, not a surveyed street map.`, 'travel'); setToast(`Arrived in ${next.capital}, ${next.name}`); }
+    if (next) { addFeed(`Travelled to ${next.name}`, `Your campaign arrived in ${next.capital}. The district is procedural art, not a surveyed street map.`, 'travel'); setToast(`Arrived in ${next.capital}, ${next.name}`); }
+    focusWorldOnMobile();
+  };
+
+  const travelToWard = (ward, lgaName = selectedLgaName) => {
+    if (!ward || !lgaName) return;
+    setSelectedLgaName(lgaName); setSelectedWardKey(wardKey(ward)); setActiveVenueId('square');
+    setVenueFocusRequest((request) => request + 1); setCommunityFocusRequest((request) => request + 1); setPage('world');
+    addFeed(`Arrived in ${ward.name}`, `${ward.name} ward, ${lgaName} LGA, ${stateInfo.name}. The point is approximate; the rendered streetscape is fictional.`, 'travel');
+    setToast(`Now in ${ward.name} · ${lgaName} LGA`); focusWorldOnMobile();
+  };
+
+  const selectLga = (lgaName) => {
+    const next = stateLocalities?.lgas?.find((item) => item.name === lgaName);
+    if (!next) return;
+    travelToWard(next.wards?.[0], next.name);
+  };
+
+  const selectWardByKey = (key) => {
+    const ward = currentLga?.wards?.find((item) => wardKey(item) === key);
+    if (ward) travelToWard(ward, currentLga.name);
   };
 
   const continueCareer = () => {
@@ -288,7 +358,7 @@ function App() {
     if (page === 'offices') return <OfficesPage />;
     if (page === 'civic') return <CivicPage />;
     if (page === 'atlas') return <AtlasPage query={atlasQuery} setQuery={setAtlasQuery} zone={selectedZone} setZone={setSelectedZone} selected={selectedStateName} onTravel={travelToState} />;
-    return <WorldPage stateInfo={stateInfo} venue={activeVenue} venueName={activeVenueName} focusRequest={venueFocusRequest} onSelectVenue={goToVenue} remotePlayers={remotePlayers} onMove={sendMove} playerColor={profile.color || currentParty.color} onlineCount={onlineCount} networkStatus={networkStatus} onTravel={travelToState} daysToFederal={daysToFederal} daysToState={daysToState} storyDay={storyDay} />;
+    return <WorldPage stateInfo={stateInfo} stateWorldProfile={stateWorldProfile} venue={activeVenue} venueName={activeVenueName} focusRequest={venueFocusRequest} locationKey={sceneLocationKey} locality={sceneLocality} localityData={stateLocalities?.state === stateInfo.name ? stateLocalities : null} localityLoading={localityLoading} localityError={localityError} selectedLgaName={selectedLgaName} selectedWardKey={selectedWardKey} onSelectLga={selectLga} onSelectWard={selectWardByKey} onSelectVenue={goToVenue} remotePlayers={remotePlayers} onMove={sendMove} playerColor={profile.color || currentParty.color} onlineCount={onlineCount} networkStatus={networkStatus} onTravel={travelToState} daysToFederal={daysToFederal} daysToState={daysToState} storyDay={storyDay} />;
   };
 
   return <div className="app-shell">
@@ -327,24 +397,64 @@ function StatBar({ label, value, color, icon: Icon }) {
   return <div className={`stat-row ${color}`}><div className="stat-row-label"><span><Icon size={13} />{label}</span><b>{value}<small>%</small></b></div><div className="stat-track"><span style={{ width: `${value}%` }} /></div></div>;
 }
 
-function WorldPage({ stateInfo, venue, venueName, focusRequest, onSelectVenue, remotePlayers, onMove, playerColor, onlineCount, networkStatus, onTravel, daysToFederal, daysToState, storyDay }) {
+function LocalityExplorer({ stateInfo, stateWorldProfile, data, loading, error, lgaName, selectedWardKey, onSelectLga, onSelectWard }) {
+  const [wardQuery, setWardQuery] = useState('');
+  const lga = data?.lgas?.find((item) => item.name === lgaName) || null;
+  const wards = lga?.wards || [];
+  const selectedWard = wards.find((item) => wardKey(item) === selectedWardKey) || null;
+  const filteredWards = wards.filter((item) => !wardQuery.trim() || item.name.toLowerCase().includes(wardQuery.trim().toLowerCase()));
+  useEffect(() => setWardQuery(''), [lgaName]);
+
+  return <section className="locality-explorer" aria-label="State, local government and ward explorer">
+    <div className="locality-explorer-head">
+      <div><div className="eyebrow"><span className="eyebrow-line" />STATE → LGA → WARD</div><h2>Choose a local ground</h2><p>{stateInfo.name} · {stateWorldProfile.biome}. Select a local government and a named electoral ward to regenerate the 3D neighbourhood.</p></div>
+      <div className="locality-national-counts"><span><b>37</b> STATES / FCT</span><span><b>774</b> LGAs</span><span><b>8,809</b> WARD RECORDS</span></div>
+    </div>
+    {loading && <div className="locality-state-message"><span className="locality-loader" />Loading {stateInfo.name}’s local directory…</div>}
+    {!loading && error && <div className="locality-state-message locality-error"><strong>Directory unavailable</strong><span>{error}</span></div>}
+    {!loading && !error && data && <>
+      <div className="locality-selectors">
+        <label><span>LOCAL GOVERNMENT AREA</span><select value={lgaName} onChange={(event) => onSelectLga(event.target.value)} aria-label={`Choose an LGA in ${stateInfo.name}`}>
+          {data.lgas.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}
+        </select><small>{data.lgas.length} LGAs in {stateInfo.name}</small></label>
+        <label><span>WARD / REGISTRATION AREA</span><select value={selectedWard ? wardKey(selectedWard) : ''} onChange={(event) => onSelectWard(event.target.value)} aria-label={`Choose a ward in ${lga?.name || stateInfo.name}`}>
+          {wards.map((item) => <option key={wardKey(item)} value={wardKey(item)}>{item.name}</option>)}
+        </select><small>{wards.length} named ward records in this LGA</small></label>
+      </div>
+      <div className="locality-active-card">
+        <div className="locality-active-pin"><MapPin size={16} /></div><div className="locality-active-copy"><small>ACTIVE PROCEDURAL 3D LOCATION</small><strong>{selectedWard ? selectedWard.name : 'Select a ward'}<span> · </span>{lga?.name || 'LGA'}</strong><span>{stateInfo.name} · {selectedWard ? `approx. ${selectedWard.lat.toFixed(4)}° N, ${selectedWard.lon.toFixed(4)}° E` : 'Representative point not available'}</span></div>
+        <button disabled={!selectedWard} onClick={() => selectedWard && onSelectWard(wardKey(selectedWard))}><MapPin size={13} />REVISIT IN 3D</button>
+      </div>
+      <div className="ward-directory-heading"><div><span className="eyebrow-line" />WARD DIRECTORY <b>{filteredWards.length}</b></div><label className="ward-search"><Search size={13} /><input value={wardQuery} onChange={(event) => setWardQuery(event.target.value)} placeholder="Filter wards in this LGA" /></label></div>
+      {filteredWards.length ? <div className="ward-chip-grid">{filteredWards.map((ward, index) => {
+        const key = wardKey(ward);
+        const active = key === selectedWardKey;
+        return <button key={key} className={`ward-chip ${active ? 'active' : ''}`} onClick={() => onSelectWard(key)} aria-label={`Travel to ${ward.name} ward, ${lga.name}`} title={`Open ${ward.name} in the 3D world`}><span className="ward-chip-index">{String(index + 1).padStart(2, '0')}</span><strong>{ward.name}</strong><small>{active ? 'CURRENT 3D LOCATION' : 'VISIT THIS WARD'}</small><ArrowRight size={13} /></button>;
+      })}</div> : <div className="locality-empty">No wards match that filter.</div>}
+      <div className="locality-data-note"><span>DATA NOTE</span><p>Directory entries are electoral wards / registration areas with approximate representative points—not an exhaustive gazetteer of villages, streets, homes or polling units. This neighbourhood is procedural art seeded by the selected locality; its layout is not a surveyed map.</p></div>
+    </>}
+  </section>;
+}
+
+function WorldPage({ stateInfo, stateWorldProfile, venue, venueName, focusRequest, locationKey, locality, localityData, localityLoading, localityError, selectedLgaName, selectedWardKey, onSelectLga, onSelectWard, onSelectVenue, remotePlayers, onMove, playerColor, onlineCount, networkStatus, onTravel, daysToFederal, daysToState, storyDay }) {
   const [venueFilter, setVenueFilter] = useState('ALL');
   const venueTypes = ['ALL', 'PUBLIC', 'POLITICS', 'TRAVEL'];
   const visibleVenues = WORLD_VENUES.filter((item) => venueFilter === 'ALL' || (venueFilter === 'PUBLIC' && ['square', 'market', 'stadium'].includes(item.type)) || (venueFilter === 'POLITICS' && ['office', 'court', 'assembly', 'caucus'].includes(item.type)) || (venueFilter === 'TRAVEL' && item.type === 'airport'));
   return <div className="world-page">
-    <div className="world-topline"><div className="world-live"><span className="pulse-dot" />CITY INSTANCE <b>{stateInfo.capital.toUpperCase()}</b><span className="line-sep" />{stateInfo.zone.toUpperCase()}</div><div className="world-date"><Clock3 size={13} />{dateLabel(storyDay)} <span>·</span> 15:42 WAT <span className="weather-dot" /> OVERCAST</div><div className="world-connect"><span className={`network-led ${networkStatus}`} />{networkStatus === 'online' ? `${onlineCount || 1} PLAYERS` : 'LOCAL INSTANCE'}</div></div>
-    <div className="world-view-frame"><World state={stateInfo.name} selectedVenueId={venue.id} focusRequest={focusRequest} onVenueSelect={onSelectVenue} onMove={onMove} remotePlayers={remotePlayers} playerColor={playerColor} /><div className="scene-vignette" />
-      <div className="scene-location-card"><div className="scene-card-kicker"><span className="scene-pin" />YOUR DISTRICT <span>·</span> {stateInfo.zone.toUpperCase()}</div><h2>{stateInfo.capital}<span>,</span> {stateInfo.name}</h2><p>Nigerian-inspired capital district · fictional streetscape</p><div className="scene-local-landmark"><MapPin size={13} /><span>FEATURED LANDMARK</span><b>{stateInfo.landmark}</b></div></div>
+    <div className="world-topline"><div className="world-live"><span className="pulse-dot" />LOCAL WORLD <b>{(locality?.ward || stateInfo.capital).toUpperCase()}</b><span className="line-sep" />{stateInfo.zone.toUpperCase()}</div><div className="world-date"><Clock3 size={13} />{dateLabel(storyDay)} <span>·</span> 15:42 WAT <span className="weather-dot" /> OVERCAST</div><div className="world-connect"><span className={`network-led ${networkStatus}`} />{networkStatus === 'online' ? `${onlineCount || 1} PLAYERS` : 'LOCAL INSTANCE'}</div></div>
+    <div className="world-view-frame"><World state={stateInfo.name} locality={locality} locationKey={locationKey} selectedVenueId={venue.id} focusRequest={focusRequest} onVenueSelect={onSelectVenue} onMove={onMove} remotePlayers={remotePlayers} playerColor={playerColor} /><div className="scene-vignette" />
+      <div className="scene-location-card"><div className="scene-card-kicker"><span className="scene-pin" />{locality ? 'YOUR WARD' : 'STATE CAPITAL'} <span>·</span> {stateInfo.zone.toUpperCase()}</div><h2>{locality?.lga || stateInfo.capital}<span>,</span> {stateInfo.name}</h2><p>{locality ? `${locality.ward} · ${stateWorldProfile.biome}` : `${stateWorldProfile.biome} · ${stateInfo.capital}`} · fictional procedural scene</p><div className="scene-local-landmark"><MapPin size={13} /><span>STATE SIGNATURE</span><b>{stateInfo.landmark}</b></div></div>
       <div className="scene-brief-card"><div className="brief-head"><span className="brief-live"><Radio size={12} /> ELECTION CLOCK</span><span>INEC CALENDAR</span></div><div className="brief-countdown"><div><strong>{Number.isFinite(daysToFederal) ? Math.max(0, daysToFederal) : '—'}</strong><span>DAYS TO FEDERAL</span></div><i /><div><strong>{Number.isFinite(daysToState) ? Math.max(0, daysToState) : '—'}</strong><span>DAYS TO STATE</span></div></div><div className="brief-dates"><span>16 JAN 2027</span><span>06 FEB 2027</span></div></div>
-      <div className="mini-map-card"><div className="mini-map-top"><span>CAPITAL GRID</span><span className="map-north">N ↑</span></div><svg viewBox="0 0 150 102" role="img" aria-label="Stylised local street grid"><path d="M8 26H138M8 50H138M8 75H138M31 10V92M67 10V92M103 10V92M128 10V92" stroke="rgba(241,240,215,.42)" strokeWidth="3" /><path d="M8 50H138M67 10V92" stroke="#d6f176" strokeWidth="6" /><circle cx="83" cy="40" r="5" fill="#fff5db" /><circle cx="83" cy="40" r="12" fill="none" stroke="#d6f176" strokeWidth="1.5" /><path d="M83 27l-5 8h10z" fill="#d6f176" /></svg><div className="mini-map-foot"><span><i /> YOU</span><span>NOT TO SCALE</span></div></div>
-      <div className="scene-current-site"><span className="site-icon"><MapPin size={14} /></span><div><small>SELECTED LOCATION</small><strong>{venueName}</strong><span>{venue.desc}</span></div></div>
+      <div className="mini-map-card"><div className="mini-map-top"><span>{locality ? `${locality.lga.toUpperCase()} GRID` : 'CAPITAL GRID'}</span><span className="map-north">N ↑</span></div><svg viewBox="0 0 150 102" role="img" aria-label="Stylised local street grid"><path d="M8 26H138M8 50H138M8 75H138M31 10V92M67 10V92M103 10V92M128 10V92" stroke="rgba(241,240,215,.42)" strokeWidth="3" /><path d="M8 50H138M67 10V92" stroke="#d6f176" strokeWidth="6" /><circle cx="83" cy="40" r="5" fill="#fff5db" /><circle cx="83" cy="40" r="12" fill="none" stroke="#d6f176" strokeWidth="1.5" /><path d="M83 27l-5 8h10z" fill="#d6f176" /></svg><div className="mini-map-foot"><span><i /> YOU</span><span>NOT TO SCALE</span></div></div>
+      <div className="scene-current-site"><span className="site-icon"><MapPin size={14} /></span><div><small>SELECTED LOCATION</small><strong>{venueName}</strong><span>{venue.desc}</span><span>{locality ? `${locality.ward} ward · ${locality.lga} LGA` : `Capital district · ${stateInfo.name}`}</span></div></div>
       <div className="scene-controls"><span><Move size={13} /> CLICK TO WALK</span><i /> <span>WASD / ARROWS MOVE</span><i /> <span>DRAG TO ORBIT</span><i /> <span>SCROLL TO ZOOM</span></div>
       <div className="mobile-gesture-hint"><span>SWIPE TO ORBIT</span><i /> <span>PINCH TO ZOOM</span></div>
       <div className="scene-cinematic-label"><span>REALTIME CITY</span><b>3D</b></div><div className="scene-asset-note">STYLISED PROCEDURAL DISTRICT · NOT A SURVEY MAP</div>
     </div>
-    <div className="mobile-scroll-note"><span>SCROLL FOR PLACES, MISSIONS & THE STATE ATLAS</span><ChevronDown size={12} /></div>
+    <div className="mobile-scroll-note"><span>SCROLL FOR PLACES, MISSIONS & WARD DIRECTORY</span><ChevronDown size={12} /></div>
     <div className="world-lower-row"><div className="location-card-grid"><div className="location-filter-row"><div><span className="eyebrow-line" />PLACES TO VISIT <b>{visibleVenues.length}</b></div><div className="location-filter">{venueTypes.map((type) => <button key={type} className={venueFilter === type ? 'active' : ''} onClick={() => setVenueFilter(type)}>{type}</button>)}</div></div><div className="venue-cards">{visibleVenues.map((place) => <button key={place.id} className={`venue-chip ${venue.id === place.id ? 'selected' : ''}`} onClick={() => onSelectVenue(place.id)} aria-label={`Travel to ${place.label} in the 3D city`} title={`Travel to ${place.label}`}><span className={`venue-icon venue-${place.type}`}>{venueIcon(place.type)}</span><span><strong>{place.label}</strong><small>{place.short} · VISIT IN 3D</small></span><ArrowRight size={13} /></button>)}</div></div>
-      <div className="world-feed-card"><div className="feed-card-head"><span><Activity size={14} />DISTRICT PULSE</span><button onClick={() => onTravel('Lagos')}>RETURN TO START <ArrowRight size={12} /></button></div><div className="district-pulse-grid"><div><strong>37</strong><small>CAPITALS</small></div><div><strong>06</strong><small>GEO-ZONES</small></div><div><strong>{onlineCount || 1}</strong><small>PLAYERS</small></div></div><p>Compound homes, market kiosks, civic grounds, keke, minibuses, and street traffic bring this fictional capital district to life. Multiplayer presence is a small-room prototype.</p></div></div>
+      <div className="world-feed-card"><div className="feed-card-head"><span><Activity size={14} />DISTRICT PULSE</span><button onClick={() => onTravel('Lagos')}>RETURN TO START <ArrowRight size={12} /></button></div><div className="district-pulse-grid"><div><strong>37</strong><small>CAPITALS</small></div><div><strong>06</strong><small>GEO-ZONES</small></div><div><strong>{onlineCount || 1}</strong><small>PLAYERS</small></div></div><p>Regional biomes, roadside compounds, market stalls, civic landmarks and familiar Nigerian vehicles vary by state and locality. Multiplayer presence is a small-room prototype.</p></div></div>
+    <LocalityExplorer stateInfo={stateInfo} stateWorldProfile={stateWorldProfile} data={localityData} loading={localityLoading} error={localityError} lgaName={selectedLgaName} selectedWardKey={selectedWardKey} onSelectLga={onSelectLga} onSelectWard={onSelectWard} />
   </div>;
 }
 
@@ -384,7 +494,7 @@ function AtlasPage({ query, setQuery, zone, setZone, selected, onTravel }) {
   const normalizedQuery = query.trim().toLowerCase();
   const filteredStates = STATES.filter((item) => (zone === 'All' || item.zone === zone) && (!normalizedQuery || item.name.toLowerCase().includes(normalizedQuery) || item.capital.toLowerCase().includes(normalizedQuery)));
   const zoneColor = (zoneName) => ({ 'North Central': '#b8c5ff', 'North East': '#f1c177', 'North West': '#e99e77', 'South East': '#c2e77b', 'South South': '#7fd8c3', 'South West': '#d5a8dd' }[zoneName] || '#d8f36b');
-  return <div className="atlas-page"><div className="atlas-hero"><div className="atlas-copy"><div className="eyebrow"><span className="eyebrow-line" />THE FEDERATION</div><h2>37 capitals.<br /><em>Choose your next ground.</em></h2><p>Travel to every state capital and the Federal Capital Territory. Each stop loads a stylised 3D district and a local campaign context.</p><div className="atlas-legend">{['North Central', 'North East', 'North West', 'South East', 'South South', 'South West'].map((item) => <span key={item}><i style={{ background: zoneColor(item) }} />{item}</span>)}</div></div>
+  return <div className="atlas-page"><div className="atlas-hero"><div className="atlas-copy"><div className="eyebrow"><span className="eyebrow-line" />THE FEDERATION</div><h2>37 capitals.<br /><em>Choose your next ground.</em></h2><p>Travel to every state capital and the Federal Capital Territory, then choose from that state’s LGAs and electoral wards to load a distinct stylised 3D neighbourhood.</p><div className="atlas-legend">{['North Central', 'North East', 'North West', 'South East', 'South South', 'South West'].map((item) => <span key={item}><i style={{ background: zoneColor(item) }} />{item}</span>)}</div></div>
     <div className="atlas-map-card"><div className="atlas-map-heading"><span><Map size={14} /> CAPITAL LOCATOR</span><small>SCHEMATIC · NOT STATE BOUNDARIES</small></div><svg viewBox="40 28 380 286" className="nigeria-map-svg" role="img" aria-label="Schematic locator of Nigeria's state capitals"><path className="nigeria-outline" d="M83 54 L123 42 L147 53 L168 44 L195 48 L216 41 L241 53 L265 50 L287 60 L318 56 L338 65 L354 71 L379 84 L388 103 L381 122 L396 138 L390 157 L402 176 L389 195 L383 214 L370 227 L364 248 L346 261 L338 280 L319 291 L300 304 L280 301 L265 290 L245 285 L228 273 L211 268 L198 251 L179 246 L165 228 L145 220 L129 213 L112 214 L102 198 L91 187 L88 170 L77 159 L84 140 L74 128 L81 111 L72 96 L82 81 Z" /><path className="map-river" d="M204 143 C216 157 221 175 213 191 C208 204 214 220 229 235 C240 246 254 257 274 269" /><path className="map-route" d="M104 226 C141 209 159 179 181 152 C205 126 232 121 267 132 C295 142 319 153 341 184 C331 220 304 251 273 278" />
       {STATES.map((item) => { const [x, y] = MAP_POINTS[item.name] || [220, 170]; const active = item.name === selected; return <g key={item.name} className={`capital-marker ${active ? 'active' : ''}`} transform={`translate(${x} ${y})`} onClick={() => onTravel(item.name)} role="button" tabIndex="0" aria-label={`Travel to ${item.capital}, ${item.name}`}><circle className="capital-ping" r={active ? 8 : 5.4} fill={zoneColor(item.zone)} />{active && <circle className="capital-halo" r="14" />}<title>{item.capital} · {item.name}</title></g>; })}
       <text className="map-zone-label" x="116" y="103">NORTH WEST</text><text className="map-zone-label" x="300" y="99">NORTH EAST</text><text className="map-zone-label" x="186" y="172">NORTH CENTRAL</text><text className="map-zone-label" x="101" y="248">SOUTH WEST</text><text className="map-zone-label" x="260" y="244">SOUTH EAST</text><text className="map-zone-label" x="279" y="291">SOUTH SOUTH</text></svg><div className="atlas-map-foot"><span><i className="map-key-dot" /> CAPITAL</span><span>CLICK A MARKER TO TRAVEL</span></div></div></div>

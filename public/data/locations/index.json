@@ -1,0 +1,232 @@
+{
+  "country": "Nigeria",
+  "states": [
+    {
+      "name": "Abia",
+      "slug": "abia",
+      "lgaCount": 17,
+      "wardCount": 184
+    },
+    {
+      "name": "Adamawa",
+      "slug": "adamawa",
+      "lgaCount": 21,
+      "wardCount": 226
+    },
+    {
+      "name": "Akwa Ibom",
+      "slug": "akwa-ibom",
+      "lgaCount": 31,
+      "wardCount": 329
+    },
+    {
+      "name": "Anambra",
+      "slug": "anambra",
+      "lgaCount": 21,
+      "wardCount": 326
+    },
+    {
+      "name": "Bauchi",
+      "slug": "bauchi",
+      "lgaCount": 20,
+      "wardCount": 212
+    },
+    {
+      "name": "Bayelsa",
+      "slug": "bayelsa",
+      "lgaCount": 8,
+      "wardCount": 105
+    },
+    {
+      "name": "Benue",
+      "slug": "benue",
+      "lgaCount": 23,
+      "wardCount": 276
+    },
+    {
+      "name": "Borno",
+      "slug": "borno",
+      "lgaCount": 27,
+      "wardCount": 312
+    },
+    {
+      "name": "Cross River",
+      "slug": "cross-river",
+      "lgaCount": 18,
+      "wardCount": 193
+    },
+    {
+      "name": "Delta",
+      "slug": "delta",
+      "lgaCount": 25,
+      "wardCount": 270
+    },
+    {
+      "name": "Ebonyi",
+      "slug": "ebonyi",
+      "lgaCount": 13,
+      "wardCount": 171
+    },
+    {
+      "name": "Edo",
+      "slug": "edo",
+      "lgaCount": 18,
+      "wardCount": 192
+    },
+    {
+      "name": "Ekiti",
+      "slug": "ekiti",
+      "lgaCount": 16,
+      "wardCount": 177
+    },
+    {
+      "name": "Enugu",
+      "slug": "enugu",
+      "lgaCount": 17,
+      "wardCount": 260
+    },
+    {
+      "name": "Federal Capital Territory",
+      "slug": "federal-capital-territory",
+      "lgaCount": 6,
+      "wardCount": 62
+    },
+    {
+      "name": "Gombe",
+      "slug": "gombe",
+      "lgaCount": 11,
+      "wardCount": 114
+    },
+    {
+      "name": "Imo",
+      "slug": "imo",
+      "lgaCount": 27,
+      "wardCount": 305
+    },
+    {
+      "name": "Jigawa",
+      "slug": "jigawa",
+      "lgaCount": 27,
+      "wardCount": 287
+    },
+    {
+      "name": "Kaduna",
+      "slug": "kaduna",
+      "lgaCount": 23,
+      "wardCount": 255
+    },
+    {
+      "name": "Kano",
+      "slug": "kano",
+      "lgaCount": 44,
+      "wardCount": 484
+    },
+    {
+      "name": "Katsina",
+      "slug": "katsina",
+      "lgaCount": 34,
+      "wardCount": 361
+    },
+    {
+      "name": "Kebbi",
+      "slug": "kebbi",
+      "lgaCount": 21,
+      "wardCount": 225
+    },
+    {
+      "name": "Kogi",
+      "slug": "kogi",
+      "lgaCount": 21,
+      "wardCount": 239
+    },
+    {
+      "name": "Kwara",
+      "slug": "kwara",
+      "lgaCount": 16,
+      "wardCount": 193
+    },
+    {
+      "name": "Lagos",
+      "slug": "lagos",
+      "lgaCount": 20,
+      "wardCount": 245
+    },
+    {
+      "name": "Nasarawa",
+      "slug": "nasarawa",
+      "lgaCount": 13,
+      "wardCount": 147
+    },
+    {
+      "name": "Niger",
+      "slug": "niger",
+      "lgaCount": 25,
+      "wardCount": 274
+    },
+    {
+      "name": "Ogun",
+      "slug": "ogun",
+      "lgaCount": 20,
+      "wardCount": 236
+    },
+    {
+      "name": "Ondo",
+      "slug": "ondo",
+      "lgaCount": 18,
+      "wardCount": 203
+    },
+    {
+      "name": "Osun",
+      "slug": "osun",
+      "lgaCount": 30,
+      "wardCount": 332
+    },
+    {
+      "name": "Oyo",
+      "slug": "oyo",
+      "lgaCount": 33,
+      "wardCount": 351
+    },
+    {
+      "name": "Plateau",
+      "slug": "plateau",
+      "lgaCount": 17,
+      "wardCount": 207
+    },
+    {
+      "name": "Rivers",
+      "slug": "rivers",
+      "lgaCount": 23,
+      "wardCount": 319
+    },
+    {
+      "name": "Sokoto",
+      "slug": "sokoto",
+      "lgaCount": 23,
+      "wardCount": 244
+    },
+    {
+      "name": "Taraba",
+      "slug": "taraba",
+      "lgaCount": 16,
+      "wardCount": 168
+    },
+    {
+      "name": "Yobe",
+      "slug": "yobe",
+      "lgaCount": 17,
+      "wardCount": 178
+    },
+    {
+      "name": "Zamfara",
+      "slug": "zamfara",
+      "lgaCount": 14,
+      "wardCount": 147
+    }
+  ],
+  "totalStates": 37,
+  "totalLgas": 774,
+  "totalWards": 8809,
+  "locationUnit": "electoral ward / registration area",
+  "dataSource": "Nigeria GeoJSON Data, temikeezy/nigeria-geojson-data (MIT), retrieved 2026-10-11"
+}

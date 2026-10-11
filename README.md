@@ -43,9 +43,10 @@ The Blueprint runs `npm ci && npm run build`, starts the Express/Socket.IO serve
 - A 12-chapter career arc from ward organising and party congresses through council, state and federal contests, internal legislative leadership, an appointment, a governorship, a presidential primary, and a fictional national election.
 - Reusable campaign moves: town halls, community service, policy lab, coalition talks, public rallies, senior consultations, rest, and a high-risk abstract bribery event.
 - A legal desk with evidence preparation and a simplified election-petition outcome. It models uncertainty and due process; it is not legal advice.
-- A Nigerian-inspired, fictional 3D capital district with low-rise mixed-use homes, some gated compounds, security grilles, rooftop water tanks and dishes, occasional generator/AC details, roadside market stalls, bus shelter, overhead utility lines, open drains, zebra crossings, streetlights, regional palm trees, minibuses, keke, and a flyover. It is stylised procedural art, not an exact survey map.
-- Eight venue cards—Ward Office, Community Square, Market Street, Petition Court, Stadium, Airport, Assembly, and Party/Caucus House—now animate the camera toward that location and walk the candidate to its approach. Tapping a venue in the 3D scene does the same. On mobile, choosing a card scrolls the 3D view into sight.
-- A schematic atlas with **all 36 states and the FCT**, their capitals, six geopolitical zones, and a state-by-state travel loop. The 3D city is generated art, not a survey-grade map.
+- A differentiated 3D district for every state and the FCT. Biome palettes, relief, waterways, building styles, vegetation, settlement density, transit and a state-signature landmark are selected per state; scenes are procedurally varied by the chosen locality. Akwa Ibom, for example, uses a humid coastal-creek profile rather than a generic northern or plateau scene.
+- A lazy-loaded **state → LGA → ward** explorer. Only the currently selected state's compact JSON is fetched; players can choose any of the **774 LGAs** and **8,809 named electoral wards / registration areas** to regenerate and enter a distinct stylised 3D neighbourhood. The directory data is not a full village gazetteer.
+- Eight venue cards—Ward Office, Community Square, Market Street, Petition Court, Stadium, Airport, Assembly, and Party/Caucus House—animate the camera toward that location and walk the candidate to its approach. Tapping a venue in the 3D scene does the same. On mobile, choosing a card scrolls the 3D view into sight.
+- A schematic atlas with **all 36 states and the FCT**, their capitals, six geopolitical zones, and a state-by-state travel loop. It links the capital directory to the LGA/ward explorer.
 - An office directory distinguishing public elections from party-internal titles, legislative leadership, executive appointments, and non-partisan institutions.
 - Research cards covering the 2023 election-observation findings, party primaries, vote-buying law, court challenges, identity rhetoric, off-cycle elections, and the official 2027 dates.
 - Local browser save for the candidate’s career and finances.
@@ -55,11 +56,17 @@ The Blueprint runs `npm ci && npm run build`, starts the Express/Socket.IO serve
 
 - **Mobile:** drag the on-screen joystick to walk; tap a ground point or venue to move there. Swipe the 3D view to orbit and pinch to zoom. Scroll the page outside the 3D viewport to reach venues, missions, and the atlas.
 - **Desktop:** WASD or arrow keys to move; click a ground point or venue to walk; drag to orbit; scroll to zoom.
-- Use **State Atlas** to travel to another capital.
+- Use **State Atlas** to travel to another capital; in the live world, use the LGA selector and ward directory to move between localities.
+
+## National locality data and procedural scenes
+
+The app stores the split-by-state directory in `public/data/locations/`: `index.json` plus one compact JSON file per state/FCT. It fetches a state's file on demand rather than loading all 8,809 records up front. The source is [temikeezy/nigeria-geojson-data](https://github.com/temikeezy/nigeria-geojson-data), used under its MIT license; attribution and the license are included beside the data. The source contains 37 states/FCT, 774 LGAs and 8,809 named wards/registration areas with representative points. `Nassarawa` is normalized to `Nasarawa` for consistency with the game directory.
+
+Those records identify electoral wards/registration areas; they are **not** an exhaustive list of villages, streets, homes, polling units, or legal administrative boundaries. A representative coordinate helps distinguish and seed a selected locality's generated scene. It does not place individual buildings on surveyed parcels or make the scene a navigable GIS map. Roads, landmark treatments, block layouts, and neighbourhood details are fictional procedural art. State-specific environment profiles live in `src/stateWorldProfiles.js`.
 
 ## Multiplayer boundary
 
-The running backend is intentionally a **single-process, in-memory demo**. It supports lightweight world presence, movement intents, and chat for a small test room. It does not yet include accounts, durable player saves, matchmaking, payments, content moderation, authoritative economy transactions, or horizontal scaling. The ₦1,000,000 start balance is a local demo value; it is not connected to a real registration or money system.
+The running backend is intentionally a **single-process, in-memory demo**. It supports lightweight world presence, movement intents, and chat in a room scoped to a selected state/LGA/ward for small tests. It does not yet include accounts, durable player saves, matchmaking, payments, content moderation, authoritative economy transactions, or horizontal scaling. The ₦1,000,000 start balance is a local demo value; it is not connected to a real registration or money system.
 
 Before a public MMO launch, the next engineering steps would be:
 
@@ -85,7 +92,12 @@ src/
   App.jsx       React UI, career simulation, research/atlas screens, Socket.IO client
   World.jsx     procedural Three.js world and player movement
   data.js       state/capital data, offices, chapters, NPCs, research notes
-  style.css     complete responsive game UI
+  stateWorldProfiles.js biome and architectural profiles for 37 state/FCT scenes
+  style.css     responsive game UI
+  locality.css  responsive LGA/ward explorer
+public/data/locations/
+  index.json    coverage counts and state file slugs
+  *.json        one lazy-loadable state/FCT LGA → ward directory per file
 server/
   server.js     Express health endpoint and small Socket.IO room server
 vite.config.js Vite host/proxy/build configuration

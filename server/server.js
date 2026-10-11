@@ -48,18 +48,22 @@ io.on('connection', (socket) => {
     const stateRequest = safeText(payload.state, 64);
     const state = STATES.find((item) => item.name.toLowerCase() === stateRequest.toLowerCase()) || STATES.find((item) => item.name === 'Lagos');
     const displayName = safeText(payload.nickname, 24) || 'New Candidate';
+    const lga = safeText(payload.lga, 64);
+    const ward = safeText(payload.ward, 96);
     const color = palette[Math.abs(socket.id.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0)) % palette.length];
     const previous = sessions.get(socket.id);
     if (previous) {
       socket.leave(previous.room);
       socket.to(previous.room).emit('player:left', { id: socket.id });
     }
-    const room = `world:${slug(state.name)}`;
+    const room = `world:${slug(state.name)}:${slug(lga || 'capital')}:${slug(ward || 'centre')}`;
     const player = {
       id: socket.id,
       name: displayName,
       state: state.name,
       capital: state.capital,
+      lga,
+      ward,
       room,
       color,
       x: -5.8,

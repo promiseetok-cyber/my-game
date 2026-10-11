@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { STATES, WORLD_VENUES } from './data.js';
+import { STATE_WORLD_PROFILES } from './stateWorldProfiles.js';
 
 const PALETTES = {
   coastal: { grass: '#859b7a', sand: '#c6b18a', water: '#5d9290', foliage: '#53745a' },
@@ -11,6 +12,39 @@ const PALETTES = {
   northeast: { grass: '#b4a17a', sand: '#d7bd91', water: '#7c9585', foliage: '#667552' },
   northwest: { grass: '#b6a17b', sand: '#d6b887', water: '#7e9582', foliage: '#687553' },
 };
+
+const REGIONAL_TONES = {
+  upland: { grass: '#8b996f', sand: '#bc9871', water: '#5d8f91', foliage: '#4b704d', sky: '#bbc5b2' },
+  river: { grass: '#929b70', sand: '#c1a879', water: '#4b8797', foliage: '#58794d', sky: '#bdc9bc' },
+  coastal: { grass: '#7f9a78', sand: '#c9b18b', water: '#3e8997', foliage: '#3e7053', sky: '#b8c9c3' },
+  savannah: { grass: '#a49d6b', sand: '#cbb07b', water: '#75958d', foliage: '#72794b', sky: '#c7c4a9' },
+  delta: { grass: '#6e8b68', sand: '#b8a07c', water: '#347d86', foliage: '#37694d', sky: '#b5c7bd' },
+  sahel: { grass: '#a79568', sand: '#d0ad76', water: '#80988a', foliage: '#6c7048', sky: '#cbbd9e' },
+  forest: { grass: '#7c956b', sand: '#bd9c76', water: '#5b8988', foliage: '#3b6849', sky: '#b4c6b1' },
+  highland: { grass: '#80947a', sand: '#b9ad93', water: '#698d8c', foliage: '#557352', sky: '#b7c4c4' },
+  planned: { grass: '#96a078', sand: '#c7b48d', water: '#77989b', foliage: '#5a784e', sky: '#c0c9c0' },
+  'sahel-city': { grass: '#a29165', sand: '#d1aa70', water: '#81968a', foliage: '#6b7148', sky: '#c9b99b' },
+  confluence: { grass: '#89976d', sand: '#bea77c', water: '#3e8292', foliage: '#63774c', sky: '#bdc9bd' },
+  'lagoon-city': { grass: '#718d70', sand: '#c2ae8d', water: '#348d98', foliage: '#47714f', sky: '#b8c8c2' },
+  'urban-hills': { grass: '#8c946d', sand: '#bd9972', water: '#648d8e', foliage: '#58744a', sky: '#c1c5b4' },
+  'mangrove-city': { grass: '#63856a', sand: '#b8a081', water: '#2f7882', foliage: '#32674c', sky: '#b2c5bf' },
+  'highland-river': { grass: '#7a947b', sand: '#b8a98f', water: '#4f8790', foliage: '#4b724e', sky: '#b5c4c1' },
+};
+
+const ARCHITECTURE_PALETTES = {
+  north: { houseColors: ['#d7c29d', '#c3a77e', '#e1d0aa', '#b89b73'], roofColors: ['#655b49', '#786a50', '#554f42'], compoundColor: '#c1b08d', awningColors: ['#bf8356', '#d6aa4e', '#71836b'], maxFloors: 2 },
+  'north-urban': { houseColors: ['#d5c29d', '#c9ad7e', '#e1d0aa', '#b99c75'], roofColors: ['#655b49', '#786a50', '#554f42'], compoundColor: '#c1b08d', awningColors: ['#bf8356', '#d6aa4e', '#71836b'], maxFloors: 3 },
+  southern: { houseColors: ['#dfc9a6', '#d8c6ac', '#b7c7ae', '#d8b7a7', '#d9d5be'], roofColors: ['#655c4f', '#716a5d', '#535d56'], compoundColor: '#c7b69b', awningColors: ['#d86f4c', '#eab94b', '#4d9980', '#577aaf'], maxFloors: 3 },
+  coastal: { houseColors: ['#e0d1b5', '#d1c4a7', '#b8ccbb', '#d6b9a5'], roofColors: ['#5d655c', '#72685a', '#496258'], compoundColor: '#c9bea3', awningColors: ['#d7735e', '#e2b34e', '#489887', '#6288aa'], maxFloors: 3 },
+  'middle-belt': { houseColors: ['#d8c5a2', '#ccb18a', '#c3c4a4', '#d9b79c'], roofColors: ['#655d4d', '#79705b', '#57635a'], compoundColor: '#c4b295', awningColors: ['#c67c58', '#d5ad4b', '#63886f'], maxFloors: 3 },
+  upland: { houseColors: ['#d8c7a9', '#c9b398', '#b7c1a7', '#cbb4a4'], roofColors: ['#655f52', '#797163', '#536057'], compoundColor: '#c6b8a0', awningColors: ['#ce7957', '#d3ac4c', '#5e8e70'], maxFloors: 2 },
+  planned: { houseColors: ['#ded9ca', '#c9d0c3', '#c7c9bf', '#d5c2a6'], roofColors: ['#59655f', '#727a75', '#4d5d60'], compoundColor: '#c8c9b9', awningColors: ['#d8795b', '#ddb84f', '#4b9b87'], maxFloors: 4 },
+  'south-west': { houseColors: ['#dfc8a7', '#d2bd9e', '#bec7aa', '#d6b29a'], roofColors: ['#655e50', '#786f5d', '#4f5f57'], compoundColor: '#c6b59b', awningColors: ['#c96f4e', '#e1b54b', '#58856c'], maxFloors: 3 },
+  'south-west-urban': { houseColors: ['#ded0b5', '#d0c4a9', '#b8c7b6', '#d6b3a0'], roofColors: ['#625c50', '#766c5b', '#52625a'], compoundColor: '#c5b8a0', awningColors: ['#d36d4b', '#e2b54c', '#4c9276'], maxFloors: 4 },
+  'coastal-urban': { houseColors: ['#e1d5bf', '#d0c4aa', '#b4c9bd', '#d6b9a7'], roofColors: ['#58665f', '#766d5d', '#475e5d'], compoundColor: '#c6bda8', awningColors: ['#d96f57', '#e2b44d', '#459a8b'], maxFloors: 5 },
+};
+
+const WET_KINDS = new Set(['river', 'coastal', 'delta', 'confluence', 'lagoon-city', 'mangrove-city', 'highland-river']);
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const hash = (value) => {
@@ -101,17 +135,66 @@ function makePalmTree(x, z, height, foliageColor) {
   return group;
 }
 
+function makeSavannahTree(x, z, height, foliageColor) {
+  const group = new THREE.Group();
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.17, height * 0.72, 7), new THREE.MeshStandardMaterial({ color: '#805e3e', roughness: 0.95 }));
+  trunk.position.y = height * 0.36;
+  trunk.castShadow = true;
+  group.add(trunk);
+  const crown = new THREE.Mesh(new THREE.SphereGeometry(height * 0.27, 9, 6), new THREE.MeshStandardMaterial({ color: foliageColor, roughness: 0.94 }));
+  crown.position.y = height * 0.77;
+  crown.scale.set(1.75, 0.62, 1.3);
+  crown.castShadow = true;
+  group.add(crown);
+  group.position.set(x, 0, z);
+  return group;
+}
+
+function makeMangroveTree(x, z, height, foliageColor) {
+  const group = new THREE.Group();
+  const trunkMaterial = new THREE.MeshStandardMaterial({ color: '#665b3f', roughness: 0.95 });
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.17, height * 0.68, 7), trunkMaterial);
+  trunk.position.y = height * 0.34;
+  trunk.castShadow = true;
+  group.add(trunk);
+  for (let root = 0; root < 5; root += 1) {
+    const angle = (root / 5) * Math.PI * 2;
+    const prop = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.07, height * 0.48, 5), trunkMaterial);
+    prop.position.set(Math.cos(angle) * 0.26, height * 0.18, Math.sin(angle) * 0.26);
+    prop.rotation.z = Math.cos(angle) * 0.48;
+    prop.rotation.x = Math.sin(angle) * 0.48;
+    group.add(prop);
+  }
+  const canopyMaterial = new THREE.MeshStandardMaterial({ color: foliageColor, roughness: 0.94 });
+  for (let crownIndex = 0; crownIndex < 3; crownIndex += 1) {
+    const crown = new THREE.Mesh(new THREE.IcosahedronGeometry(height * (0.27 + crownIndex * 0.025), 1), canopyMaterial);
+    crown.position.set((crownIndex - 1) * 0.36, height * (0.7 + (crownIndex % 2) * 0.06), (crownIndex % 2) * 0.22);
+    crown.castShadow = true;
+    group.add(crown);
+  }
+  group.position.set(x, 0, z);
+  return group;
+}
+
+function makeRegionalTree(x, z, height, palette, material, rand) {
+  if (palette.vegetation === 'mangrove') return makeMangroveTree(x, z, height, palette.foliage);
+  if (palette.vegetation === 'dry' || palette.vegetation === 'savannah') return makeSavannahTree(x, z, height, palette.foliage);
+  if (palette.vegetation === 'palm' && rand() > 0.34) return makePalmTree(x, z, height, palette.foliage);
+  return makeTree(x, z, height, palette.foliage, material);
+}
+
 function makeBuilding(rand, x, z, index, palette) {
   const group = new THREE.Group();
   const w = 2.1 + rand() * 2.5;
   const d = 2.2 + rand() * 2.3;
-  const floors = 1 + Math.floor(rand() * 4);
+  const floors = 1 + Math.floor(rand() * (palette.maxFloors || 4));
   const h = 1.6 + floors * 0.78;
-  const wallColors = ['#dfc9a6', '#d8c6ac', '#b7c7ae', '#d8b7a7', '#d9d5be', '#b2c0b5', '#c5bba7', '#e0d2b7'];
+  const wallColors = palette.houseColors || ['#dfc9a6', '#d8c6ac', '#b7c7ae', '#d8b7a7', '#d9d5be', '#b2c0b5', '#c5bba7', '#e0d2b7'];
   const wall = box(w, h, d, wallColors[Math.floor(rand() * wallColors.length)]);
   wall.position.y = h / 2;
   group.add(wall);
-  const roof = box(w + 0.12, 0.18, d + 0.12, ['#655c4f', '#716a5d', '#535d56'][index % 3]);
+  const roofColors = palette.roofColors || ['#655c4f', '#716a5d', '#535d56'];
+  const roof = box(w + 0.12, 0.18, d + 0.12, roofColors[index % roofColors.length]);
   roof.position.y = h + 0.09;
   group.add(roof);
   // Flat-roofed compounds, modest balconies, and shade canopies are common visual cues in many Nigerian city neighbourhoods.
@@ -128,7 +211,8 @@ function makeBuilding(rand, x, z, index, palette) {
       group.add(post);
     }
   }
-  const awningColor = ['#d86f4c', '#eab94b', '#4d9980', '#577aaf'][Math.floor(rand() * 4)];
+  const awningColors = palette.awningColors || ['#d86f4c', '#eab94b', '#4d9980', '#577aaf'];
+  const awningColor = awningColors[Math.floor(rand() * awningColors.length)];
   if (rand() > 0.38) {
     const awning = box(w * 0.85, 0.16, 0.36, awningColor, { castShadow: false });
     awning.position.set(0, 0.92, d / 2 + 0.12);
@@ -167,7 +251,7 @@ function makeBuilding(rand, x, z, index, palette) {
     yard.position.set(0, 0.018, 0.05);
     yard.receiveShadow = true;
     group.add(yard);
-    const compoundColor = ['#c8b99f', '#b7b09b', '#c7b99f'][index % 3];
+    const compoundColor = palette.compoundColor || ['#c8b99f', '#b7b09b', '#c7b99f'][index % 3];
     const wallHeight = 0.58;
     const wallThickness = 0.14;
     const gateWidth = 1.2;
@@ -572,13 +656,247 @@ function makeFlyover(scene, materials) {
   void materials;
 }
 
-function buildWorld(root, state, onVenueSelect, playerRef, remoteRef, playerColor, touchRef, focusRef) {
+function addRegionalWater(scene, palette, kind, rand) {
+  const depth = ['delta', 'mangrove-city', 'lagoon-city'].includes(kind) ? 15 : 10;
+  const water = new THREE.Mesh(new THREE.PlaneGeometry(80, depth), new THREE.MeshStandardMaterial({ color: palette.water, roughness: 0.38, metalness: 0.08 }));
+  water.rotation.x = -Math.PI / 2;
+  water.position.set(0, -0.125, -30.2);
+  water.receiveShadow = true;
+  scene.add(water);
+  const shoreline = box(80, 0.18, 0.58, palette.sand, { castShadow: false });
+  shoreline.position.set(0, -0.03, -30.2 + depth / 2);
+  scene.add(shoreline);
+  const deck = box(11.2, 0.25, 1.45, '#8e8874');
+  deck.position.set(0, 0.33, -24.8);
+  scene.add(deck);
+  for (const x of [-4.2, -2.1, 0, 2.1, 4.2]) {
+    const pier = box(0.34, 0.85, 0.42, '#aaa18a');
+    pier.position.set(x, -0.01, -24.8);
+    scene.add(pier);
+  }
+  for (const side of [-1, 1]) {
+    const rail = box(11.2, 0.21, 0.085, '#d4c7a4', { castShadow: false });
+    rail.position.set(0, 0.56, -24.8 + side * 0.68);
+    scene.add(rail);
+  }
+  const reedMaterial = new THREE.MeshStandardMaterial({ color: palette.foliage, roughness: 0.94 });
+  for (let reedIndex = 0; reedIndex < 14; reedIndex += 1) {
+    const x = -38 + rand() * 76;
+    const reed = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.72 + rand() * 0.55, 5), reedMaterial);
+    reed.position.set(x, 0.27, -24.0 - rand() * 0.8);
+    reed.castShadow = true;
+    scene.add(reed);
+  }
+}
+
+function addRegionalRelief(scene, palette, profile, rand) {
+  if (!profile || profile.relief < 0.28) return;
+  const hillCount = Math.round(2 + profile.relief * 6);
+  for (let hillIndex = 0; hillIndex < hillCount; hillIndex += 1) {
+    let x = (rand() - 0.5) * 66;
+    if (Math.abs(x) < 16) x = (x < 0 ? -1 : 1) * (18 + rand() * 13);
+    const z = (rand() > 0.52 ? -1 : 1) * (22 + rand() * 13);
+    const radius = 4.5 + rand() * 5.5;
+    const height = 2.5 + profile.relief * (8 + rand() * 10);
+    const hill = new THREE.Mesh(new THREE.ConeGeometry(radius, height, 7, 2), new THREE.MeshStandardMaterial({ color: hillIndex % 2 ? palette.sand : palette.foliage, roughness: 1 }));
+    hill.position.set(x, height / 2 - 0.16, z);
+    hill.rotation.y = rand() * Math.PI;
+    hill.castShadow = true;
+    hill.receiveShadow = true;
+    scene.add(hill);
+    if (profile.relief > 0.72) {
+      const cap = new THREE.Mesh(new THREE.ConeGeometry(radius * 0.36, height * 0.47, 5, 1), new THREE.MeshStandardMaterial({ color: '#9b9380', roughness: 0.98 }));
+      cap.position.set(x, height * 0.72, z);
+      cap.rotation.y = rand() * Math.PI;
+      scene.add(cap);
+    }
+  }
+}
+
+function landmarkFeature(label = '') {
+  const text = label.toLowerCase();
+  if (text.includes('stadium')) return 'stadium';
+  if (text.includes('market')) return 'market';
+  if (text.includes('palace')) return 'palace';
+  if (text.includes('minaret')) return 'minaret';
+  if (text.includes('mosque')) return 'mosque';
+  if (text.includes('railway')) return 'railway';
+  if (text.includes('bridge')) return 'bridge';
+  if (text.includes('waterfront') || text.includes('marina') || text.includes('confluence')) return 'waterfront';
+  if (text.includes('rock') || text.includes('hill') || text.includes('ridge')) return 'rock';
+  if (text.includes('park') || text.includes('garden') || text.includes('wildlife')) return 'park';
+  if (text.includes('moat')) return 'moat';
+  if (text.includes('cultural') || text.includes('heritage') || text.includes('museum')) return 'heritage';
+  if (text.includes('transit') || text.includes('three arms')) return 'transit';
+  if (text.includes('roundabout')) return 'roundabout';
+  return 'civic';
+}
+
+function makeStateSignature(stateInfo, palette, sceneMaterials) {
+  const group = new THREE.Group();
+  const feature = landmarkFeature(stateInfo.landmark);
+  const base = new THREE.Mesh(new THREE.CircleGeometry(3.05, 28), new THREE.MeshStandardMaterial({ color: palette.sand, roughness: 0.9 }));
+  base.rotation.x = -Math.PI / 2;
+  base.position.y = 0.035;
+  group.add(base);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(3.05, 0.08, 6, 32), new THREE.MeshStandardMaterial({ color: palette.accent, roughness: 0.72 }));
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 0.1;
+  group.add(ring);
+  const featureColor = palette.accent || '#d8f36b';
+  if (feature === 'market') {
+    for (let stallIndex = 0; stallIndex < 3; stallIndex += 1) {
+      const stall = new THREE.Group();
+      const counter = box(1.25, 0.58, 0.86, ['#b78455', '#c89561', '#a97e57'][stallIndex]);
+      counter.position.y = 0.38;
+      stall.add(counter);
+      const canopy = box(1.48, 0.15, 1.02, [featureColor, '#d7ad4c', '#5e9472'][stallIndex]);
+      canopy.position.y = 0.88;
+      stall.add(canopy);
+      stall.position.set((stallIndex - 1) * 1.62, 0, 0);
+      group.add(stall);
+    }
+  } else if (feature === 'palace' || feature === 'mosque' || feature === 'minaret') {
+    const main = box(feature === 'minaret' ? 1.45 : 3.3, feature === 'minaret' ? 3.1 : 1.55, feature === 'minaret' ? 1.45 : 2.8, '#d8c6a3');
+    main.position.y = feature === 'minaret' ? 1.62 : 0.83;
+    group.add(main);
+    if (feature !== 'minaret') {
+      const dome = new THREE.Mesh(new THREE.SphereGeometry(0.85, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: featureColor, roughness: 0.7 }));
+      dome.position.y = 1.58;
+      group.add(dome);
+    }
+    const towerCount = feature === 'minaret' ? 0 : 2;
+    for (let towerIndex = 0; towerIndex < (towerCount || 1); towerIndex += 1) {
+      const tower = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.28, feature === 'minaret' ? 3.1 : 2.6, 9), new THREE.MeshStandardMaterial({ color: '#c6b38e', roughness: 0.72 }));
+      tower.position.set(feature === 'minaret' ? 0 : (towerIndex === 0 ? -2.05 : 2.05), feature === 'minaret' ? 1.7 : 1.35, -0.15);
+      group.add(tower);
+      const cap = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.62, 9), new THREE.MeshStandardMaterial({ color: featureColor, roughness: 0.68 }));
+      cap.position.set(tower.position.x, feature === 'minaret' ? 3.45 : 2.92, -0.15);
+      group.add(cap);
+    }
+  } else if (feature === 'railway') {
+    for (const z of [-0.65, 0.65]) {
+      const rail = box(4.8, 0.09, 0.08, '#515b57', { castShadow: false, metalness: 0.22 });
+      rail.position.set(0, 0.15, z);
+      group.add(rail);
+    }
+    for (let tie = -2; tie <= 2; tie += 1) {
+      const sleeper = box(0.12, 0.1, 1.7, '#6e5941', { castShadow: false });
+      sleeper.position.set(tie * 0.9, 0.11, 0);
+      group.add(sleeper);
+    }
+    const train = box(2.15, 0.78, 1.08, '#697e82');
+    train.position.set(0, 0.65, 0);
+    group.add(train);
+    const stripe = box(2.18, 0.13, 1.1, featureColor, { castShadow: false });
+    stripe.position.set(0, 0.73, 0);
+    group.add(stripe);
+  } else if (feature === 'waterfront' || feature === 'bridge') {
+    const water = new THREE.Mesh(new THREE.PlaneGeometry(5.4, 2.2), new THREE.MeshStandardMaterial({ color: palette.water, roughness: 0.4, metalness: 0.08 }));
+    water.rotation.x = -Math.PI / 2;
+    water.position.set(0, 0.08, -1.45);
+    group.add(water);
+    const pier = box(4.2, 0.2, 1.0, '#988a6e');
+    pier.position.set(0, 0.38, -0.35);
+    group.add(pier);
+    for (let postIndex = -2; postIndex <= 2; postIndex += 1) {
+      const post = box(0.18, 0.72, 0.18, '#9d927c');
+      post.position.set(postIndex * 0.78, 0.29, -0.35);
+      group.add(post);
+    }
+    if (feature === 'bridge') {
+      const arch = new THREE.Mesh(new THREE.TorusGeometry(1.5, 0.12, 6, 20, Math.PI), new THREE.MeshStandardMaterial({ color: featureColor, roughness: 0.7 }));
+      arch.rotation.z = Math.PI;
+      arch.position.set(0, 0.82, -0.35);
+      group.add(arch);
+    }
+  } else if (feature === 'rock') {
+    for (let rockIndex = 0; rockIndex < 4; rockIndex += 1) {
+      const height = 1.7 + rockIndex * 0.34;
+      const rock = new THREE.Mesh(new THREE.ConeGeometry(0.68 + rockIndex * 0.12, height, 5, 1), new THREE.MeshStandardMaterial({ color: rockIndex % 2 ? '#827d70' : '#958d7b', roughness: 1 }));
+      rock.position.set((rockIndex - 1.5) * 0.72, height / 2 + 0.06, 0.1);
+      rock.rotation.z = (rockIndex - 1.5) * 0.06;
+      group.add(rock);
+    }
+  } else if (feature === 'park') {
+    for (let treeIndex = 0; treeIndex < 4; treeIndex += 1) {
+      const tree = makeRegionalTree(Math.cos(treeIndex * Math.PI / 2) * 2, Math.sin(treeIndex * Math.PI / 2) * 1.8, 2.7 + (treeIndex % 2) * 0.4, palette, sceneMaterials, () => 1);
+      group.add(tree);
+    }
+    const monument = box(0.42, 1.6, 0.42, featureColor);
+    monument.position.y = 0.83;
+    group.add(monument);
+  } else if (feature === 'moat') {
+    const moat = new THREE.Mesh(new THREE.PlaneGeometry(4.65, 4.65), new THREE.MeshStandardMaterial({ color: palette.water, roughness: 0.45 }));
+    moat.rotation.x = -Math.PI / 2;
+    moat.position.y = 0.075;
+    group.add(moat);
+    const court = box(2.65, 1.15, 2.65, '#c4ad88');
+    court.position.y = 0.68;
+    group.add(court);
+    const roof = box(2.85, 0.18, 2.85, featureColor);
+    roof.position.y = 1.36;
+    group.add(roof);
+  } else if (feature === 'stadium') {
+    const bowl = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.4, 0.85, 20, 1, true), new THREE.MeshStandardMaterial({ color: featureColor, side: THREE.DoubleSide, roughness: 0.78 }));
+    bowl.position.y = 0.62;
+    group.add(bowl);
+    const field = new THREE.Mesh(new THREE.CircleGeometry(1.6, 20), new THREE.MeshStandardMaterial({ color: '#6d9664', roughness: 0.9 }));
+    field.rotation.x = -Math.PI / 2;
+    field.position.y = 1.06;
+    group.add(field);
+  } else if (feature === 'heritage') {
+    const hall = box(3.7, 1.35, 2.6, '#c8b18d');
+    hall.position.y = 0.72;
+    group.add(hall);
+    for (let pillarIndex = -1; pillarIndex <= 1; pillarIndex += 1) {
+      const pillar = box(0.26, 2.0, 0.26, featureColor);
+      pillar.position.set(pillarIndex * 0.76, 1.0, 1.0);
+      group.add(pillar);
+    }
+  } else {
+    const plaza = new THREE.Mesh(new THREE.CircleGeometry(1.85, 22), new THREE.MeshStandardMaterial({ color: '#cbbd9d', roughness: 0.88 }));
+    plaza.rotation.x = -Math.PI / 2;
+    plaza.position.y = 0.09;
+    group.add(plaza);
+    const plinth = box(feature === 'transit' ? 1.1 : 0.72, feature === 'transit' ? 2.2 : 1.35, 0.72, featureColor);
+    plinth.position.y = feature === 'transit' ? 1.1 : 0.67;
+    group.add(plinth);
+    if (feature === 'transit') {
+      for (const side of [-1, 1]) {
+        const arm = box(0.25, 2.4, 0.25, '#d6cfbb');
+        arm.position.set(side * 1.0, 1.2, 0);
+        arm.rotation.z = side * -0.25;
+        group.add(arm);
+      }
+    }
+    if (feature === 'roundabout') {
+      const island = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 1.0, 0.35, 20), new THREE.MeshStandardMaterial({ color: '#789267' }));
+      island.position.set(0, 0.29, 0);
+      group.add(island);
+    }
+  }
+  const title = labelSprite(stateInfo.landmark, palette.accent);
+  title.position.set(0, 4.15, 0.1);
+  title.scale.set(4.1, 1.02, 1);
+  group.add(title);
+  group.position.set(-17.6, 0, 17.6);
+  group.name = `regional-signature-${stateInfo.name}`;
+  return group;
+}
+
+function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, playerColor, touchRef, focusRef) {
   const stateInfo = STATES.find((item) => item.name === state) || STATES[0];
-  const palette = PALETTES[stateInfo.terrain] || PALETTES.coastal;
-  const rand = seeded(hash(`${stateInfo.name}/${stateInfo.capital}`));
+  const profile = STATE_WORLD_PROFILES[stateInfo.name] || STATE_WORLD_PROFILES.Lagos;
+  const basePalette = PALETTES[stateInfo.terrain] || PALETTES.coastal;
+  const tone = REGIONAL_TONES[profile.kind] || REGIONAL_TONES.upland;
+  const architecture = ARCHITECTURE_PALETTES[profile.architecture] || ARCHITECTURE_PALETTES.southern;
+  const palette = { ...basePalette, ...tone, ...profile, ...architecture };
+  const localitySeed = locality ? `${locality.lga}/${locality.ward}/${locality.lat}/${locality.lon}` : stateInfo.capital;
+  const rand = seeded(hash(`${stateInfo.name}/${localitySeed}`));
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color('#b8c4ac');
-  scene.fog = new THREE.Fog('#b8c4ac', 42, 94);
+  scene.background = new THREE.Color(palette.sky || '#b8c4ac');
+  scene.fog = new THREE.Fog(palette.sky || '#b8c4ac', 42, 94);
 
   const camera = new THREE.PerspectiveCamera(39, 1, 0.1, 150);
   camera.position.set(26, 28, 31);
@@ -591,7 +909,7 @@ function buildWorld(root, state, onVenueSelect, playerRef, remoteRef, playerColo
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.15;
-  renderer.domElement.setAttribute('aria-label', `Interactive 3D map of ${stateInfo.capital}, ${stateInfo.name}`);
+  renderer.domElement.setAttribute('aria-label', locality ? `Procedurally generated 3D neighbourhood for ${locality.ward}, ${locality.lga}, ${stateInfo.name}; not a surveyed street map` : `Procedurally generated 3D district for ${stateInfo.capital}, ${stateInfo.name}; not a surveyed street map`);
   renderer.domElement.tabIndex = 0;
   renderer.domElement.style.touchAction = 'none';
   root.appendChild(renderer.domElement);
@@ -616,14 +934,18 @@ function buildWorld(root, state, onVenueSelect, playerRef, remoteRef, playerColo
   ground.position.y = -0.16;
   ground.receiveShadow = true;
   scene.add(ground);
+  addRegionalRelief(scene, palette, profile, rand);
+  if (WET_KINDS.has(profile.kind)) addRegionalWater(scene, palette, profile.kind, rand);
 
+  const roadScale = locality?.settlement === 'local' ? 0.88 : (profile.architecture === 'planned' ? 1.2 : 1);
+  const localDensity = locality?.settlement === 'local' ? profile.density * 0.74 : profile.density;
   const asphaltMat = new THREE.MeshStandardMaterial({ color: '#46504b', roughness: 0.91 });
   const curbMat = new THREE.MeshStandardMaterial({ color: '#d8c9a3', roughness: 0.91 });
   const roads = [
-    { axis: 'x', at: 0, width: 4.1, length: 52 },
-    { axis: 'z', at: 0, width: 4.1, length: 52 },
-    { axis: 'x', at: 12.5, width: 2.35, length: 52 },
-    { axis: 'z', at: -13.2, width: 2.35, length: 52 },
+    { axis: 'x', at: 0, width: 4.1 * roadScale, length: 52 },
+    { axis: 'z', at: 0, width: 4.1 * roadScale, length: 52 },
+    { axis: 'x', at: 12.5, width: 2.35 * roadScale, length: 52 },
+    { axis: 'z', at: -13.2, width: 2.35 * roadScale, length: 52 },
   ];
   for (const road of roads) {
     const alongX = road.axis === 'x';
@@ -698,16 +1020,18 @@ function buildWorld(root, state, onVenueSelect, playerRef, remoteRef, playerColo
   const sceneMaterials = {
     trunk: new THREE.MeshStandardMaterial({ color: '#765940', roughness: 0.94 }),
   };
-  makeFlyover(scene, sceneMaterials);
+  const flyoverStates = new Set(['Federal Capital Territory', 'Kaduna', 'Kano', 'Lagos', 'Oyo', 'Rivers']);
+  if (flyoverStates.has(stateInfo.name) && (!locality || locality.settlement === 'capital')) makeFlyover(scene, sceneMaterials);
 
-  const buildingPalette = [];
   const blocks = [-17.8, -11.8, -5.8, 5.8, 11.8, 17.8];
   let buildingIndex = 0;
   for (const zBlock of blocks) {
     for (const xBlock of blocks) {
       if (Math.abs(xBlock) < 8 && Math.abs(zBlock) < 8) continue;
       if (Math.abs(zBlock + 10.5) < 4.8) continue;
-      const count = 1 + Math.floor(rand() * 2);
+      if (xBlock === -17.8 && zBlock === 17.8) continue;
+      if (rand() > Math.min(0.98, localDensity + 0.08)) continue;
+      const count = rand() < localDensity ? 2 : 1;
       for (let i = 0; i < count; i += 1) {
         const offsetX = (rand() - 0.5) * 2.0;
         const offsetZ = (rand() - 0.5) * 2.0;
@@ -720,32 +1044,30 @@ function buildWorld(root, state, onVenueSelect, playerRef, remoteRef, playerColo
     }
   }
   // A few detached homes and workshops keep the neighbourhood from feeling like a grid.
-  for (let i = 0; i < 11; i += 1) {
+  for (let i = 0; i < Math.round(5 + localDensity * 7); i += 1) {
     const x = (rand() - 0.5) * 31;
     const z = (rand() - 0.5) * 31;
     if (Math.abs(x) < 5.5 || Math.abs(z) < 5.5) continue;
-    if (Math.abs(z + 10.5) < 4.5) continue;
+    if (Math.abs(z + 10.5) < 4.5 || Math.hypot(x + 17.6, z - 17.6) < 5.2) continue;
     scene.add(makeBuilding(rand, x, z, buildingIndex++, palette));
   }
 
-  // Small green pockets, trees, kiosks, and benches.
-  for (let i = 0; i < 25; i += 1) {
+  // Small green pockets, trees, kiosks, and benches vary by biome and settlement density.
+  const vegetationCount = Math.round(16 + profile.relief * 5 + (['rainforest', 'mangrove'].includes(profile.vegetation) ? 7 : 0));
+  for (let i = 0; i < vegetationCount; i += 1) {
     const x = (rand() - 0.5) * 37;
     const z = (rand() - 0.5) * 37;
     if (Math.abs(x) < 4.6 || Math.abs(z) < 4.6 || Math.abs(z + 10.5) < 3.1) continue;
-    if (Math.abs(x) > 22 || Math.abs(z) > 22) continue;
-    const southernTerrain = ['coastal', 'southwest', 'southeast'].includes(stateInfo.terrain);
-    const usePalm = southernTerrain && rand() > 0.72;
-    const tree = usePalm
-      ? makePalmTree(x, z, 3.2 + rand() * 1.8, palette.foliage)
-      : makeTree(x, z, 1.9 + rand() * 1.7, palette.foliage, sceneMaterials);
+    if (Math.abs(x) > 22 || Math.abs(z) > 22 || Math.hypot(x + 17.6, z - 17.6) < 4.2) continue;
+    const tree = makeRegionalTree(x, z, 2.3 + rand() * 2.0, palette, sceneMaterials, rand);
     tree.scale.setScalar(0.73 + rand() * 0.42);
     scene.add(tree);
   }
 
+  scene.add(makeStateSignature(stateInfo, palette, sceneMaterials));
   for (const venue of WORLD_VENUES) scene.add(makeVenue(venue, palette, sceneMaterials, stateInfo.name));
 
-  // A roadside gateway gives the current capital a distinct sense of place without claiming to be a full survey map.
+  // A small arrival gateway marks the selected generated community; it is not a surveyed boundary or street map.
   const gate = new THREE.Group();
   const signFrame = box(0.22, 2.1, 0.22, '#685e4c');
   signFrame.position.set(-18, 1.05, 0);
@@ -753,15 +1075,14 @@ function buildWorld(root, state, onVenueSelect, playerRef, remoteRef, playerColo
   const sign = box(4.2, 0.9, 0.24, '#294b3a');
   sign.position.set(-15.8, 2.1, 0);
   gate.add(sign);
-  const signText = labelSprite(`${stateInfo.capital} • ${stateInfo.name}`, '#d8f36b');
+  const signText = labelSprite(locality ? `${locality.ward} • ${locality.lga}` : `${stateInfo.capital} • ${stateInfo.name}`, palette.accent);
   signText.position.set(-15.8, 2.16, 0.18);
   signText.scale.set(4.05, 0.96, 1);
   gate.add(signText);
   scene.add(gate);
 
   const traffic = [];
-  const routeBrands = ['#e7c642', '#41a37f', '#537fbd', '#d66b51', '#e8a845', '#b66d9f'];
-  const routeBrand = routeBrands[hash(stateInfo.name) % routeBrands.length];
+  const routeBrand = palette.accent;
   const routeAccent = ['#203b32', '#f2d95d', '#efe5ce', '#263a57', '#f3ead5', '#283a32'][hash(stateInfo.name) % 6];
   const cars = [
     [routeBrand, 'bus', -18, -0.82, 1.05],
@@ -769,7 +1090,7 @@ function buildWorld(root, state, onVenueSelect, playerRef, remoteRef, playerColo
     ['#eee2c0', 'sedan', 10, -0.76, 1.18],
     ['#d86644', 'bus', 19, 0.76, 0.8],
   ];
-  cars.forEach(([color, type, x, z, speed], i) => {
+  cars.slice(0, Math.max(2, Math.round(2 + localDensity * 2))).forEach(([color, type, x, z, speed], i) => {
     const car = makeCar(color, type, routeAccent);
     car.position.set(x, 0, z);
     if ((i % 2) === 0) car.rotation.y = Math.PI;
@@ -781,7 +1102,7 @@ function buildWorld(root, state, onVenueSelect, playerRef, remoteRef, playerColo
     ['#ddd9ca', 'sedan', -0.7, 18, 1.12],
     [routeAccent, 'keke', 12.8, -18, 0.82],
   ];
-  verticalCars.forEach(([color, type, x, z, speed], i) => {
+  verticalCars.slice(0, Math.max(1, Math.round(localDensity * 3))).forEach(([color, type, x, z, speed], i) => {
     const car = makeCar(color, type);
     car.position.set(x, 0, z);
     car.rotation.y = Math.PI / 2 * (i % 2 === 0 ? 1 : -1);
@@ -791,7 +1112,7 @@ function buildWorld(root, state, onVenueSelect, playerRef, remoteRef, playerColo
 
   const pedestrians = [];
   const clothing = ['#df8066', '#527c6e', '#d4b750', '#657ca0', '#b87c49', '#9b87ba'];
-  for (let i = 0; i < 19; i += 1) {
+  for (let i = 0; i < Math.round(6 + localDensity * 13); i += 1) {
     const x = -18 + rand() * 36;
     const z = -18 + rand() * 36;
     if (Math.abs(x) < 3.0 && Math.abs(z) < 3.0) continue;
@@ -1026,7 +1347,7 @@ function buildWorld(root, state, onVenueSelect, playerRef, remoteRef, playerColo
   };
 }
 
-export default function World({ state, selectedVenueId = 'square', focusRequest = 0, onVenueSelect, onMove, remotePlayers = [], playerColor = '#d8f36b' }) {
+export default function World({ state, locality = null, locationKey = 'state-capital', selectedVenueId = 'square', focusRequest = 0, onVenueSelect, onMove, remotePlayers = [], playerColor = '#d8f36b' }) {
   const mountRef = useRef(null);
   const positionRef = useRef({ x: -5.8, z: 3.5 });
   const remoteRef = useRef(remotePlayers);
@@ -1077,6 +1398,7 @@ export default function World({ state, selectedVenueId = 'square', focusRequest 
       const cleanup = buildWorld(
         mountRef.current,
         state,
+        locality,
         (id) => venueCallbackRef.current?.(id),
         positionRef,
         remoteRef,
@@ -1091,7 +1413,7 @@ export default function World({ state, selectedVenueId = 'square', focusRequest 
       setWorldError(true);
       return undefined;
     }
-  }, [state, playerColor]);
+  }, [state, playerColor, locationKey]);
 
   useEffect(() => {
     if (selectedVenueId) focusRef.current?.(selectedVenueId);
