@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { STATES, WORLD_VENUES } from './data.js';
@@ -731,6 +731,7 @@ export default function World({ state, onVenueSelect, onMove, remotePlayers = []
   const touchRef = useRef({ x: 0, z: 0 });
   const stickPointerRef = useRef(null);
   const [stickOffset, setStickOffset] = useState({ x: 0, y: 0 });
+  const [worldError, setWorldError] = useState(false);
   remoteRef.current = remotePlayers;
   moveCallbackRef.current = onMove;
   venueCallbackRef.current = onVenueSelect;
@@ -766,15 +767,22 @@ export default function World({ state, onVenueSelect, onMove, remotePlayers = []
 
   useEffect(() => {
     if (!mountRef.current) return undefined;
-    return buildWorld(
-      mountRef.current,
-      state,
-      (id) => venueCallbackRef.current?.(id),
-      positionRef,
-      remoteRef,
-      playerColor,
-      touchRef,
-    );
+    setWorldError(false);
+    try {
+      return buildWorld(
+        mountRef.current,
+        state,
+        (id) => venueCallbackRef.current?.(id),
+        positionRef,
+        remoteRef,
+        playerColor,
+        touchRef,
+      );
+    } catch (error) {
+      console.error('NIGERIA 2027 3D scene failed to initialize:', error);
+      setWorldError(true);
+      return undefined;
+    }
   }, [state, playerColor]);
 
   useEffect(() => {
@@ -785,6 +793,7 @@ export default function World({ state, onVenueSelect, onMove, remotePlayers = []
   return (
     <div className="world-layer">
       <div className="world-canvas" ref={mountRef} />
+      {worldError && <div className="world-error-banner" role="status"><strong>3D view unavailable</strong><span>The interactive scene could not start in this browser. The rest of the game should still work. Refresh the page or enable WebGL/hardware acceleration.</span></div>}
       <div className="mobile-controls">
         <div className="mobile-move-label">MOVE</div>
         <div
