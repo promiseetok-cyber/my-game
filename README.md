@@ -64,20 +64,19 @@ The app stores the split-by-state directory in `public/data/locations/`: `index.
 
 Those records identify electoral wards/registration areas; they are **not** an exhaustive list of villages, streets, homes, polling units, or legal administrative boundaries. A representative coordinate helps distinguish and seed a selected locality's generated scene. It does not place individual buildings on surveyed parcels or make the scene a navigable GIS map. Roads, landmark treatments, block layouts, and neighbourhood details are fictional procedural art. State-specific environment profiles live in `src/stateWorldProfiles.js`.
 
-## Multiplayer boundary
+## Story mode, accounts, and multiplayer boundary
 
-The running backend is intentionally a **single-process, in-memory demo**. It supports lightweight world presence, movement intents, and chat in a room scoped to a selected state/LGA/ward for small tests. It does not yet include accounts, durable player saves, matchmaking, payments, content moderation, authoritative economy transactions, or horizontal scaling. The ₦1,000,000 start balance is a local demo value; it is not connected to a real registration or money system.
+The player follows **one continuous political ladder** from the shared Youth Leader/community-organising opening through party and public contests, council, state/federal legislature, appointed political service, Governor, party nomination and a speculative presidential scenario. Judiciary, INEC, SIEC and CBN are the **other side of the story**: optional, typed civic episodes with fictional institutional characters. They are not alternate player ladders, and they do not turn the player into a judge, election administrator or central-bank appointee. The game keeps elections, internal selections and statutory appointments distinct.
 
-Before a public MMO launch, the next engineering steps would be:
+Campaign actions now route into location-based story scenes. Town Hall opens a realtime public meeting where players can travel to the venue, deliver typed speeches, reply, vote on the outcome and invite another player by DM. Service, coalition, policy, rally and senior-consultation scenes require a written response and a consequential choice rather than immediately changing stats.
 
-1. Add identity/authentication, account recovery, session security, and age/privacy safeguards.
-2. Move movement, campaign actions, inventory, and transaction validation to authoritative game services; never trust client balances.
-3. Add Postgres persistence and migrations, then pool connections (e.g. PgBouncer) for production workloads.
-4. Add Redis/Socket.IO adapter or a dedicated room service for cross-node presence and state fan-out; partition the world into regional/capital instances rather than broadcasting every player to every player.
-5. Add rate limits, anti-cheat validation, moderation/reporting, audit trails, backups, observability, load tests, and incident response.
-6. Deploy behind TLS/WAF/load balancing with autoscaling and tested recovery procedures.
+The Socket.IO server currently supports small-room world presence, movement, locality-scoped chat, live meetings, replies/votes, meeting invitations and direct messages. With no account credentials configured, guest profiles stay in this browser and meeting/DM state is session-only. This is a clear guest preview, not an account. An optional Supabase Auth + Postgres integration is included for secure sign-up/sign-in, saved campaign profiles, and persistent authenticated messages/meeting records. To enable it, run `supabase/schema.sql` and configure the server-only values described in [`ACCOUNT_SETUP.md`](ACCOUNT_SETUP.md). Never expose `SUPABASE_SERVICE_ROLE_KEY` in frontend variables or source control.
 
-This sequence is required before describing the product as a massive multiplayer game. The included server is a foundation for iteration, not that finished infrastructure.
+The ₦1,000,000 starter purse and every action cost are fictional game values. There is no payment, attendee-compensation, wallet-transfer, withdrawal, real registration, or real-world campaign-finance API. The server remains a single-process prototype; it does not yet provide matchmaking, horizontal scaling, comprehensive content moderation, authoritative campaign-economy validation, rate-limited production messaging, or a production incident/recovery system. It is not a finished MMO.
+
+Validation in this workspace: `npm run build` passes; the local server health/config routes and unauthenticated guest smoke tests passed for world presence, direct messages, meeting invitations, typed meeting speech, votes, and host close. Supabase signup, account saves, RLS/schema behavior, cross-session DMs, and cloud meeting records are **not verified** because this environment has no Supabase credentials. Do not treat account-backed persistence as live until the setup checklist passes against a configured project.
+
+Before a larger public multiplayer launch, add a production Socket.IO adapter/room service, server-authoritative progression/economy checks, scalable rate limits, moderation/reporting, audit trails, backups, observability, load tests, and tested recovery procedures. Keep TLS, account recovery and privacy safeguards in place.
 
 ## Research and design guardrails
 
@@ -91,14 +90,18 @@ The civic desk includes links to the INEC election calendar and FAQ, the EU Elec
 src/
   App.jsx       React UI, career simulation, research/atlas screens, Socket.IO client
   World.jsx     procedural Three.js world and player movement
-  data.js       state/capital data, offices, chapters, NPCs, research notes
+  data.js       state/capital data, offices, political chapters, story scenes and research notes
+  careerTracks.js single political ladder plus institutional side-story arcs
   stateWorldProfiles.js biome and architectural profiles for 37 state/FCT scenes
-  style.css     responsive game UI
+  style.css     responsive game UI, account panels and story/meeting room
   locality.css  responsive LGA/ward explorer
 public/data/locations/
   index.json    coverage counts and state file slugs
   *.json        one lazy-loadable state/FCT LGA → ward directory per file
 server/
-  server.js     Express health endpoint and small Socket.IO room server
+  server.js     Express auth/profile API, Supabase persistence adapter and Socket.IO story rooms
+supabase/
+  schema.sql    Supabase Auth-linked profile, DM, meeting, message, participant and vote tables/RLS
+ACCOUNT_SETUP.md  optional account/database deployment steps
 vite.config.js Vite host/proxy/build configuration
 ```

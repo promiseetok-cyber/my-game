@@ -40,11 +40,11 @@ export const STATES = [
 
 export const CHAPTERS = [
   {
-    id: 'ward-roots', number: '01', title: 'Home ground', phase: 'COMMUNITY', office: 'Ward organiser',
-    location: 'Community square', goal: 'Earn a mandate before asking for one.', kind: 'story',
-    description: 'Listen first. Bring residents, traders, youth groups, and local associations into a public-needs meeting. The ward is not a voting bloc; it is a neighbourhood of people with different priorities.',
-    objectives: ['Hold two listening sessions', 'Publish one practical ward plan', 'Build a cross-community coalition'],
-    fact: 'Representation begins at the ward, where polling units and community networks meet.'
+    id: 'ward-roots', number: '01', title: 'Start in public', phase: 'SHARED CIVIC STORY', office: 'Youth Leader / community organiser',
+    location: 'Community square', goal: 'Listen, convene, and build a public record before choosing a profession.', kind: 'story', shared: true,
+    description: 'A common civic chapter for every route: gather different voices, make a practical commitment, and publish what the community said. A party Youth Leader is an internal organising role; community organising can also be voluntary civic work.',
+    objectives: ['Hold a listening session', 'Write a public commitment', 'Choose a professional route'],
+    fact: 'This is not a public elected office. Party Youth Leader is an internal party position; a community organiser is a voluntary civic role.'
   },
   {
     id: 'party-congress', number: '02', title: 'The ward congress', phase: 'PARTY POLITICS', office: 'Ward executive / delegate',
@@ -200,13 +200,69 @@ export const OFFICE_CATALOG = [
       ['INEC Chairperson / National Commissioner', 'Election-management leadership; institutionally distinct from party politics.'],
       ['Resident Electoral Commissioner (REC)', 'INEC’s state/FCT representative; not a partisan campaign office.'],
       ['Electoral Officer / Returning Officer', 'Election administration and result-return roles assigned for specific processes.'],
-      ['SIEC Chairperson / Commissioner', 'State Independent Electoral Commission leadership for local elections.'],
-      ['Chief Justice of Nigeria / Supreme Court Justice', 'Judicial office; not an elected campaign title.'],
-      ['Court of Appeal / High Court Judge', 'Judicial offices governed by constitutional appointment processes.'],
+      ['SIEC Chairperson / Commissioner', 'State Independent Electoral Commission leadership for local elections; arrangements are governed by the relevant state rules.'],
+      ['Chief Justice of Nigeria / Supreme Court Justice', 'Judicial office; not an elected campaign title. Appointment follows constitutional procedures.'],
+      ['Court of Appeal / High Court Judge', 'Judicial offices governed by constitutional appointment processes and qualifications.'],
       ['Election Petition Tribunal member', 'Judicial assignment for a petition; not a route to political office.'],
     ]
   },
+  {
+    group: 'APPOINTED — CENTRAL BANK / PROFESSIONAL SERVICE', icon: '○', roles: [
+      ['CBN Governor', 'Appointed by the President, subject to Senate confirmation under the CBN Act 2007; not elected.'],
+      ['CBN Deputy Governor', 'Appointed role requiring recognized financial experience and Senate confirmation under the CBN Act.'],
+      ['Monetary Policy Committee member', 'The committee includes statutory office-holders and appointed members; it is not a campaign post.'],
+      ['CBN economist / analyst / department director', 'Professional service roles inside the Bank; recruitment and promotion are separate from political campaigns.'],
+    ]
+  },
 ];
+
+export const CAMPAIGN_SCENES = {
+  service: {
+    venueId: 'market', title: 'A neighbourhood service forum', format: 'PUBLIC SERVICE STORY', speaker: 'Fictional community convenor',
+    prompt: 'Residents disagree about what to fix first. Write the first line you will say, then choose how to turn the concern into a public, checkable plan.',
+    choices: [
+      { id: 'co-design', label: 'Co-design the plan with residents', effects: { trust: 7, influence: 1, integrity: 3, coalition: 1 }, outcome: 'Residents will help define the work, publish the priorities, and review progress.' },
+      { id: 'publish-costs', label: 'Publish costs and milestones first', effects: { trust: 4, influence: 3, integrity: 4, coalition: 0 }, outcome: 'A public cost sheet gives the neighbourhood something concrete to inspect.' },
+      { id: 'quick-launch', label: 'Launch quickly, then report back', effects: { trust: 2, influence: 4, integrity: 0, coalition: 1 }, outcome: 'The launch creates visibility, but the follow-up will decide whether trust lasts.' },
+    ],
+  },
+  coalition: {
+    venueId: 'caucus', title: 'Coalition talks', format: 'CROSS-COMMUNITY ROUND TABLE', speaker: 'Fictional convenor',
+    prompt: 'A partner wants a private assurance before joining. State your opening line and choose a transparent way to handle the disagreement.',
+    choices: [
+      { id: 'publish-terms', label: 'Publish shared terms and dissenting views', effects: { trust: 4, influence: 5, integrity: 4, coalition: 2 }, outcome: 'The coalition proceeds with a public agreement and a record of unresolved concerns.' },
+      { id: 'slow-talks', label: 'Pause and invite an independent facilitator', effects: { trust: 6, influence: 2, integrity: 4, coalition: 1 }, outcome: 'The talks slow down, but each group gets a fair chance to explain its position.' },
+      { id: 'narrow-deal', label: 'Agree only on a limited shared programme', effects: { trust: 2, influence: 4, integrity: 2, coalition: 1 }, outcome: 'A smaller pact is easier to verify; questions outside it remain open.' },
+    ],
+  },
+  policy: {
+    venueId: 'assembly', title: 'The policy lab', format: 'PUBLIC HEARING', speaker: 'Fictional policy clerk',
+    prompt: 'A proposal sounds popular but its cost and delivery timeline are unclear. Write one sentence that explains your position.',
+    choices: [
+      { id: 'costed-plan', label: 'Publish a costed plan with milestones', effects: { trust: 6, influence: 2, integrity: 4, coalition: 0 }, outcome: 'The plan is recorded with a budget note, delivery milestones, and a review date.' },
+      { id: 'pilot-first', label: 'Run a limited, independently reviewed pilot', effects: { trust: 5, influence: 3, integrity: 4, coalition: 1 }, outcome: 'A smaller pilot will test feasibility before public money is scaled up.' },
+      { id: 'listen-again', label: 'Return to residents before committing', effects: { trust: 7, influence: 1, integrity: 3, coalition: 0 }, outcome: 'The proposal returns to consultation; no promise is made before the evidence is clearer.' },
+    ],
+  },
+  rally: {
+    venueId: 'stadium', title: 'A public address', format: 'OPEN COMMUNITY EVENT', speaker: 'Fictional event moderator',
+    prompt: 'Deliver a short typed address. Make one promise you can explain, one limit you will acknowledge, and one way people can hold you to account.',
+    choices: [
+      { id: 'accountable', label: 'End with a public reporting commitment', effects: { trust: 5, influence: 6, integrity: 4, coalition: 1 }, outcome: 'The audience hears a reporting date and a public channel for scrutiny.' },
+      { id: 'practical', label: 'Focus on one practical, costed priority', effects: { trust: 4, influence: 7, integrity: 3, coalition: 0 }, outcome: 'The address stays focused on a deliverable rather than sweeping promises.' },
+      { id: 'inclusive', label: 'Invite questions and acknowledge disagreement', effects: { trust: 6, influence: 4, integrity: 4, coalition: 1 }, outcome: 'The address opens the floor to questions rather than presenting one community as a single voice.' },
+    ],
+  },
+  consult: {
+    venueId: 'caucus', title: 'A senior consultation', format: 'FICTIONAL ONE-TO-ONE STORY', speaker: 'Senior public figure',
+    prompt: 'A senior figure asks what you will do with their advice. Write your answer, then decide whether to publish a commitment, ask a follow-up question, or decline the request.',
+    choices: [
+      { id: 'publish', label: 'Publish a checkable commitment', effects: { trust: 4, influence: 4, integrity: 3, coalition: 1 }, outcome: 'The consultation ends with a public, checkable follow-up rather than a guaranteed endorsement.' },
+      { id: 'clarify', label: 'Ask for evidence and clarify the public interest', effects: { trust: 5, influence: 2, integrity: 4, coalition: 0 }, outcome: 'You ask for a written basis and keep the discussion focused on public service.' },
+      { id: 'decline', label: 'Decline politely and explain why', effects: { trust: 2, influence: 1, integrity: 5, coalition: 0 }, outcome: 'You decline the ask respectfully and record the reason in your public journal.' },
+    ],
+  },
+};
 
 export const WORLD_VENUES = [
   { id: 'ward', short: 'WARD HQ', label: 'Ward Office', type: 'office', x: -9, z: 4, color: '#d9f36b', desc: 'Meet ward organisers and work on the service charter.' },

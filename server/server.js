@@ -3,7 +3,9 @@ import { existsSync } from 'node:fs';
 import { createServer } from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
 import { Server } from 'socket.io';
+import { CAREER_TRACKS, DEFAULT_CAREER_TRACK, INSTITUTIONAL_STORY_ARCS } from '../src/careerTracks.js';
 import { STATES } from '../src/data.js';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -14,22 +16,412 @@ const httpServer = createServer(app);
 const io = new Server(httpServer, {
   path: '/socket.io',
   cors: { origin: true, methods: ['GET', 'POST'] },
-  maxHttpBufferSize: 24_000,
+  maxHttpBufferSize: 32_000,
   pingInterval: 25_000,
   pingTimeout: 20_000,
 });
 const port = Number(process.env.PORT || 4100);
 const sessions = new Map();
-const roomCount = (room) => io.sockets.adapter.rooms.get(room)?.size || 0;
-const safeText = (value, max = 24) => String(value ?? '').replace(/[<>\u0000-\u001f]/g, '').trim().slice(0, max);
-const safeNumber = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
-const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
-const slug = (value) => String(value).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 36);
+const meetings = new Map();
+const meetingMessages = new Map();
+const meetingVotes = new Map();
 const palette = ['#d8f36b', '#ff9c75', '#8cb9ff', '#9be4cd', '#e9a4cf', '#e5c46e'];
 
-app.use(express.json({ limit: '32kb' }));
+const SUPABASE_URL = String(process.env.SUPABASE_URL || '').replace(/\/$/, '');
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const authConfigured = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+const persistenceConfigured = Boolean(authConfigured && SUPABASE_SERVICE_ROLE_KEY);
+const roomCount = (room) => io.sockets.adapter.rooms.get(room)?.size || 0;
+const safeText = (value, max = 120) => String(value ?? '').replace(/[<>\u0000-\u001f\u007f]/g, '').trim().slice(0, max);
+const safeNumber = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
+const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+const slug = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 36);
+const isUuid = (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
+
+app.use(express.json({ limit: '48kb' }));
+
+async function supabaseAuthRequest(endpoint, { method = 'POST', body, accessToken } = {}) {
+  if (!authConfigured) throw new Error('Account service is not configured.');
+  const response = await fetch(`${SUPABASE_URL}/auth/v1/${endpoint}`, {
+    method,
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  const payload = await response.json().catch(() => ({}));
+  return { ok: response.ok, status: response.status, payload };
+}
+
+async function verifyAccessToken(accessToken) {
+  if (!authConfigured || !accessToken) return null;
+  const response = await supabaseAuthRequest('user', { method: 'GET', accessToken });
+  return response.ok && response.payload?.id ? response.payload : null;
+}
+
+async function dbRequest(table, query = {}, { method = 'GET', body, prefer = 'return=representation' } = {}) {
+  if (!persistenceConfigured) return null;
+  const url = new URL(`${SUPABASE_URL}/rest/v1/${table}`);
+  for (const [key, value] of Object.entries(query)) url.searchParams.set(key, String(value));
+  const response = await fetch(url, {
+    method,
+    headers: {
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+      ...(prefer ? { Prefer: prefer } : {}),
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    const reason = payload?.message || payload?.details || `database request failed (${response.status})`;
+    throw new Error(reason);
+  }
+  return payload;
+}
+
+async function persistQuietly(table, query, options, context) {
+  try { return await dbRequest(table, query, options); }
+  catch (error) { console.warn(`[persistence:${context}]`, error.message); return null; }
+}
+
+function bearerFromRequest(req) {
+  const value = req.headers.authorization || '';
+  return value.startsWith('Bearer ') ? value.slice(7).trim() : '';
+}
+
+async function authenticatedUser(req, res) {
+  if (!authConfigured) {
+    res.status(503).json({ error: 'Account service is not configured on this deployment.' });
+    return null;
+  }
+  const token = bearerFromRequest(req);
+  const user = await verifyAccessToken(token);
+  if (!user) {
+    res.status(401).json({ error: 'Your account session is invalid or expired. Sign in again.' });
+    return null;
+  }
+  return user;
+}
+
+function sanitizedSave(input = {}) {
+  const sourceProfile = input.profile && typeof input.profile === 'object' ? input.profile : {};
+  const trackId = CAREER_TRACKS.some((track) => track.id === input.careerTrack) ? input.careerTrack : DEFAULT_CAREER_TRACK;
+  const knownStates = STATES.map((state) => state.name);
+  const state = knownStates.includes(input.state) ? input.state : 'Lagos';
+  const profile = {
+    started: Boolean(sourceProfile.started),
+    alias: safeText(sourceProfile.alias, 26) || 'New Candidate',
+    party: safeText(sourceProfile.party, 60),
+    partyTag: safeText(sourceProfile.partyTag, 12),
+    color: /^#[0-9a-f]{6}$/i.test(String(sourceProfile.color || '')) ? sourceProfile.color : palette[0],
+    cash: clamp(Math.round(safeNumber(sourceProfile.cash, 1_000_000)), 0, 1_000_000),
+    trust: clamp(Math.round(safeNumber(sourceProfile.trust, 32)), 0, 100),
+    influence: clamp(Math.round(safeNumber(sourceProfile.influence, 12)), 0, 100),
+    integrity: clamp(Math.round(safeNumber(sourceProfile.integrity, 78)), 0, 100),
+    coalition: clamp(Math.round(safeNumber(sourceProfile.coalition, 1)), 0, 12),
+    energy: clamp(Math.round(safeNumber(sourceProfile.energy, 88)), 0, 100),
+    scandals: clamp(Math.round(safeNumber(sourceProfile.scandals, 0)), 0, 999),
+    evidence: clamp(Math.round(safeNumber(sourceProfile.evidence, 0)), 0, 999),
+    wins: clamp(Math.round(safeNumber(sourceProfile.wins, 0)), 0, 999),
+    lastContest: sourceProfile.lastContest && typeof sourceProfile.lastContest === 'object' ? sourceProfile.lastContest : null,
+    legalBoost: Boolean(sourceProfile.legalBoost),
+    completed: Boolean(sourceProfile.completed),
+    completedSideStories: Array.isArray(sourceProfile.completedSideStories) ? sourceProfile.completedSideStories.filter((id) => INSTITUTIONAL_STORY_ARCS.some((arc) => arc.id === id)).slice(0, 12) : [],
+  };
+  const progressInput = input.progressByTrack && typeof input.progressByTrack === 'object' ? input.progressByTrack : {};
+  const progressByTrack = {};
+  for (const track of CAREER_TRACKS) {
+    const progress = progressInput[track.id] && typeof progressInput[track.id] === 'object' ? progressInput[track.id] : {};
+    progressByTrack[track.id] = {
+      stageIndex: clamp(Math.floor(safeNumber(progress.stageIndex, 0)), 0, track.stages.length - 1),
+      missionProgress: clamp(Math.floor(safeNumber(progress.missionProgress, 0)), 0, 3),
+    };
+  }
+  return {
+    profile,
+    careerTrack: trackId,
+    progressByTrack,
+    storyDay: clamp(Math.floor(safeNumber(input.storyDay, 1)), 1, 100_000),
+    state,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function publicPlayer(player) {
+  if (!player) return null;
+  return {
+    id: player.id,
+    name: player.name,
+    state: player.state,
+    capital: player.capital,
+    lga: player.lga,
+    ward: player.ward,
+    color: player.color,
+    x: player.x,
+    z: player.z,
+    accountBacked: Boolean(player.userId),
+  };
+}
+
+function publicMeeting(meeting, viewerSocketId = '') {
+  const votes = meetingVotes.get(meeting.id) || new Map();
+  const tally = { support: 0, mixed: 0, concern: 0 };
+  for (const value of votes.values()) if (Object.hasOwn(tally, value)) tally[value] += 1;
+  return {
+    id: meeting.id,
+    title: meeting.title,
+    topic: meeting.topic,
+    actionId: meeting.actionId,
+    hostName: meeting.hostName,
+    location: meeting.location,
+    status: meeting.status,
+    createdAt: meeting.createdAt,
+    participants: meeting.members.size,
+    votes: tally,
+    cloudBacked: Boolean(persistenceConfigured && meeting.hostUserId),
+    isHost: viewerSocketId ? meeting.hostSocketId === viewerSocketId || Boolean(meeting.hostUserId && sessions.get(viewerSocketId)?.userId === meeting.hostUserId) : false,
+    outcome: meeting.outcome || null,
+  };
+}
+
+function allOpenMeetings() {
+  return [...meetings.values()].filter((meeting) => meeting.status === 'open').sort((a, b) => b.createdAt - a.createdAt).slice(0, 30).map((meeting) => publicMeeting(meeting));
+}
+
+function liveParticipants(meeting) {
+  return [...meeting.members].map((socketId) => publicPlayer(sessions.get(socketId))).filter(Boolean);
+}
+
+async function hydrateMeeting(row) {
+  if (!row?.id) return null;
+  if (meetings.has(row.id)) return meetings.get(row.id);
+  const [messages, votes] = await Promise.all([
+    dbRequest('meeting_messages', { meeting_id: `eq.${row.id}`, select: '*', order: 'created_at.asc', limit: '100' }).catch(() => []),
+    dbRequest('meeting_votes', { meeting_id: `eq.${row.id}`, select: '*' }).catch(() => []),
+  ]);
+  const meeting = {
+    id: row.id,
+    hostUserId: row.host_id || null,
+    hostSocketId: '',
+    hostName: safeText(row.host_name, 40) || 'Meeting host',
+    title: safeText(row.title, 90) || 'Civic meeting',
+    topic: safeText(row.topic, 280),
+    actionId: safeText(row.action_id, 32),
+    location: row.location || {},
+    status: row.status || 'closed',
+    createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
+    members: new Set(),
+    outcome: row.outcome || null,
+  };
+  meetings.set(meeting.id, meeting);
+  meetingMessages.set(meeting.id, (Array.isArray(messages) ? messages : []).map((message) => ({
+    id: message.id,
+    meetingId: message.meeting_id,
+    senderId: message.sender_id || null,
+    senderName: safeText(message.sender_name, 40) || 'Player',
+    kind: message.kind === 'reply' ? 'reply' : message.kind === 'summary' ? 'summary' : 'speech',
+    body: safeText(message.body, 500),
+    replyTo: message.reply_to || null,
+    at: message.created_at ? new Date(message.created_at).getTime() : Date.now(),
+  })));
+  const voteMap = new Map();
+  for (const vote of Array.isArray(votes) ? votes : []) if (vote.voter_key && ['support', 'mixed', 'concern'].includes(vote.vote)) voteMap.set(vote.voter_key, vote.vote);
+  meetingVotes.set(meeting.id, voteMap);
+  return meeting;
+}
+
+async function loadOpenMeetingsFromDb() {
+  if (!persistenceConfigured) return [];
+  try {
+    const rows = await dbRequest('meetings', { status: 'eq.open', select: '*', order: 'created_at.desc', limit: '30' });
+    for (const row of Array.isArray(rows) ? rows : []) await hydrateMeeting(row);
+  } catch (error) { console.warn('[persistence:meetings-load]', error.message); }
+  return allOpenMeetings();
+}
+
+app.get('/api/config', (_req, res) => {
+  res.json({
+    authEnabled: authConfigured,
+    persistenceEnabled: persistenceConfigured,
+    accountProvider: authConfigured ? 'supabase' : null,
+    guestMode: true,
+  });
+});
+
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, service: 'nigeria-2027-realtime-prototype', connectedPlayers: sessions.size, rooms: io.sockets.adapter.rooms.size });
+  res.json({
+    ok: true,
+    service: 'nigeria-2027-story-world',
+    connectedPlayers: sessions.size,
+    activeMeetings: [...meetings.values()].filter((meeting) => meeting.status === 'open').length,
+    rooms: io.sockets.adapter.rooms.size,
+    accountsConfigured: authConfigured,
+    persistenceConfigured,
+  });
+});
+
+app.post('/api/auth/signup', async (req, res) => {
+  try {
+    if (!authConfigured) return res.status(503).json({ error: 'Account creation is not configured on this deployment. Continue as a local guest for now.' });
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const password = String(req.body?.password || '');
+    const alias = safeText(req.body?.alias, 26);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return res.status(400).json({ error: 'Enter a valid email address.' });
+    if (password.length < 10 || password.length > 128) return res.status(400).json({ error: 'Use a password between 10 and 128 characters.' });
+    const result = await supabaseAuthRequest('signup', { body: { email, password, data: { display_name: alias || 'New Candidate' } } });
+    if (!result.ok) return res.status(result.status).json({ error: result.payload?.msg || result.payload?.message || 'The account could not be created. Check your details and try again.' });
+    const user = result.payload?.user || result.payload;
+    const session = result.payload?.access_token ? result.payload : result.payload?.session || null;
+    res.json({ user: user ? { id: user.id, email: user.email, emailConfirmed: Boolean(user.email_confirmed_at) } : null, session, confirmationRequired: !session });
+  } catch (error) {
+    res.status(502).json({ error: 'The account provider could not be reached. Try again in a moment.' });
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    if (!authConfigured) return res.status(503).json({ error: 'Account sign-in is not configured on this deployment.' });
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const password = String(req.body?.password || '');
+    if (!email || !password) return res.status(400).json({ error: 'Enter your email and password.' });
+    const result = await supabaseAuthRequest('token?grant_type=password', { body: { email, password } });
+    if (!result.ok) return res.status(result.status).json({ error: result.payload?.msg || result.payload?.message || 'Sign-in failed. Check your details and try again.' });
+    res.json({ session: result.payload, user: result.payload?.user ? { id: result.payload.user.id, email: result.payload.user.email, emailConfirmed: Boolean(result.payload.user.email_confirmed_at) } : null });
+  } catch {
+    res.status(502).json({ error: 'The account provider could not be reached. Try again in a moment.' });
+  }
+});
+
+app.post('/api/auth/refresh', async (req, res) => {
+  try {
+    if (!authConfigured) return res.status(503).json({ error: 'Account sign-in is not configured.' });
+    const refreshToken = String(req.body?.refresh_token || '');
+    if (!refreshToken) return res.status(400).json({ error: 'No refresh token was provided.' });
+    const result = await supabaseAuthRequest('token?grant_type=refresh_token', { body: { refresh_token: refreshToken } });
+    if (!result.ok) return res.status(result.status).json({ error: 'Your session could not be refreshed. Sign in again.' });
+    res.json({ session: result.payload });
+  } catch {
+    res.status(502).json({ error: 'The account provider could not be reached.' });
+  }
+});
+
+app.get('/api/auth/me', async (req, res) => {
+  try {
+    const user = await authenticatedUser(req, res);
+    if (!user) return;
+    res.json({ user: { id: user.id, email: user.email, emailConfirmed: Boolean(user.email_confirmed_at) } });
+  } catch {
+    res.status(502).json({ error: 'Could not verify the account session.' });
+  }
+});
+
+app.post('/api/auth/logout', async (req, res) => {
+  try {
+    const token = bearerFromRequest(req);
+    if (authConfigured && token) await supabaseAuthRequest('logout', { accessToken: token });
+    res.json({ ok: true });
+  } catch { res.json({ ok: true }); }
+});
+
+app.get('/api/profile', async (req, res) => {
+  try {
+    const user = await authenticatedUser(req, res);
+    if (!user) return;
+    if (!persistenceConfigured) return res.status(503).json({ error: 'Profile persistence needs the server-only Supabase database key.' });
+    const rows = await dbRequest('profiles', { id: `eq.${user.id}`, select: 'game_save,updated_at', limit: '1' });
+    res.json({ save: Array.isArray(rows) && rows[0]?.game_save ? rows[0].game_save : null });
+  } catch (error) {
+    console.warn('[persistence:profile-read]', error.message);
+    res.status(502).json({ error: 'Could not load the saved account profile.' });
+  }
+});
+
+app.put('/api/profile', async (req, res) => {
+  try {
+    const user = await authenticatedUser(req, res);
+    if (!user) return;
+    if (!persistenceConfigured) return res.status(503).json({ error: 'Profile persistence needs the server-only Supabase database key.' });
+    const save = sanitizedSave(req.body?.save || {});
+    const profileRow = {
+      id: user.id,
+      alias: save.profile.alias,
+      party: save.profile.party,
+      color: save.profile.color,
+      state: save.state,
+      career_track: save.careerTrack,
+      game_save: save,
+      updated_at: new Date().toISOString(),
+    };
+    await dbRequest('profiles', { on_conflict: 'id' }, { method: 'POST', body: profileRow, prefer: 'resolution=merge-duplicates,return=minimal' });
+    res.json({ ok: true, updatedAt: profileRow.updated_at });
+  } catch (error) {
+    console.warn('[persistence:profile-write]', error.message);
+    res.status(502).json({ error: 'Could not save the account profile.' });
+  }
+});
+
+app.get('/api/dms', async (req, res) => {
+  try {
+    const user = await authenticatedUser(req, res);
+    if (!user) return;
+    if (!persistenceConfigured) return res.status(503).json({ error: 'Message history needs the server-only Supabase database key.' });
+    const rows = await dbRequest('direct_messages', {
+      or: `(sender_id.eq.${user.id},recipient_id.eq.${user.id})`,
+      select: 'id,sender_id,recipient_id,sender_name,recipient_name,body,message_type,meeting_id,created_at',
+      order: 'created_at.desc',
+      limit: '100',
+    });
+    res.json({ messages: Array.isArray(rows) ? rows : [] });
+  } catch (error) {
+    console.warn('[persistence:dm-read]', error.message);
+    res.status(502).json({ error: 'Could not load your direct-message history.' });
+  }
+});
+
+app.post('/api/dms', async (req, res) => {
+  try {
+    const user = await authenticatedUser(req, res);
+    if (!user) return;
+    if (!persistenceConfigured) return res.status(503).json({ error: 'Message persistence needs the server-only Supabase database key.' });
+    const recipientId = String(req.body?.recipientId || '');
+    const body = safeText(req.body?.body, 300);
+    if (!isUuid(recipientId) || !body) return res.status(400).json({ error: 'A valid recipient and message are required.' });
+    if (recipientId === user.id) return res.status(400).json({ error: 'You cannot message your own account.' });
+    const recipients = await dbRequest('profiles', { id: `eq.${recipientId}`, select: 'id,alias', limit: '1' });
+    if (!Array.isArray(recipients) || !recipients.length) return res.status(404).json({ error: 'That account could not be found.' });
+    const rows = await dbRequest('direct_messages', {}, { method: 'POST', body: {
+      sender_id: user.id,
+      recipient_id: recipientId,
+      sender_name: safeText(req.body?.senderName || user.user_metadata?.display_name || 'Player', 40),
+      recipient_name: safeText(recipients[0].alias || 'Player', 40),
+      body,
+      message_type: 'text',
+    } });
+    res.json({ message: Array.isArray(rows) ? rows[0] : null });
+  } catch (error) {
+    console.warn('[persistence:dm-write]', error.message);
+    res.status(502).json({ error: 'Could not save the direct message.' });
+  }
+});
+
+app.get('/api/meetings', async (req, res) => {
+  try {
+    const live = allOpenMeetings();
+    if (persistenceConfigured) {
+      const rows = await dbRequest('meetings', { status: 'eq.open', select: '*', order: 'created_at.desc', limit: '30' });
+      for (const row of Array.isArray(rows) ? rows : []) await hydrateMeeting(row);
+    }
+    const list = allOpenMeetings();
+    res.json({ meetings: list.length ? list : live, persistent: persistenceConfigured });
+  } catch (error) {
+    console.warn('[persistence:meeting-list]', error.message);
+    res.json({ meetings: allOpenMeetings(), persistent: false });
+  }
 });
 
 // In production, serve the Vite build from this same origin so the game and
@@ -42,8 +434,27 @@ if (existsSync(indexPath)) {
   });
 }
 
-io.on('connection', (socket) => {
+io.use(async (socket, next) => {
+  try {
+    const accessToken = socket.handshake.auth?.accessToken || '';
+    if (!accessToken) return next(); // Anonymous local/guest sessions remain available.
+    const user = await verifyAccessToken(accessToken);
+    if (!user) return next(new Error('Account session is invalid. Please sign in again.'));
+    socket.data.accountUser = user;
+    next();
+  } catch {
+    next(new Error('Account verification is temporarily unavailable.'));
+  }
+});
+
+io.on('connection', async (socket) => {
   socket.data.lastMoveAt = 0;
+  socket.data.lastChatAt = 0;
+  socket.data.lastDmAt = 0;
+  socket.data.lastMeetingMessageAt = 0;
+  const persisted = persistenceConfigured ? await loadOpenMeetingsFromDb() : [];
+  socket.emit('meeting:list', [...persisted, ...allOpenMeetings()].filter((meeting, index, rows) => rows.findIndex((item) => item.id === meeting.id) === index));
+
   socket.on('world:join', (payload = {}) => {
     const stateRequest = safeText(payload.state, 64);
     const state = STATES.find((item) => item.name.toLowerCase() === stateRequest.toLowerCase()) || STATES.find((item) => item.name === 'Lagos');
@@ -59,6 +470,7 @@ io.on('connection', (socket) => {
     const room = `world:${slug(state.name)}:${slug(lga || 'capital')}:${slug(ward || 'centre')}`;
     const player = {
       id: socket.id,
+      userId: socket.data.accountUser?.id || null,
       name: displayName,
       state: state.name,
       capital: state.capital,
@@ -73,9 +485,9 @@ io.on('connection', (socket) => {
     sessions.set(socket.id, player);
     socket.data.lastMoveAt = 0;
     socket.join(room);
-    const others = [...sessions.values()].filter((item) => item.room === room && item.id !== socket.id).map(({ joinedAt, ...publicPlayer }) => publicPlayer);
-    socket.emit('world:snapshot', { self: player, players: others, online: roomCount(room) });
-    socket.to(room).emit('player:joined', player);
+    const others = [...sessions.values()].filter((item) => item.room === room && item.id !== socket.id).map(publicPlayer);
+    socket.emit('world:snapshot', { self: publicPlayer(player), players: others, online: roomCount(room) });
+    socket.to(room).emit('player:joined', publicPlayer(player));
     io.to(room).emit('world:count', { online: roomCount(room), state: state.name });
   });
 
@@ -98,6 +510,9 @@ io.on('connection', (socket) => {
   socket.on('world:chat', (payload = {}) => {
     const player = sessions.get(socket.id);
     if (!player) return;
+    const now = Date.now();
+    if (now - socket.data.lastChatAt < 450) return;
+    socket.data.lastChatAt = now;
     const message = safeText(payload.message, 180);
     if (!message) return;
     io.to(player.room).emit('world:chat', {
@@ -109,15 +524,262 @@ io.on('connection', (socket) => {
     });
   });
 
-  socket.on('disconnect', () => {
+  socket.on('dm:lookup', (payload = {}) => {
+    const player = sessions.get(socket.id);
+    const target = sessions.get(safeText(payload.peerId, 80));
+    if (!player || !target || target.id === player.id) return;
+    // Only disclose a stable account identifier to the player who explicitly
+    // opened that direct-message thread; it is never broadcast with presence.
+    socket.emit('dm:peer', { peerId: target.id, peerAccountId: target.userId || null });
+  });
+
+  socket.on('dm:send', async (payload = {}) => {
+    const player = sessions.get(socket.id);
+    const recipientId = safeText(payload.recipientId, 80);
+    const recipient = sessions.get(recipientId);
+    if (!player || !recipient || recipient.id === player.id) return;
+    const now = Date.now();
+    if (now - socket.data.lastDmAt < 450) return;
+    socket.data.lastDmAt = now;
+    const body = safeText(payload.message, 300);
+    if (!body) return;
+    const id = randomUUID();
+    const base = { id, fromId: player.id, fromName: player.name, body, at: Date.now(), type: 'text' };
+    socket.emit('dm:message', { ...base, peerId: recipient.id, peerAccountId: recipient.userId || null, incoming: false, state: recipient.state });
+    io.to(recipient.id).emit('dm:message', { ...base, peerId: player.id, peerAccountId: player.userId || null, incoming: true, state: player.state });
+    if (persistenceConfigured && player.userId && recipient.userId) {
+      await persistQuietly('direct_messages', {}, { method: 'POST', body: {
+        id,
+        sender_id: player.userId,
+        recipient_id: recipient.userId,
+        sender_name: player.name,
+        recipient_name: recipient.name,
+        body,
+        message_type: 'text',
+      }, prefer: 'return=minimal' }, 'dm-write');
+    }
+  });
+
+  socket.on('meeting:create', async (payload = {}) => {
     const player = sessions.get(socket.id);
     if (!player) return;
-    sessions.delete(socket.id);
-    socket.to(player.room).emit('player:left', { id: socket.id });
-    io.to(player.room).emit('world:count', { online: roomCount(player.room), state: player.state });
+    const id = randomUUID();
+    const venueId = safeText(payload.location?.venueId, 32) || 'square';
+    const meeting = {
+      id,
+      hostUserId: player.userId,
+      hostSocketId: socket.id,
+      hostName: player.name,
+      title: safeText(payload.title, 90) || 'Community listening meeting',
+      topic: safeText(payload.topic, 280),
+      actionId: safeText(payload.actionId, 32),
+      location: {
+        state: player.state,
+        lga: player.lga,
+        ward: player.ward,
+        venueId,
+        venueName: safeText(payload.location?.venueName, 60) || 'Community Square',
+      },
+      status: 'open',
+      createdAt: Date.now(),
+      members: new Set([socket.id]),
+      outcome: null,
+    };
+    meetings.set(id, meeting);
+    meetingMessages.set(id, []);
+    meetingVotes.set(id, new Map());
+    socket.join(`meeting:${id}`);
+    if (persistenceConfigured && player.userId) {
+      await persistQuietly('meetings', { on_conflict: 'id' }, { method: 'POST', body: {
+        id,
+        host_id: player.userId,
+        host_name: player.name,
+        title: meeting.title,
+        topic: meeting.topic,
+        action_id: meeting.actionId,
+        location: meeting.location,
+        status: 'open',
+        created_at: new Date(meeting.createdAt).toISOString(),
+      }, prefer: 'resolution=merge-duplicates,return=minimal' }, 'meeting-create');
+      await persistQuietly('meeting_participants', { on_conflict: 'meeting_id,participant_key' }, { method: 'POST', body: {
+        meeting_id: id,
+        user_id: player.userId,
+        participant_key: player.userId,
+        display_name: player.name,
+      }, prefer: 'resolution=merge-duplicates,return=minimal' }, 'meeting-host');
+    }
+    socket.emit('meeting:snapshot', { meeting: publicMeeting(meeting, socket.id), messages: [], participants: liveParticipants(meeting) });
+    io.emit('meeting:list', allOpenMeetings());
+  });
+
+  socket.on('meeting:join', async ({ meetingId } = {}) => {
+    const player = sessions.get(socket.id);
+    const id = safeText(meetingId, 80);
+    if (!player || !isUuid(id)) return;
+    let meeting = meetings.get(id);
+    if (!meeting && persistenceConfigured) {
+      try {
+        const rows = await dbRequest('meetings', { id: `eq.${id}`, select: '*', limit: '1' });
+        meeting = await hydrateMeeting(Array.isArray(rows) ? rows[0] : null);
+      } catch (error) { console.warn('[persistence:meeting-join]', error.message); }
+    }
+    if (!meeting || meeting.status !== 'open') {
+      socket.emit('meeting:error', { message: 'That meeting has ended or is no longer available.' });
+      return;
+    }
+    meeting.members.add(socket.id);
+    socket.join(`meeting:${id}`);
+    if (persistenceConfigured && meeting.hostUserId && player.userId) {
+      await persistQuietly('meeting_participants', { on_conflict: 'meeting_id,participant_key' }, { method: 'POST', body: {
+        meeting_id: id,
+        user_id: player.userId,
+        participant_key: player.userId,
+        display_name: player.name,
+      }, prefer: 'resolution=merge-duplicates,return=minimal' }, 'meeting-participant');
+    }
+    const messages = meetingMessages.get(id) || [];
+    socket.emit('meeting:snapshot', { meeting: publicMeeting(meeting, socket.id), messages, participants: liveParticipants(meeting) });
+    socket.to(`meeting:${id}`).emit('meeting:participants', liveParticipants(meeting));
+  });
+
+  socket.on('meeting:message', async (payload = {}) => {
+    const player = sessions.get(socket.id);
+    const meeting = meetings.get(safeText(payload.meetingId, 80));
+    if (!player || !meeting || meeting.status !== 'open' || !meeting.members.has(socket.id)) return;
+    const now = Date.now();
+    if (now - socket.data.lastMeetingMessageAt < 600) return;
+    socket.data.lastMeetingMessageAt = now;
+    const body = safeText(payload.body, 500);
+    if (body.length < 2) return;
+    const kind = payload.kind === 'reply' ? 'reply' : 'speech';
+    const replyTo = kind === 'reply' ? safeText(payload.replyTo, 80) || null : null;
+    const message = {
+      id: randomUUID(),
+      meetingId: meeting.id,
+      senderId: player.userId,
+      senderName: player.name,
+      kind,
+      body,
+      replyTo,
+      at: Date.now(),
+    };
+    const messages = meetingMessages.get(meeting.id) || [];
+    messages.push(message);
+    meetingMessages.set(meeting.id, messages.slice(-100));
+    io.to(`meeting:${meeting.id}`).emit('meeting:message', message);
+    if (persistenceConfigured && meeting.hostUserId && player.userId) {
+      await persistQuietly('meeting_messages', {}, { method: 'POST', body: {
+        id: message.id,
+        meeting_id: meeting.id,
+        sender_id: player.userId,
+        sender_name: player.name,
+        kind,
+        body,
+        reply_to: replyTo,
+        created_at: new Date(message.at).toISOString(),
+      }, prefer: 'return=minimal' }, 'meeting-message');
+    }
+  });
+
+  socket.on('meeting:vote', async (payload = {}) => {
+    const player = sessions.get(socket.id);
+    const meeting = meetings.get(safeText(payload.meetingId, 80));
+    const vote = ['support', 'mixed', 'concern'].includes(payload.vote) ? payload.vote : null;
+    if (!player || !meeting || meeting.status !== 'open' || !meeting.members.has(socket.id) || !vote) return;
+    const votes = meetingVotes.get(meeting.id) || new Map();
+    const voterKey = player.userId || socket.id;
+    votes.set(voterKey, vote);
+    meetingVotes.set(meeting.id, votes);
+    if (persistenceConfigured && meeting.hostUserId && player.userId) {
+      await persistQuietly('meeting_votes', { on_conflict: 'meeting_id,voter_key' }, { method: 'POST', body: {
+        meeting_id: meeting.id,
+        user_id: player.userId,
+        voter_key: voterKey,
+        display_name: player.name,
+        vote,
+      }, prefer: 'resolution=merge-duplicates,return=minimal' }, 'meeting-vote');
+    }
+    const tally = { support: 0, mixed: 0, concern: 0 };
+    for (const value of votes.values()) if (Object.hasOwn(tally, value)) tally[value] += 1;
+    io.to(`meeting:${meeting.id}`).emit('meeting:update', { meeting: publicMeeting(meeting), participants: liveParticipants(meeting), votes: tally });
+  });
+
+  socket.on('meeting:invite', async (payload = {}) => {
+    const player = sessions.get(socket.id);
+    const target = sessions.get(safeText(payload.targetId, 80));
+    const meeting = meetings.get(safeText(payload.meetingId, 80));
+    if (!player || !target || !meeting || meeting.status !== 'open' || !meeting.members.has(socket.id)) return;
+    const invitation = {
+      id: randomUUID(),
+      meeting: publicMeeting(meeting),
+      fromName: player.name,
+      state: meeting.location.state,
+      at: Date.now(),
+      type: 'meeting_invite',
+    };
+    io.to(target.id).emit('meeting:invite', invitation);
+    io.to(target.id).emit('dm:message', { ...invitation, peerId: player.id, peerAccountId: player.userId || null, incoming: true, body: `Invited you to “${meeting.title}”.`, fromName: player.name });
+    socket.emit('dm:message', { ...invitation, peerId: target.id, peerAccountId: target.userId || null, incoming: false, body: `Invited ${target.name} to “${meeting.title}”.` });
+    if (persistenceConfigured && player.userId && target.userId) {
+      await persistQuietly('direct_messages', {}, { method: 'POST', body: {
+        id: invitation.id,
+        sender_id: player.userId,
+        recipient_id: target.userId,
+        sender_name: player.name,
+        recipient_name: target.name,
+        body: `Meeting invitation: ${meeting.title}`,
+        message_type: 'meeting_invite',
+        meeting_id: meeting.id,
+      }, prefer: 'return=minimal' }, 'meeting-invite');
+    }
+  });
+
+  socket.on('meeting:leave', ({ meetingId } = {}) => {
+    const id = safeText(meetingId, 80);
+    const meeting = meetings.get(id);
+    if (!meeting || !meeting.members.has(socket.id)) return;
+    meeting.members.delete(socket.id);
+    socket.leave(`meeting:${id}`);
+    socket.to(`meeting:${id}`).emit('meeting:participants', liveParticipants(meeting));
+  });
+
+  socket.on('meeting:close', async (payload = {}) => {
+    const player = sessions.get(socket.id);
+    const meeting = meetings.get(safeText(payload.meetingId, 80));
+    if (!player || !meeting || meeting.status !== 'open' || !meeting.members.has(socket.id)) return;
+    const isHost = meeting.hostSocketId === socket.id || Boolean(meeting.hostUserId && player.userId === meeting.hostUserId);
+    if (!isHost) {
+      socket.emit('meeting:error', { message: 'Only the meeting host can publish the meeting record.' });
+      return;
+    }
+    const votes = meetingVotes.get(meeting.id) || new Map();
+    const tally = { support: 0, mixed: 0, concern: 0 };
+    for (const value of votes.values()) if (Object.hasOwn(tally, value)) tally[value] += 1;
+    const outcome = tally.support > tally.concern ? 'supported' : tally.concern > tally.support ? 'rework' : 'contested';
+    meeting.outcome = { outcome, votes: tally, participants: meeting.members.size, closedBy: player.name, summary: safeText(payload.summary, 220), closedAt: Date.now() };
+    meeting.status = 'closed';
+    if (persistenceConfigured && meeting.hostUserId) {
+      await persistQuietly('meetings', { id: `eq.${meeting.id}` }, { method: 'PATCH', body: { status: 'closed', outcome: meeting.outcome, ended_at: new Date().toISOString() }, prefer: 'return=minimal' }, 'meeting-close');
+    }
+    io.to(`meeting:${meeting.id}`).emit('meeting:closed', { meeting: publicMeeting(meeting), outcome: meeting.outcome });
+    io.emit('meeting:list', allOpenMeetings());
+  });
+
+  socket.on('disconnect', () => {
+    const player = sessions.get(socket.id);
+    if (player) {
+      sessions.delete(socket.id);
+      socket.to(player.room).emit('player:left', { id: socket.id });
+      io.to(player.room).emit('world:count', { online: roomCount(player.room), state: player.state });
+    }
+    for (const meeting of meetings.values()) {
+      if (meeting.members.delete(socket.id)) {
+        socket.to(`meeting:${meeting.id}`).emit('meeting:participants', liveParticipants(meeting));
+      }
+    }
   });
 });
 
 httpServer.listen(port, '0.0.0.0', () => {
-  console.log(`NIGERIA 2027 realtime prototype listening on 0.0.0.0:${port}`);
+  console.log(`NIGERIA 2027 story server listening on 0.0.0.0:${port}`);
 });
