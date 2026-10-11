@@ -19,6 +19,18 @@ const clamp = (n, min = 0, max = 100) => Math.max(min, Math.min(max, n));
 const money = (amount) => new Intl.NumberFormat('en-NG', { maximumFractionDigits: 0 }).format(Math.max(0, amount));
 const initials = (name = '') => name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase() || 'NC';
 const locationSlug = (name = '') => name.toLowerCase().trim().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+const CAPITAL_LGA_BY_STATE = {
+  Anambra: 'Awka South',
+  Delta: 'Oshimili South',
+  Edo: 'Oredo',
+  Enugu: 'Enugu North',
+  Kwara: 'Ilorin West',
+  Niger: 'Chanchaga',
+  Ogun: 'Abeokuta South',
+  Ondo: 'Akure South',
+  Plateau: 'Jos North',
+  'Federal Capital Territory': 'Abuja Municipal Area Council',
+};
 const wardKey = (ward) => ward ? `${ward.name}|${ward.lat}|${ward.lon}` : '';
 const focusWorldOnMobile = () => {
   if (window.matchMedia?.('(max-width: 1030px)').matches) {
@@ -110,7 +122,7 @@ function App() {
   const currentWard = currentLga?.wards?.find((item) => wardKey(item) === selectedWardKey) || null;
   const capitalSlug = locationSlug(stateInfo.capital);
   const currentLgaSlug = locationSlug(currentLga?.name || '');
-  const isCapitalLga = Boolean(currentLga && (currentLgaSlug.includes(capitalSlug) || capitalSlug.includes(currentLgaSlug)));
+  const isCapitalLga = Boolean(currentLga && (currentLga.name === CAPITAL_LGA_BY_STATE[stateInfo.name] || currentLgaSlug.includes(capitalSlug) || capitalSlug.includes(currentLgaSlug)));
   const sceneLocality = currentWard && currentLga ? { state: stateInfo.name, lga: currentLga.name, ward: currentWard.name, lat: currentWard.lat, lon: currentWard.lon, settlement: isCapitalLga ? 'capital' : 'local' } : null;
   const sceneLocationKey = `${sceneLocality ? `${sceneLocality.state}/${sceneLocality.lga}/${sceneLocality.ward}/${sceneLocality.lat}/${sceneLocality.lon}` : `${stateInfo.name}/capital`}/${communityFocusRequest}`;
   const activeVenue = WORLD_VENUES.find((item) => item.id === activeVenueId) || WORLD_VENUES[1];
@@ -138,7 +150,8 @@ function App() {
         if (!active) return;
         const lgas = Array.isArray(payload?.lgas) ? payload.lgas : [];
         const capitalSlug = locationSlug(stateInfo.capital);
-        const capitalLga = lgas.find((item) => locationSlug(item.name).includes(capitalSlug) || capitalSlug.includes(locationSlug(item.name)));
+        const configuredCapitalLga = CAPITAL_LGA_BY_STATE[stateInfo.name];
+        const capitalLga = lgas.find((item) => item.name === configuredCapitalLga) || lgas.find((item) => locationSlug(item.name).includes(capitalSlug) || capitalSlug.includes(locationSlug(item.name)));
         const firstLga = capitalLga || lgas[0];
         setStateLocalities({ ...payload, lgas });
         setSelectedLgaName(firstLga?.name || '');
