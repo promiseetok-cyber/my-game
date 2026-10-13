@@ -584,6 +584,9 @@ function App() {
   };
   const immersiveActive = page === 'world' && immersiveMode;
   const closeWorldPanels = () => { setNavigationOpen(false); setPhoneOpen(false); };
+  const openPhonePanel = () => { setPage('world'); setImmersiveMode(true); setNavigationOpen(false); setPhoneOpen(true); };
+  const openMobileWorld = () => { setPage('world'); setImmersiveMode(true); closeWorldPanels(); };
+  const navigateMobile = (nextPage) => { setPage(nextPage); closeWorldPanels(); };
   useEffect(() => {
     if (!navigationOpen && !phoneOpen) return undefined;
     const onKeyDown = (event) => { if (event.key === 'Escape') closeWorldPanels(); };
@@ -1056,7 +1059,7 @@ function App() {
     if (page === 'offices') return <OfficesPage />;
     if (page === 'civic') return <CivicPage />;
     if (page === 'atlas') return <AtlasPage query={atlasQuery} setQuery={setAtlasQuery} zone={selectedZone} setZone={setSelectedZone} selected={selectedStateName} onTravel={travelToState} />;
-    return <WorldPage stateInfo={stateInfo} stateWorldProfile={stateWorldProfile} venue={activeVenue} venueName={activeVenueName} focusRequest={venueFocusRequest} locationKey={sceneLocationKey} locality={sceneLocality} localityData={stateLocalities?.state === stateInfo.name ? stateLocalities : null} localityLoading={localityLoading || (!localityError && stateLocalities?.state !== stateInfo.name)} localityError={localityError} selectedLgaName={selectedLgaName} selectedWardKey={selectedWardKey} onSelectLga={selectLga} onSelectWard={selectWardByKey} onSelectVenue={goToVenue} remotePlayers={remotePlayers} onMove={sendMove} playerColor={playerColor} playerAppearance={playerAppearance} onlineCount={onlineCount} networkStatus={networkStatus} onTravel={travelToState} daysToFederal={daysToFederal} daysToState={daysToState} storyDay={storyDay} activeMeeting={activeMeeting} meetingMessages={meetingMessages} currentParty={currentParty} institutionRole={institutionRole} isInstitutional={isInstitutional} chapter={currentChapter} missionProgress={missionProgress} worldMinute={worldMinute} onOpenCareer={() => setPage('career')} onExploreSideStory={openSideStory} onJoinPolitical={requestPoliticalSwitch} />;
+    return <WorldPage stateInfo={stateInfo} profile={profile} stateWorldProfile={stateWorldProfile} venue={activeVenue} venueName={activeVenueName} focusRequest={venueFocusRequest} locationKey={sceneLocationKey} locality={sceneLocality} localityData={stateLocalities?.state === stateInfo.name ? stateLocalities : null} localityLoading={localityLoading || (!localityError && stateLocalities?.state !== stateInfo.name)} localityError={localityError} selectedLgaName={selectedLgaName} selectedWardKey={selectedWardKey} onSelectLga={selectLga} onSelectWard={selectWardByKey} onSelectVenue={goToVenue} remotePlayers={remotePlayers} onMove={sendMove} playerColor={playerColor} playerAppearance={playerAppearance} onlineCount={onlineCount} networkStatus={networkStatus} onTravel={travelToState} daysToFederal={daysToFederal} daysToState={daysToState} storyDay={storyDay} activeMeeting={activeMeeting} meetingMessages={meetingMessages} currentParty={currentParty} institutionRole={institutionRole} isInstitutional={isInstitutional} chapter={currentChapter} missionProgress={missionProgress} worldMinute={worldMinute} onOpenCareer={() => setPage('career')} onOpenPhone={openPhonePanel} onNavigate={navigateMobile} onOpenAvatar={() => setModal({ type: 'avatar-customize' })} onExploreSideStory={openSideStory} onJoinPolitical={requestPoliticalSwitch} />;
   };
 
   return <div className={`app-shell ${immersiveActive ? 'immersive-shell' : ''} ${navigationOpen ? 'nav-open' : ''} ${phoneOpen ? 'phone-open' : ''}`}>
@@ -1103,6 +1106,12 @@ function App() {
         <div className="rail-disclaimer"><LockKeyhole size={12} /><span>{isInstitutional ? 'Fictional personnel roleplay · no real employment, appointment, statutory authority or real-money.' : 'Fictional candidate · no real money, electoral registration or real-party affiliation.'}</span></div>
       </aside>
     </div>
+    <nav className="mobile-bottom-nav" aria-label="Mobile game navigation">
+      <button className={page === 'world' ? 'active' : ''} onClick={openMobileWorld} aria-current={page === 'world' ? 'page' : undefined}><Globe2 size={18} /><span>Home</span></button>
+      <button className={page === 'career' ? 'active' : ''} onClick={() => navigateMobile('career')} aria-current={page === 'career' ? 'page' : undefined}><TrendingUp size={18} /><span>Story</span></button>
+      <button className={page === 'atlas' ? 'active' : ''} onClick={() => navigateMobile('atlas')} aria-current={page === 'atlas' ? 'page' : undefined}><Map size={18} /><span>Atlas</span></button>
+      <button className={phoneOpen ? 'active' : ''} onClick={() => { if (phoneOpen) closeWorldPanels(); else openPhonePanel(); }} aria-pressed={phoneOpen}><Smartphone size={18} /><span>Phone</span></button>
+    </nav>
     {toast && <div className="toast-pop"><span className="toast-symbol"><Check size={14} /></span>{toast}</div>}
     {activeMeeting && <MeetingRoom meeting={activeMeeting} messages={meetingMessages} participants={meetingParticipants} votes={meetingVotes} draft={meetingDraft} setDraft={setMeetingDraft} replyTo={meetingReplyTo} setReplyTo={setMeetingReplyTo} onSend={submitMeetingMessage} onVote={castMeetingVote} onCloseMeeting={closeMeeting} onLeave={dismissMeeting} />}
     {onboardingOpen && <WelcomeModal alias={draftAlias} setAlias={setDraftAlias} party={draftParty} setParty={setDraftParty} mode={draftMode} setMode={setDraftMode} institution={draftInstitution} setInstitution={setDraftInstitution} state={draftState} setState={setDraftState} onStart={startCandidate} onClose={() => setOnboardingOpen(false)} hasSave={Boolean(boot?.profile?.started)} authReady={authReady} authConfig={authConfig} authSession={authSession} authBusy={authBusy} onAuth={submitAccount} onSignOut={signOut} onAccountSuccess={(result) => { if (result.save?.profile?.started) restoreCloudSave(result.save); else { startCandidate(); if (result.profileChecked === false) { setAccountProfileReady(false); showToast('Account linked · checking cloud profile before saving; guest fallback remains local.'); } } }} />}
@@ -1140,7 +1149,7 @@ function LocalityExplorer({ stateInfo, stateWorldProfile, data, loading, error, 
   const filteredWards = wards.filter((item) => !wardQuery.trim() || item.name.toLowerCase().includes(wardQuery.trim().toLowerCase()));
   useEffect(() => setWardQuery(''), [lgaName]);
 
-  return <section className="locality-explorer" aria-label="State, local government and ward explorer">
+  return <section id="locality-explorer" className="locality-explorer" aria-label="State, local government and ward explorer">
     <div className="locality-explorer-head">
       <div><div className="eyebrow"><span className="eyebrow-line" />STATE → LGA → WARD</div><h2>Choose a local ground</h2><p>{stateInfo.name} · {stateWorldProfile.biome}. Select a local government and a named electoral ward to regenerate the 3D neighbourhood.</p></div>
       <div className="locality-national-counts"><span><b>37</b> STATES / FCT</span><span><b>774</b> LGAs</span><span><b>8,809</b> WARD RECORDS</span></div>
@@ -1199,7 +1208,7 @@ function PartyDirectory({ parties, branches, activeParty, stateInfo, locality, o
   </section>;
 }
 
-function WorldPage({ stateInfo, stateWorldProfile, venue, venueName, focusRequest, locationKey, locality, localityData, localityLoading, localityError, selectedLgaName, selectedWardKey, onSelectLga, onSelectWard, onSelectVenue, remotePlayers, onMove, playerColor, playerAppearance, onlineCount, networkStatus, onTravel, daysToFederal, daysToState, storyDay, worldMinute, activeMeeting, meetingMessages, currentParty, institutionRole, isInstitutional, chapter, missionProgress, onOpenCareer, onExploreSideStory, onJoinPolitical }) {
+function WorldPage({ stateInfo, profile, stateWorldProfile, venue, venueName, focusRequest, locationKey, locality, localityData, localityLoading, localityError, selectedLgaName, selectedWardKey, onSelectLga, onSelectWard, onSelectVenue, remotePlayers, onMove, playerColor, playerAppearance, onlineCount, networkStatus, onTravel, daysToFederal, daysToState, storyDay, worldMinute, activeMeeting, meetingMessages, currentParty, institutionRole, isInstitutional, chapter, missionProgress, onOpenCareer, onOpenPhone, onNavigate, onOpenAvatar, onExploreSideStory, onJoinPolitical }) {
   const [venueFilter, setVenueFilter] = useState('ALL');
   const [worldView, setWorldView] = useState('story');
   const [interiorInfo, setInteriorInfo] = useState(null);
@@ -1235,6 +1244,29 @@ function WorldPage({ stateInfo, stateWorldProfile, venue, venueName, focusReques
   const visibleVenues = WORLD_VENUES.filter((item) => venueFilter === 'ALL' || (venueFilter === 'PUBLIC' && ['square', 'market', 'stadium'].includes(item.type)) || (venueFilter === 'POLITICS' && ['office', 'court', 'assembly', 'caucus'].includes(item.type)) || (venueFilter === 'TRAVEL' && item.type === 'airport'));
   useEffect(() => { if (activeMeeting?.id) setWorldView('story'); }, [activeMeeting?.id]);
   return <div className="world-page">
+    <div className="mobile-world-status" aria-label="Live story and player status">
+      <div className="mobile-status-item mobile-status-clock"><Clock3 size={14} /><span><b>{worldClock} WAT</b><small>{dateLabel(storyDay)} · {timePhase}</small></span></div>
+      <div className="mobile-status-item mobile-status-trust"><Activity size={14} /><span><b>{isInstitutional ? 'REPUTATION' : 'PUBLIC TRUST'}</b><small>{profile?.trust ?? 0}% · {profile?.integrity ?? 0}% integrity</small></span></div>
+      <div className="mobile-status-item mobile-status-election"><Radio size={14} /><span><b>{Number.isFinite(daysToFederal) ? Math.max(0, daysToFederal) : '—'}d FED · {Number.isFinite(daysToState) ? Math.max(0, daysToState) : '—'}d STATE</b><small>16 JAN / 06 FEB 2027 · ELECTIONS</small></span></div>
+      <div className="mobile-status-item mobile-status-network"><Users size={14} /><span><b>{networkStatus === 'online' ? `${onlineCount || 1} PLAYERS` : 'LOCAL PLAY'}</b><small>{networkStatus === 'online' ? 'WORLD LINK ACTIVE' : 'GUEST PREVIEW'}</small></span></div>
+    </div>
+    <div className="mobile-world-shortcuts" aria-label="Quick world actions">
+      <button type="button" className={worldView === 'story' ? 'active' : ''} onClick={() => setWorldView('story')}><Move size={14} /><span>WALK</span></button>
+      <button type="button" className={worldView === 'map' ? 'active' : ''} onClick={() => setWorldView('map')}><Map size={14} /><span>LIVE MAP</span></button>
+      <button type="button" onClick={() => document.getElementById('mobile-world-places')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}><Landmark size={14} /><span>PLACES</span></button>
+      <button type="button" onClick={() => onNavigate('civic')}><Scale size={14} /><span>CIVIC</span></button>
+      <button type="button" onClick={onOpenPhone}><Smartphone size={14} /><span>PHONE</span></button>
+    </div>
+    <div className="mobile-location-strip">
+      <div className="mobile-location-name"><MapPin size={16} /><span><b>{locality?.ward || stateInfo.capital}</b><small>{locality ? `${locality.lga} LGA · ` : ''}{stateInfo.name}</small></span></div>
+      <button type="button" onClick={() => onNavigate('atlas')}><Map size={13} /><span>ATLAS</span></button>
+      <button type="button" onClick={() => document.querySelector('.locality-explorer')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}><Users size={13} /><span>WARD LIST</span></button>
+    </div>
+    <div className="mobile-world-ticker">
+      <span className={activeMeeting ? 'ticker-live meeting-live' : 'ticker-live'}><i />{activeMeeting ? 'MEETING LIVE' : isInstitutional ? 'STORY UPDATE' : 'MISSION'}</span>
+      <strong>{activeMeeting?.title || chapter?.title || 'Continue your public-life story'}</strong>
+      <button type="button" onClick={onOpenCareer}>OPEN <ArrowRight size={12} /></button>
+    </div>
     <div className="world-topline"><div className="world-live"><span className="pulse-dot" />LOCAL WORLD <b>{(locality?.ward || stateInfo.capital).toUpperCase()}</b><span className="line-sep" />{stateInfo.zone.toUpperCase()}</div><div className={`world-date world-time-${timePhase.toLowerCase().replace(' ', '-')}`}><Clock3 size={13} />{dateLabel(storyDay)} <span>·</span> {worldClock} WAT <span className="weather-dot" /> {timePhase}</div><div className="world-connect"><span className={`network-led ${networkStatus}`} />{networkStatus === 'online' ? `${onlineCount || 1} PLAYERS` : 'LOCAL INSTANCE'}</div><div className="world-mode-tabs" role="tablist" aria-label="Choose map view"><button type="button" role="tab" aria-selected={worldView === 'story'} className={worldView === 'story' ? 'active' : ''} onClick={() => setWorldView('story')}><Move size={12} />3D STORY</button><button type="button" role="tab" aria-selected={worldView === 'map'} className={worldView === 'map' ? 'active' : ''} onClick={() => setWorldView('map')}><Map size={12} />LIVE MAP</button></div></div>
     <div className={`world-view-frame ${worldView === 'map' ? 'map-mode' : ''} ${interiorInfo ? 'inside-interior' : ''}`}>
       {worldView === 'map' ? <Suspense fallback={<div className="maplibre-load-shell"><span className="maplibre-spinner" />Loading MapLibre…</div>}><MapLibreWorld stateInfo={stateInfo} locality={locality} locationKey={locationKey} /></Suspense> : <>
@@ -1253,10 +1285,17 @@ function WorldPage({ stateInfo, stateWorldProfile, venue, venueName, focusReques
       <div className="scene-controls"><span><Move size={13} /> CLICK TO WALK</span><i /> <span>WASD / ARROWS MOVE</span><i /> <span>CLICK DOOR TO ENTER</span><i /> <span>DRAG TO ORBIT</span><i /> <span>SCROLL TO ZOOM</span></div>
       <div className="mobile-gesture-hint" aria-label="Touch controls: tap to walk or enter doors, drag to orbit, pinch to zoom"><span>TAP TO WALK</span><i /> <span>DRAG TO ORBIT</span><i /> <span>PINCH TO ZOOM</span><i /> <span>TAP DOOR TO ENTER</span></div>
       <div className="scene-cinematic-label"><span>REALTIME CITY</span><b>3D</b></div><div className="scene-asset-note">STYLISED PROCEDURAL STORY WORLD · NOT A SURVEY MAP</div>
+      <div className="mobile-player-dock" aria-label="Player status and shortcuts">
+        <button className="mobile-player-avatar" type="button" onClick={onOpenAvatar} style={{ '--party-color': playerColor }} aria-label="Customize player avatar">{initials(profile?.alias || 'New Candidate')}</button>
+        <div className="mobile-player-identity"><strong>{profile?.alias || 'New Candidate'}</strong><small>{isInstitutional ? institutionRole?.personnelLabel || 'Institutional story' : currentParty?.tag || 'GUEST PLAYER'}</small></div>
+        <div className="mobile-player-meter"><div><span>{isInstitutional ? 'REPUTATION' : 'TRUST'}</span><b>{profile?.trust ?? 0}</b></div><i><em style={{ width: `${clamp(Number(profile?.trust) || 0)}%` }} /></i></div>
+        <div className="mobile-player-meter energy-meter"><div><span>ENERGY</span><b>{profile?.energy ?? 0}</b></div><i><em style={{ width: `${clamp(Number(profile?.energy) || 0)}%` }} /></i></div>
+        <button className="mobile-phone-shortcut" type="button" onClick={onOpenPhone} aria-label="Open chat and meetings"><MessageCircle size={17} /></button>
+      </div>
       </>}
     </div>
     <div className="mobile-scroll-note"><span>SCROLL FOR PLACES, MISSIONS & WARD DIRECTORY</span><ChevronDown size={12} /></div>
-    <div className="world-lower-row"><div className="location-card-grid"><div className="location-filter-row"><div><span className="eyebrow-line" />PLACES TO VISIT <b>{visibleVenues.length}</b></div><div className="location-filter">{venueTypes.map((type) => <button key={type} className={venueFilter === type ? 'active' : ''} onClick={() => setVenueFilter(type)}>{type}</button>)}</div></div><div className="venue-cards">{visibleVenues.map((place) => <button key={place.id} className={`venue-chip ${venue.id === place.id ? 'selected' : ''}`} onClick={() => onSelectVenue(place.id)} aria-label={`Travel to ${place.label} in the 3D city`} title={`Travel to ${place.label}`}><span className={`venue-icon venue-${place.type}`}>{venueIcon(place.type)}</span><span><strong>{place.label}</strong><small>{place.short} · VISIT IN 3D</small></span><ArrowRight size={13} /></button>)}</div></div>
+    <div className="world-lower-row"><div id="mobile-world-places" className="location-card-grid"><div className="location-filter-row"><div><span className="eyebrow-line" />PLACES TO VISIT <b>{visibleVenues.length}</b></div><div className="location-filter">{venueTypes.map((type) => <button key={type} className={venueFilter === type ? 'active' : ''} onClick={() => setVenueFilter(type)}>{type}</button>)}</div></div><div className="venue-cards">{visibleVenues.map((place) => <button key={place.id} className={`venue-chip ${venue.id === place.id ? 'selected' : ''}`} onClick={() => onSelectVenue(place.id)} aria-label={`Travel to ${place.label} in the 3D city`} title={`Travel to ${place.label}`}><span className={`venue-icon venue-${place.type}`}>{venueIcon(place.type)}</span><span><strong>{place.label}</strong><small>{place.short} · VISIT IN 3D</small></span><ArrowRight size={13} /></button>)}</div></div>
       <div className="world-feed-card"><div className="feed-card-head"><span><Activity size={14} />DISTRICT PULSE</span><button onClick={() => onTravel('Lagos')}>RETURN TO START <ArrowRight size={12} /></button></div><div className="district-pulse-grid"><div><strong>37</strong><small>CAPITALS</small></div><div><strong>06</strong><small>GEO-ZONES</small></div><div><strong>{onlineCount || 1}</strong><small>PLAYERS</small></div></div><p>Regional biomes, roadside compounds, market stalls, civic landmarks and familiar Nigerian vehicles vary by state and locality. Multiplayer presence is a small-room prototype.</p></div></div>
     {institutionRole
       ? <InstitutionalWorldPanel role={institutionRole} stateName={stateInfo.name} onExploreSideStory={onExploreSideStory} onJoinPolitical={onJoinPolitical} />

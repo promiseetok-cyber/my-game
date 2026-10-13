@@ -50,6 +50,244 @@ const ARCHITECTURE_PALETTES = {
 const WET_KINDS = new Set(['river', 'coastal', 'delta', 'confluence', 'lagoon-city', 'mangrove-city', 'highland-river']);
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+function pointCollidesWithRect(x, z, radius, rect) {
+  const nearestX = clamp(x, rect.minX, rect.maxX);
+  const nearestZ = clamp(z, rect.minZ, rect.maxZ);
+  const dx = x - nearestX;
+  const dz = z - nearestZ;
+  return dx * dx + dz * dz < radius * radius;
+}
+
+function circleBlockedAt(x, z, radius, colliders) {
+  return colliders.some((rect) => pointCollidesWithRect(x, z, radius, rect));
+}
+
+function aabbBlockedAt(x, z, halfX, halfZ, colliders) {
+  return colliders.some((rect) => x + halfX > rect.minX && x - halfX < rect.maxX && z + halfZ > rect.minZ && z - halfZ < rect.maxZ);
+}
+
+function segmentIntersectsAabb(x0, z0, x1, z1, minX, maxX, minZ, maxZ) {
+  let near = 0;
+  let far = 1;
+  const dx = x1 - x0;
+  const dz = z1 - z0;
+  const clip = (p, q) => {
+    if (Math.abs(p) < 1e-9) return q >= 0;
+    const t = q / p;
+    if (p < 0) near = Math.max(near, t);
+    else far = Math.min(far, t);
+    return near <= far;
+  };
+  return clip(-dx, x0 - minX) && clip(dx, maxX - x0) && clip(-dz, z0 - minZ) && clip(dz, maxZ - z0);
+}
+
+function segmentWithinCircle(x0, z0, x1, z1, centerX, centerZ, radius) {
+  const dx = x1 - x0;
+  const dz = z1 - z0;
+  const lengthSq = dx * dx + dz * dz;
+  const t = lengthSq > 1e-9 ? clamp(((centerX - x0) * dx + (centerZ - z0) * dz) / lengthSq, 0, 1) : 0;
+  const nearestX = x0 + dx * t;
+  const nearestZ = z0 + dz * t;
+  const distanceX = nearestX - centerX;
+  const distanceZ = nearestZ - centerZ;
+  return distanceX * distanceX + distanceZ * distanceZ < radius * radius;
+}
+
+function circlePathBlocked(x0, z0, x1, z1, radius, colliders) {
+  return colliders.some((rect) => (
+    segmentIntersectsAabb(x0, z0, x1, z1, rect.minX - radius, rect.maxX + radius, rect.minZ, rect.maxZ)
+    || segmentIntersectsAabb(x0, z0, x1, z1, rect.minX, rect.maxX, rect.minZ - radius, rect.maxZ + radius)
+    || segmentWithinCircle(x0, z0, x1, z1, rect.minX, rect.minZ, radius)
+    || segmentWithinCircle(x0, z0, x1, z1, rect.minX, rect.maxZ, radius)
+    || segmentWithinCircle(x0, z0, x1, z1, rect.maxX, rect.minZ, radius)
+    || segmentWithinCircle(x0, z0, x1, z1, rect.maxX, rect.maxZ, radius)
+  ));
+}
+
+function aabbPathBlocked(x0, z0, x1, z1, halfX, halfZ, colliders) {
+  return colliders.some((rect) => segmentIntersectsAabb(
+    x0, z0, x1, z1,
+    rect.minX - halfX, rect.maxX + halfX,
+    rect.minZ - halfZ, rect.maxZ + halfZ,
+  ));
+}
+
+function moveCircleSafely(position, dx, dz, radius, colliders, bounds) {
+  const startX = position.x;
+  const startZ = position.z;
+  const targetX = clamp(startX + dx, bounds.minX + radius, bounds.maxX - radius);
+  const targetZ = clamp(startZ + dz, bounds.minZ + radius, bounds.maxZ - radius);
+  if ((Math.abs(targetX - startX) > 1e-5 || Math.abs(targetZ - startZ) > 1e-5)
+    && !circlePathBlocked(startX, startZ, targetX, targetZ, radius, colliders)) {
+    position.x = targetX;
+    position.z = targetZ;
+  } else {
+    if (Math.abs(targetX - startX) > 1e-5 && !circlePathBlocked(startX, startZ, targetX, startZ, radius, colliders)) position.x = targetX;
+    if (Math.abs(targetZ - startZ) > 1e-5 && !circlePathBlocked(position.x, startZ, position.x, targetZ, radius, colliders)) position.z = targetZ;
+  }
+  return { x: position.x - startX, z: position.z - startZ, moved: Math.abs(position.x - startX) + Math.abs(position.z - startZ) > 1e-5 };
+}
+
+function findNearestFreePoint(x, z, radius, colliders, bounds, maxRadius = 5.5) {
+  const candidate = { x: clamp(x, bounds.minX + radius, bounds.maxX - radius), z: clamp(z, bounds.minZ + radius, bounds.maxZ - radius) };
+  if (!circleBlockedAt(candidate.x, candidate.z, radius, colliders)) return candidate;
+  for (let distance = 0.35; distance <= maxRadius; distance += 0.35) {
+    const count = Math.max(12, Math.ceil(distance * 5));
+    for (let index = 0; index < count; index += 1) {
+      const angle = (index / count) * Math.PI * 2;
+      const nextX = clamp(x + Math.cos(angle) * distance, bounds.minX + radius, bounds.maxX - radius);
+      const nextZ = clamp(z + Math.sin(angle) * distance, bounds.minZ + radius, bounds.maxZ - radius);
+      if (!circleBlockedAt(nextX, nextZ, radius, colliders)) return { x: nextX, z: nextZ };
+    }
+  }
+  return null;
+}
+
+function findWalkPath(start, target, radius, colliders, bounds, cellSize = 0.25) {
+  const isFree = (x, z) => x >= bounds.minX + radius && x <= bounds.maxX - radius
+    && z >= bounds.minZ + radius && z <= bounds.maxZ - radius
+    && !circleBlockedAt(x, z, radius, colliders);
+  const startPoint = { x: start.x, z: start.z };
+  const targetPoint = { x: target.x, z: target.z };
+  const findGridPoint = (point) => {
+    const baseX = Math.round(point.x / cellSize);
+    const baseZ = Math.round(point.z / cellSize);
+    for (let ring = 0; ring <= 8; ring += 1) {
+      let closest = null;
+      let closestDistance = Infinity;
+      for (let offsetX = -ring; offsetX <= ring; offsetX += 1) {
+        for (let offsetZ = -ring; offsetZ <= ring; offsetZ += 1) {
+          if (Math.max(Math.abs(offsetX), Math.abs(offsetZ)) !== ring) continue;
+          const candidate = { x: (baseX + offsetX) * cellSize, z: (baseZ + offsetZ) * cellSize };
+          if (!isFree(candidate.x, candidate.z) || circlePathBlocked(point.x, point.z, candidate.x, candidate.z, radius, colliders)) continue;
+          const distance = (candidate.x - point.x) ** 2 + (candidate.z - point.z) ** 2;
+          if (distance < closestDistance) { closest = candidate; closestDistance = distance; }
+        }
+      }
+      if (closest) return closest;
+    }
+    return null;
+  };
+  const startGrid = findGridPoint(startPoint);
+  const targetGrid = findGridPoint(targetPoint);
+  if (!startGrid || !targetGrid) return null;
+  const keyFor = (x, z) => `${x},${z}`;
+  const startIX = Math.round(startGrid.x / cellSize);
+  const startIZ = Math.round(startGrid.z / cellSize);
+  const targetIX = Math.round(targetGrid.x / cellSize);
+  const targetIZ = Math.round(targetGrid.z / cellSize);
+  const startKey = keyFor(startIX, startIZ);
+  const targetKey = keyFor(targetIX, targetIZ);
+  if (startKey === targetKey) return circlePathBlocked(startPoint.x, startPoint.z, targetPoint.x, targetPoint.z, radius, colliders) ? null : [targetPoint];
+
+  const searchMargin = 8;
+  const searchBounds = {
+    minX: Math.max(bounds.minX + radius, Math.min(startGrid.x, targetGrid.x) - searchMargin),
+    maxX: Math.min(bounds.maxX - radius, Math.max(startGrid.x, targetGrid.x) + searchMargin),
+    minZ: Math.max(bounds.minZ + radius, Math.min(startGrid.z, targetGrid.z) - searchMargin),
+    maxZ: Math.min(bounds.maxZ - radius, Math.max(startGrid.z, targetGrid.z) + searchMargin),
+  };
+  const heuristic = (x, z) => Math.hypot(targetGrid.x - x * cellSize, targetGrid.z - z * cellSize);
+  const open = [];
+  const push = (node) => {
+    let index = open.push(node) - 1;
+    while (index > 0) {
+      const parent = Math.floor((index - 1) / 2);
+      if (open[parent].f <= open[index].f) break;
+      [open[parent], open[index]] = [open[index], open[parent]];
+      index = parent;
+    }
+  };
+  const pop = () => {
+    const first = open[0];
+    const last = open.pop();
+    if (open.length && last) {
+      open[0] = last;
+      let index = 0;
+      while (true) {
+        const left = index * 2 + 1;
+        const right = left + 1;
+        let smallest = index;
+        if (left < open.length && open[left].f < open[smallest].f) smallest = left;
+        if (right < open.length && open[right].f < open[smallest].f) smallest = right;
+        if (smallest === index) break;
+        [open[index], open[smallest]] = [open[smallest], open[index]];
+        index = smallest;
+      }
+    }
+    return first;
+  };
+  const gScore = new Map([[startKey, 0]]);
+  const parents = new Map();
+  const points = new Map([[startKey, startGrid]]);
+  const closed = new Set();
+  push({ x: startIX, z: startIZ, key: startKey, g: 0, f: heuristic(startIX, startIZ) });
+  const directions = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+  let found = false;
+  let expanded = 0;
+  while (open.length && expanded < 40000) {
+    const current = pop();
+    if (closed.has(current.key) || current.g !== gScore.get(current.key)) continue;
+    if (current.key === targetKey) { found = true; break; }
+    closed.add(current.key);
+    expanded += 1;
+    const currentPoint = points.get(current.key);
+    for (const [stepX, stepZ] of directions) {
+      const nextX = current.x + stepX;
+      const nextZ = current.z + stepZ;
+      const worldX = nextX * cellSize;
+      const worldZ = nextZ * cellSize;
+      if (worldX < searchBounds.minX || worldX > searchBounds.maxX || worldZ < searchBounds.minZ || worldZ > searchBounds.maxZ) continue;
+      if (!isFree(worldX, worldZ) || circlePathBlocked(currentPoint.x, currentPoint.z, worldX, worldZ, radius, colliders)) continue;
+      const nextKey = keyFor(nextX, nextZ);
+      if (closed.has(nextKey)) continue;
+      const nextCost = current.g + cellSize * (stepX && stepZ ? Math.SQRT2 : 1);
+      if (nextCost >= (gScore.get(nextKey) ?? Infinity)) continue;
+      gScore.set(nextKey, nextCost);
+      parents.set(nextKey, current.key);
+      points.set(nextKey, { x: worldX, z: worldZ });
+      push({ x: nextX, z: nextZ, key: nextKey, g: nextCost, f: nextCost + heuristic(nextX, nextZ) });
+    }
+  }
+  if (!found) return null;
+  const gridPath = [];
+  let cursor = targetKey;
+  while (cursor !== startKey) {
+    gridPath.push(points.get(cursor));
+    cursor = parents.get(cursor);
+    if (!cursor) return null;
+  }
+  gridPath.push(startGrid);
+  gridPath.reverse();
+  const fullPath = [startPoint];
+  for (const point of gridPath.slice(1)) {
+    if (Math.hypot(point.x - fullPath[fullPath.length - 1].x, point.z - fullPath[fullPath.length - 1].z) > 0.02) fullPath.push(point);
+  }
+  if (Math.hypot(targetPoint.x - fullPath[fullPath.length - 1].x, targetPoint.z - fullPath[fullPath.length - 1].z) > 0.02) fullPath.push(targetPoint);
+  const smoothed = [fullPath[0]];
+  let pathIndex = 0;
+  while (pathIndex < fullPath.length - 1) {
+    let nextIndex = fullPath.length - 1;
+    while (nextIndex > pathIndex + 1 && circlePathBlocked(
+      fullPath[pathIndex].x, fullPath[pathIndex].z, fullPath[nextIndex].x, fullPath[nextIndex].z, radius, colliders,
+    )) nextIndex -= 1;
+    smoothed.push(fullPath[nextIndex]);
+    pathIndex = nextIndex;
+  }
+  return smoothed.slice(1);
+}
+
+function worldVehicleFootprint(vehicle) {
+  const footprint = vehicle.userData.vehicleFootprint || { halfLength: 0.8, halfWidth: 0.5 };
+  const angle = vehicle.rotation.y || 0;
+  const alongX = Math.abs(Math.cos(angle));
+  const alongZ = Math.abs(Math.sin(angle));
+  return {
+    halfX: alongX * footprint.halfLength + alongZ * footprint.halfWidth,
+    halfZ: alongZ * footprint.halfLength + alongX * footprint.halfWidth,
+  };
+}
 const hash = (value) => {
   let result = 2166136261;
   for (let i = 0; i < value.length; i += 1) result = Math.imul(result ^ value.charCodeAt(i), 16777619);
@@ -374,6 +612,24 @@ function makeBuilding(rand, x, z, index, palette, localityStyle = null) {
   }
   addDoorPortal(group, { id: `home-${index}`, title: form === 'shopfront' ? 'Neighbourhood shop' : 'Community home', accent: facadeAccent, type: 'building', x: 0, z: d / 2 + 0.09, width: 0.54, height: 1.12 });
   group.position.set(x, 0, z);
+  const collisionRects = [{ x: 0, z: 0, halfX: w / 2 + 0.12, halfZ: d / 2 + 0.12 }];
+  if (index % 3 === 0) {
+    const plotW = w + 1.25;
+    const plotD = d + 1.35;
+    const wallThickness = 0.14;
+    const gateWidth = 1.2;
+    const frontRun = Math.max(0.8, (plotW - gateWidth) / 2);
+    collisionRects.push(
+      { x: -plotW / 2, z: 0.05, halfX: wallThickness / 2 + 0.04, halfZ: plotD / 2 + 0.08 },
+      { x: plotW / 2, z: 0.05, halfX: wallThickness / 2 + 0.04, halfZ: plotD / 2 + 0.08 },
+      { x: 0, z: -plotD / 2 + 0.05, halfX: plotW / 2 + 0.05, halfZ: wallThickness / 2 + 0.04 },
+      { x: -(gateWidth / 2 + frontRun / 2), z: plotD / 2 + 0.05, halfX: frontRun / 2 + 0.04, halfZ: wallThickness / 2 + 0.04 },
+      { x: gateWidth / 2 + frontRun / 2, z: plotD / 2 + 0.05, halfX: frontRun / 2 + 0.04, halfZ: wallThickness / 2 + 0.04 },
+      { x: -gateWidth / 2, z: plotD / 2 + 0.05, halfX: 0.09, halfZ: 0.09 },
+      { x: gateWidth / 2, z: plotD / 2 + 0.05, halfX: 0.09, halfZ: 0.09 },
+    );
+  }
+  group.userData.collisionRects = collisionRects;
   group.userData.groundHeight = palette.grass;
   return group;
 }
@@ -415,6 +671,17 @@ function makePartyOffice(party, branch, x, z) {
   group.position.set(x, 0, z);
   group.userData.partyId = party.id;
   group.userData.branch = branch;
+  group.userData.collisionRects = [
+    { x: 0, z: 0.06, halfX: 1.62, halfZ: 1.24 },
+    // Compound walls deliberately stop short of the front gate; the gap stays walkable.
+    { x: -2.8, z: 0.25, halfX: 0.105, halfZ: 2.82 },
+    { x: 2.8, z: 0.25, halfX: 0.105, halfZ: 2.82 },
+    { x: 0, z: -2.5, halfX: 2.82, halfZ: 0.105 },
+    { x: -1.7625, z: 3.0, halfX: 1.06, halfZ: 0.105 },
+    { x: 1.7625, z: 3.0, halfX: 1.06, halfZ: 0.105 },
+    { x: -0.725, z: 3.0, halfX: 0.11, halfZ: 0.12 },
+    { x: 0.725, z: 3.0, halfX: 0.11, halfZ: 0.12 },
+  ];
   return group;
 }
 
@@ -426,6 +693,7 @@ function makeCar(color, kind = 'sedan', accent = '#f1d846') {
   const pickup = kind === 'pickup';
   const bodyLength = bus ? 2.12 : keke ? 1.16 : pickup ? 1.7 : motorcycle ? 0.74 : kind === 'suv' ? 1.62 : 1.45;
   const bodyWidth = motorcycle ? 0.36 : keke ? 0.72 : bus ? 1.02 : 0.9;
+  g.userData.vehicleFootprint = { halfLength: bodyLength / 2 + 0.12, halfWidth: bodyWidth / 2 + 0.12 };
   const body = box(bodyLength, bus ? 0.66 : motorcycle ? 0.23 : 0.38, bodyWidth, color, { roughness: 0.43, metalness: 0.08 });
   body.position.set(0, bus ? 0.59 : motorcycle ? 0.56 : 0.42, 0);
   g.add(body);
@@ -502,6 +770,7 @@ function makeCar(color, kind = 'sedan', accent = '#f1d846') {
 
 function makeWaterTaxi(color = '#e9c94e', accent = '#257f89') {
   const boat = new THREE.Group();
+  boat.userData.vehicleFootprint = { halfLength: 0.88, halfWidth: 0.43 };
   const hull = new THREE.Mesh(new THREE.ConeGeometry(0.55, 1.5, 6), new THREE.MeshStandardMaterial({ color, roughness: 0.62 }));
   hull.rotation.z = -Math.PI / 2;
   hull.scale.set(0.54, 0.42, 1);
@@ -708,6 +977,23 @@ function makeLocalityMicroLandmark(locality, stateInfo, localityStyle, palette) 
   label.scale.set(3.4, 0.85, 1);
   group.add(label);
   addDoorPortal(group, { id: `locality-hub-${localityStyle.code}`, title: feature === 'community hall' ? 'Community hall' : feature, type: 'landmark', accent, x: 0, z: 1.68, width: 0.62, height: 1.18, metadata: { state: stateInfo.name, lga: locality?.lga, ward: locality?.ward, fictional: true } });
+  if (feature === 'water tank') {
+    group.userData.collisionRects = [-0.72, 0.72].flatMap((x) => [-0.58, 0.58].map((z) => ({ x, z, halfX: 0.14, halfZ: 0.14 })));
+  } else if (feature === 'market canopy') {
+    group.userData.collisionRects = [{ x: 0, z: 0, halfX: 0.9, halfZ: 0.58 }];
+  } else if (feature === 'bus shelter') {
+    group.userData.collisionRects = [
+      { x: -1.45, z: 0, halfX: 0.11, halfZ: 0.58 },
+      { x: 1.45, z: 0, halfX: 0.11, halfZ: 0.58 },
+      { x: 0, z: 0.12, halfX: 0.92, halfZ: 0.24 },
+    ];
+  } else if (feature === 'civic roundabout') {
+    group.userData.collisionRects = [{ x: 0, z: 0, halfX: 1.4, halfZ: 1.4 }];
+  } else if (feature === 'footbridge') {
+    group.userData.collisionRects = [-1.65, 1.65].map((x) => ({ x, z: 0, halfX: 0.2, halfZ: 0.3 }));
+  } else {
+    group.userData.collisionRects = [{ x: 0, z: 0, halfX: 1.78, halfZ: 1.36 }];
+  }
   group.position.set(17.5, 0, -17.5);
   group.name = `locality-micro-landmark-${localityStyle.code}`;
   return group;
@@ -1121,6 +1407,44 @@ function makeVenue(venue, palette, sceneMaterials, stateLabel) {
   label.userData.venueId = venue.id;
   label.userData.isHotspot = true;
   g.add(label);
+  if (type === 'airport') {
+    g.userData.collisionRects = [
+      { x: 0, z: 2.1, halfX: 1.86, halfZ: 0.74 },
+      { x: -1.5, z: -0.15, halfX: 1.38, halfZ: 1.18 },
+    ];
+  } else if (['office', 'court', 'assembly', 'caucus'].includes(type)) {
+    const compoundWidth = type === 'assembly' ? 5.6 : 4.8;
+    const compoundDepth = 5.5;
+    const gateWidth = 1.45;
+    const gateRun = (compoundWidth - gateWidth) / 2;
+    g.userData.collisionRects = [
+      { x: 0, z: 0, halfX: (type === 'assembly' ? 3.5 : 2.8) / 2 + 0.14, halfZ: 1.27 },
+      { x: -compoundWidth / 2, z: 0.25, halfX: 0.105, halfZ: compoundDepth / 2 + 0.08 },
+      { x: compoundWidth / 2, z: 0.25, halfX: 0.105, halfZ: compoundDepth / 2 + 0.08 },
+      { x: 0, z: -compoundDepth / 2 + 0.25, halfX: compoundWidth / 2 + 0.05, halfZ: 0.105 },
+      { x: -(0.725 + gateRun / 2), z: compoundDepth / 2 + 0.25, halfX: gateRun / 2 + 0.04, halfZ: 0.105 },
+      { x: 0.725 + gateRun / 2, z: compoundDepth / 2 + 0.25, halfX: gateRun / 2 + 0.04, halfZ: 0.105 },
+      { x: -0.725, z: compoundDepth / 2 + 0.25, halfX: 0.11, halfZ: 0.12 },
+      { x: 0.725, z: compoundDepth / 2 + 0.25, halfX: 0.11, halfZ: 0.12 },
+    ];
+  } else if (type === 'market') {
+    g.userData.collisionRects = Array.from({ length: 4 }, (_, index) => ({
+      x: -1.95 + index * 1.3,
+      z: (index % 2) * 1.15,
+      halfX: 0.64,
+      halfZ: 0.56,
+    }));
+  } else if (type === 'square') {
+    g.userData.collisionRects = [
+      { x: 0, z: 0, halfX: 0.52, halfZ: 0.52 },
+      { x: -1.9, z: 0, halfX: 0.76, halfZ: 0.42 },
+      { x: 1.9, z: 0, halfX: 0.76, halfZ: 0.42 },
+      { x: 0, z: -1.9, halfX: 0.42, halfZ: 0.76 },
+      { x: 0, z: 1.9, halfX: 0.42, halfZ: 0.76 },
+    ];
+  } else if (type !== 'stadium') {
+    g.userData.collisionRects = [{ x: 0, z: 0, halfX: 1.38, halfZ: 1.22 }];
+  }
   g.position.set(x, 0, z);
   g.userData.venueId = venue.id;
   g.userData.isHotspot = true;
@@ -1377,6 +1701,39 @@ function makeStateSignature(stateInfo, palette, sceneMaterials) {
   title.scale.set(4.1, 1.02, 1);
   group.add(title);
   addDoorPortal(group, { id: `state-landmark-${stateInfo.name}`, title: stateInfo.landmark, type: 'landmark', accent: palette.accent, x: 0, z: 2.75, width: 0.72, height: 1.24, metadata: { state: stateInfo.name } });
+  if (feature === 'market') {
+    group.userData.collisionRects = [-1.62, 0, 1.62].map((x) => ({ x, z: 0, halfX: 0.66, halfZ: 0.48 }));
+  } else if (feature === 'palace' || feature === 'mosque' || feature === 'minaret') {
+    group.userData.collisionRects = [
+      { x: 0, z: 0, halfX: feature === 'minaret' ? 0.84 : 1.78, halfZ: feature === 'minaret' ? 0.84 : 1.5 },
+      ...(feature === 'minaret' ? [] : [-2.05, 2.05].map((x) => ({ x, z: -0.15, halfX: 0.32, halfZ: 0.36 }))),
+    ];
+  } else if (feature === 'railway') {
+    group.userData.collisionRects = [{ x: 0, z: 0, halfX: 1.22, halfZ: 0.68 }];
+  } else if (feature === 'waterfront' || feature === 'bridge') {
+    group.userData.collisionRects = [{ x: 0, z: -0.35, halfX: 2.22, halfZ: 0.62 }];
+  } else if (feature === 'rock') {
+    group.userData.collisionRects = [{ x: 0, z: 0.1, halfX: 2.18, halfZ: 0.96 }];
+  } else if (feature === 'park') {
+    group.userData.collisionRects = [
+      ...[-1, 1].flatMap((xSign) => [-1, 1].map((zSign) => ({ x: xSign * 2, z: zSign * 1.8, halfX: 0.42, halfZ: 0.42 }))),
+      { x: 0, z: 0, halfX: 0.3, halfZ: 0.3 },
+    ];
+  } else if (feature === 'moat') {
+    group.userData.collisionRects = [{ x: 0, z: 0, halfX: 1.42, halfZ: 1.42 }];
+  } else if (feature === 'heritage') {
+    group.userData.collisionRects = [{ x: 0, z: 0, halfX: 1.92, halfZ: 1.38 }];
+  } else if (feature === 'stadium') {
+    group.userData.collisionRects = [
+      { x: -2.02, z: 0, halfX: 0.42, halfZ: 1.68 },
+      { x: 2.02, z: 0, halfX: 0.42, halfZ: 1.68 },
+      { x: -0.95, z: 2.02, halfX: 0.62, halfZ: 0.42 },
+      { x: 0.95, z: 2.02, halfX: 0.62, halfZ: 0.42 },
+      { x: 0, z: -2.02, halfX: 1.35, halfZ: 0.42 },
+    ];
+  } else {
+    group.userData.collisionRects = [{ x: 0, z: 0, halfX: feature === 'transit' ? 0.75 : 0.54, halfZ: 0.55 }];
+  }
   group.position.set(-17.6, 0, 17.6);
   group.name = `regional-signature-${stateInfo.name}`;
   return group;
@@ -1396,6 +1753,13 @@ function buildInteriorRoom(info, palette, playerColor) {
     { size: [0.22, 4.5, 13], pos: [6.4, 2.2, 0] },
     { size: [13, 0.22, 13], pos: [0, 4.45, 0] },
     { size: [13, 4.5, 0.22], pos: [0, 2.2, 6.4] },
+  ];
+  group.userData.collisionRects = [
+    { x: 0, z: -6.4, halfX: 6.5, halfZ: 0.13 },
+    { x: -6.4, z: 0, halfX: 0.13, halfZ: 6.5 },
+    { x: 6.4, z: 0, halfX: 0.13, halfZ: 6.5 },
+    { x: 0, z: 6.4, halfX: 6.5, halfZ: 0.13 },
+    { x: 0, z: -0.75, halfX: info.type === 'party-office' ? 1.82 : 1.42, halfZ: 0.68 },
   ];
   walls.forEach(({ size, pos }, index) => {
     const wall = box(...size, index === 4 ? '#d4c5a8' : wallMaterial, { castShadow: false });
@@ -1581,6 +1945,37 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     roads.push({ axis: 'x', at: primaryRoadAt + 8.2, width: 2.0 * roadScale, length: 42 });
     roads.push({ axis: 'x', at: primaryRoadAt - 8.2, width: 2.0 * roadScale, length: 42 });
   }
+  const worldBounds = { minX: -24, maxX: 24, minZ: -33, maxZ: 33 };
+  const worldColliders = [];
+  const registerGroupColliders = (group, destination = worldColliders) => {
+    const localRects = group.userData?.collisionRects || [];
+    const cosine = Math.cos(group.rotation.y || 0);
+    const sine = Math.sin(group.rotation.y || 0);
+    for (const rect of localRects) {
+      const corners = [
+        [-1, -1], [-1, 1], [1, -1], [1, 1],
+      ].map(([signX, signZ]) => {
+        const localX = (rect.x + signX * rect.halfX) * group.scale.x;
+        const localZ = (rect.z + signZ * rect.halfZ) * group.scale.z;
+        return {
+          x: group.position.x + cosine * localX + sine * localZ,
+          z: group.position.z - sine * localX + cosine * localZ,
+        };
+      });
+      destination.push({
+        minX: Math.min(...corners.map((point) => point.x)),
+        maxX: Math.max(...corners.map((point) => point.x)),
+        minZ: Math.min(...corners.map((point) => point.z)),
+        maxZ: Math.max(...corners.map((point) => point.z)),
+      });
+    }
+  };
+  const hasRoadClearance = (x, z, halfX, halfZ, clearance = 0.9) => roads.some((road) => {
+    if (road.axis === 'x') {
+      return Math.abs(z - road.at) < halfZ + road.width / 2 + clearance && Math.abs(x) < halfX + road.length / 2;
+    }
+    return Math.abs(x - road.at) < halfX + road.width / 2 + clearance && Math.abs(z) < halfZ + road.length / 2;
+  });
   for (const road of roads) {
     const alongX = road.axis === 'x';
     const slab = new THREE.Mesh(new THREE.PlaneGeometry(alongX ? road.length : road.width, alongX ? road.width : road.length), asphaltMat);
@@ -1669,10 +2064,17 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
       for (let i = 0; i < count; i += 1) {
         const offsetX = (rand() - 0.5) * 2.0;
         const offsetZ = (rand() - 0.5) * 2.0;
-        const building = makeBuilding(rand, xBlock + offsetX, zBlock + offsetZ, buildingIndex, palette, localityStyle);
+        const candidateX = xBlock + offsetX;
+        const candidateZ = zBlock + offsetZ;
+        const building = makeBuilding(rand, candidateX, candidateZ, buildingIndex, palette, localityStyle);
         const s = 0.75 + rand() * 0.35;
         building.scale.setScalar(s);
+        const collisionRects = building.userData.collisionRects || [];
+        const halfX = collisionRects.reduce((extent, rect) => Math.max(extent, Math.abs(rect.x) + rect.halfX), 0) * s;
+        const halfZ = collisionRects.reduce((extent, rect) => Math.max(extent, Math.abs(rect.z) + rect.halfZ), 0) * s;
+        if (hasRoadClearance(candidateX, candidateZ, halfX, halfZ, 0.55)) { buildingIndex += 1; continue; }
         scene.add(building);
+        registerGroupColliders(building);
         buildingIndex += 1;
       }
     }
@@ -1683,7 +2085,12 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     const z = (rand() - 0.5) * 31;
     if (Math.abs(x) < 5.5 || Math.abs(z) < 5.5) continue;
     if (Math.abs(z + 10.5) < 4.5 || Math.hypot(x + 17.6, z - 17.6) < 5.2 || Math.hypot(x - 17.5, z + 17.5) < 5.2) continue;
-    scene.add(makeBuilding(rand, x, z, buildingIndex++, palette, localityStyle));
+    const building = makeBuilding(rand, x, z, buildingIndex++, palette, localityStyle);
+    const halfX = (building.userData.collisionRects || []).reduce((extent, rect) => Math.max(extent, Math.abs(rect.x) + rect.halfX), 0);
+    const halfZ = (building.userData.collisionRects || []).reduce((extent, rect) => Math.max(extent, Math.abs(rect.z) + rect.halfZ), 0);
+    if (hasRoadClearance(x, z, halfX, halfZ, 0.6)) continue;
+    scene.add(building);
+    registerGroupColliders(building);
   }
 
   // Small green pockets, trees, kiosks, and benches vary by biome and settlement density.
@@ -1705,9 +2112,17 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     const z = primaryRoadAt + side * (mainRoadWidth / 2 + 1.55);
     scene.add(makeRoadsideStall(x, z, palette, localityStyle.roadsideAccent, stallIndex));
   }
-  scene.add(makeLocalityMicroLandmark(locality, stateInfo, localityStyle, palette));
-  scene.add(makeStateSignature(stateInfo, palette, sceneMaterials));
-  for (const venue of WORLD_VENUES) scene.add(makeVenue(venue, palette, sceneMaterials, stateInfo.name));
+  const microLandmark = makeLocalityMicroLandmark(locality, stateInfo, localityStyle, palette);
+  scene.add(microLandmark);
+  registerGroupColliders(microLandmark);
+  const stateSignature = makeStateSignature(stateInfo, palette, sceneMaterials);
+  scene.add(stateSignature);
+  registerGroupColliders(stateSignature);
+  for (const venue of WORLD_VENUES) {
+    const venueGroup = makeVenue(venue, palette, sceneMaterials, stateInfo.name);
+    scene.add(venueGroup);
+    registerGroupColliders(venueGroup);
+  }
 
   const meetingStage = new THREE.Group();
   const meetingStageRing = new THREE.Mesh(new THREE.RingGeometry(4.25, 4.38, 40), new THREE.MeshBasicMaterial({ color: '#f0c777', transparent: true, opacity: 0.42, side: THREE.DoubleSide }));
@@ -1786,6 +2201,7 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     const office = makePartyOffice(party, branch, x, z);
     if (row > 0) office.rotation.y = Math.PI;
     scene.add(office);
+    registerGroupColliders(office);
     office.traverse((object) => {
       if (object.userData?.interaction?.type === 'party-office') partyOfficeDoors.set(party.id, object);
     });
@@ -1793,8 +2209,15 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
 
   const traffic = [];
   const heroTaxi = makeCar('#f1c53d', 'taxi', '#28694e');
-  heroTaxi.position.set(-6.45, 0, primaryRoadAt + 2.72);
-  scene.add(heroTaxi);
+  heroTaxi.position.set(-9.2, 0, primaryRoadAt + 2.72);
+  if (!aabbBlockedAt(heroTaxi.position.x, heroTaxi.position.z, worldVehicleFootprint(heroTaxi).halfX, worldVehicleFootprint(heroTaxi).halfZ, worldColliders)) scene.add(heroTaxi);
+  const addTrafficVehicle = (object, route) => {
+    const footprint = worldVehicleFootprint(object);
+    if (aabbBlockedAt(object.position.x, object.position.z, footprint.halfX, footprint.halfZ, worldColliders)) return false;
+    scene.add(object);
+    traffic.push({ object, ...route });
+    return true;
+  };
   const routeBrand = palette.accent;
   const routeAccent = ['#203b32', '#f2d95d', '#efe5ce', '#263a57', '#f3ead5', '#283a32'][hash(stateInfo.name) % 6];
   const roadKinds = localityStyle.trafficMix.filter((kind) => kind !== 'water-taxi');
@@ -1808,8 +2231,7 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     const car = makeCar(color, kind, routeAccent);
     car.position.set(-19 + i * (38 / Math.max(1, horizontalCount - 1)), 0, primaryRoadAt + (direction > 0 ? -0.78 : 0.78));
     car.rotation.y = direction > 0 ? 0 : Math.PI;
-    scene.add(car);
-    traffic.push({ object: car, axis: 'x', speed: 0.68 + (i % 3) * 0.23, min: -25, max: 25, dir: direction });
+    addTrafficVehicle(car, { axis: 'x', speed: 0.68 + (i % 3) * 0.23, min: -25, max: 25, dir: direction });
   }
   const verticalCount = Math.max(2, Math.min(4, Math.round(1 + localDensity * 2)));
   for (let i = 0; i < verticalCount; i += 1) {
@@ -1818,15 +2240,27 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     const car = makeCar(trafficColors[(i + 2) % trafficColors.length], kind, routeAccent);
     car.position.set(sideRoadAt + (direction > 0 ? -0.74 : 0.74), 0, -18 + i * 12.5);
     car.rotation.y = direction > 0 ? Math.PI / 2 : -Math.PI / 2;
-    scene.add(car);
-    traffic.push({ object: car, axis: 'z', speed: 0.66 + (i % 2) * 0.27, min: -25, max: 25, dir: direction });
+    addTrafficVehicle(car, { axis: 'z', speed: 0.66 + (i % 2) * 0.27, min: -25, max: 25, dir: direction });
   }
   if (localityStyle.trafficMix.includes('water-taxi')) {
     const boat = makeWaterTaxi('#f0c84b', routeAccent);
     boat.position.set(-18, 0.06, -28.2);
-    scene.add(boat);
-    traffic.push({ object: boat, axis: 'x', speed: 0.68, min: -26, max: 26, dir: 1 });
+    addTrafficVehicle(boat, { axis: 'x', speed: 0.68, min: -26, max: 26, dir: 1 });
   }
+  const getWorldActorColliders = () => {
+    const colliders = worldColliders.slice();
+    const vehicles = [...(heroTaxi.parent ? [heroTaxi] : []), ...traffic.map((item) => item.object)];
+    for (const vehicle of vehicles) {
+      const { halfX, halfZ } = worldVehicleFootprint(vehicle);
+      colliders.push({
+        minX: vehicle.position.x - halfX,
+        maxX: vehicle.position.x + halfX,
+        minZ: vehicle.position.z - halfZ,
+        maxZ: vehicle.position.z + halfZ,
+      });
+    }
+    return colliders;
+  };
 
   const pedestrians = [];
   const clothing = ['#df8066', '#527c6e', '#d4b750', '#657ca0', '#b87c49', '#9b87ba'];
@@ -1836,10 +2270,14 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     if (Math.abs(x) < 3.0 && Math.abs(z) < 3.0) continue;
     if (Math.abs(z + 10.5) < 1.6 || Math.abs(x) < 1.8) continue;
     const person = makePerson(clothing[i % clothing.length]);
-    person.position.set(x, 0, z);
-    person.scale.setScalar(0.8 + rand() * 0.28);
+    const personScale = 0.8 + rand() * 0.28;
+    const collisionRadius = 0.33 * personScale;
+    const safeStart = findNearestFreePoint(x, z, collisionRadius, getWorldActorColliders(), worldBounds, 4.5);
+    if (!safeStart) continue;
+    person.position.set(safeStart.x, 0, safeStart.z);
+    person.scale.setScalar(personScale);
     scene.add(person);
-    pedestrians.push({ object: person, phase: rand() * Math.PI * 2, speed: 0.35 + rand() * 0.35, startX: x, startZ: z, walkX: rand() > 0.5 });
+    pedestrians.push({ object: person, phase: rand() * Math.PI * 2, speed: 0.35 + rand() * 0.35, startX: safeStart.x, startZ: safeStart.z, walkX: rand() > 0.5, collisionRadius });
   }
 
   const player = makePerson(playerColor || '#d8f36b', playerAppearance?.skinTone || '#764c37', playerAppearance || {});
@@ -1871,8 +2309,18 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
         remoteGroup.add(avatar);
         remoteSprites.set(item.id, avatar);
       }
+      const targetX = clamp(Number(item.x) || 0, worldBounds.minX, worldBounds.maxX);
+      const targetZ = clamp(Number(item.z) || 0, worldBounds.minZ, worldBounds.maxZ);
       const priorPosition = avatar.position.clone();
-      avatar.position.set(clamp(Number(item.x) || 0, -24, 24), 0, clamp(Number(item.z) || 0, -33, 33));
+      if (!avatar.userData.collisionReady) {
+        const safeStart = findNearestFreePoint(targetX, targetZ, 0.47, worldColliders, worldBounds, 12);
+        if (safeStart) avatar.position.set(safeStart.x, 0, safeStart.z);
+        else avatar.position.set(-5.8, 0, 3.5);
+        avatar.userData.collisionReady = true;
+      } else {
+        const movement = moveCircleSafely(avatar.position, targetX - avatar.position.x, targetZ - avatar.position.z, 0.47, worldColliders, worldBounds);
+        if (movement.moved) avatar.rotation.y = Math.atan2(movement.x, movement.z);
+      }
       avatar.userData.walking = priorPosition.distanceTo(avatar.position) > 0.006;
     }
     for (const [id, avatar] of remoteSprites.entries()) {
@@ -1907,8 +2355,37 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
   const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   const intersection = new THREE.Vector3();
   let isMoving = false;
+  let movementWaypoints = [];
+  let movementWaypointIndex = 0;
   let interiorActive = false;
   let interiorGroup = null;
+  const interiorColliders = [];
+  const activeCollisionRects = () => (interiorActive ? interiorColliders : getWorldActorColliders());
+  const activeWorldBounds = () => (interiorActive
+    ? { minX: -5.55, maxX: 5.55, minZ: -5.45, maxZ: 5.45 }
+    : worldBounds);
+  const setSafeWalkTarget = (x, z, maxRadius = 5.5) => {
+    const radius = interiorActive ? 0.46 : 0.5;
+    const colliders = activeCollisionRects();
+    const bounds = activeWorldBounds();
+    const safePoint = findNearestFreePoint(x, z, radius, colliders, bounds, maxRadius);
+    if (!safePoint) {
+      isMoving = false;
+      movementWaypoints = [];
+      return false;
+    }
+    const path = findWalkPath(player.position, safePoint, radius, colliders, bounds);
+    if (!path) {
+      isMoving = false;
+      movementWaypoints = [];
+      return false;
+    }
+    moveTarget.set(safePoint.x, 0, safePoint.z);
+    movementWaypoints = path;
+    movementWaypointIndex = 0;
+    isMoving = movementWaypoints.length > 0;
+    return true;
+  };
   let pendingInteraction = null;
   let savedExteriorPosition = null;
   let savedCameraPosition = null;
@@ -1951,8 +2428,11 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     if (savedCameraPosition) camera.position.copy(savedCameraPosition);
     if (savedCameraTarget) controls.target.copy(savedCameraTarget);
     previousPlayerPosition.copy(player.position);
+    interiorColliders.length = 0;
     interiorActive = false;
     isMoving = false;
+    movementWaypoints = [];
+    movementWaypointIndex = 0;
     pendingInteraction = null;
     controls.minDistance = 7;
     controls.maxDistance = 62;
@@ -1979,6 +2459,8 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
       fictional: interaction.type === 'party-office' || interaction.type === 'building' || interaction.type === 'landmark',
     };
     interiorGroup = buildInteriorRoom(info, palette, playerColor);
+    interiorColliders.length = 0;
+    registerGroupColliders(interiorGroup, interiorColliders);
     scene.add(interiorGroup);
     interiorGroup.add(player);
     player.position.set(0, 0, 3.15);
@@ -1993,6 +2475,8 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     });
     interiorActive = true;
     isMoving = false;
+    movementWaypoints = [];
+    movementWaypointIndex = 0;
     pendingInteraction = null;
     camera.position.set(0, 3.35, 4.45);
     controls.target.set(0, 1.28, -0.2);
@@ -2014,9 +2498,8 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
       portal.getWorldQuaternion(rotation);
       const facing = new THREE.Vector3(0, 0, 1).applyQuaternion(rotation).normalize();
       const approach = point.add(facing.multiplyScalar(-0.82));
-      moveTarget.set(clamp(approach.x, -5.5, 5.5), 0, clamp(approach.z, -5.3, 5.3));
+      if (!setSafeWalkTarget(approach.x, approach.z, 1.6)) return;
       pendingInteraction = interaction;
-      isMoving = true;
       if (player.position.distanceTo(moveTarget) < 1.25) exitInterior();
       return;
     }
@@ -2028,18 +2511,17 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     const rotation = new THREE.Quaternion();
     portal.getWorldQuaternion(rotation);
     const facing = new THREE.Vector3(0, 0, 1).applyQuaternion(rotation).normalize();
-    const approach = point.add(facing.multiplyScalar(1.75));
-    moveTarget.set(clamp(approach.x, -24, 24), 0, clamp(approach.z, -33, 33));
+    const approachDistance = interaction.type === 'venue' && ['office', 'court', 'assembly', 'caucus'].includes(interaction.metadata?.venueType) ? 2.35 : 1.75;
+    const approach = point.add(facing.multiplyScalar(approachDistance));
+    if (!setSafeWalkTarget(approach.x, approach.z, 2.5)) return;
     pendingInteraction = interaction;
-    isMoving = true;
     if (player.position.distanceTo(moveTarget) < 1.25) enterInterior(interaction);
   };
   const focusVenue = (venueId) => {
     const venue = WORLD_VENUES.find((item) => item.id === venueId);
     if (!venue) return;
     if (interiorActive) exitInterior();
-    moveTarget.set(clamp(venue.x - 2.5, -24, 24), 0, clamp(venue.z + 3.0, -33, 33));
-    isMoving = true;
+    setSafeWalkTarget(venue.x - 2.5, venue.z + 3.0, 4.5);
     pendingInteraction = null;
     cameraFocusTarget.set(venue.x, 0.8, venue.z);
     cameraFocusPosition.set(venue.x + 8.7, 7.3, venue.z + 12.5);
@@ -2070,8 +2552,7 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     const venueHit = hits.find((hit) => hit.object.userData?.venueId);
     if (venueHit) {
       const venueGroup = venueHit.object.parent?.userData?.venueId ? venueHit.object.parent : venueHit.object;
-      moveTarget.set(clamp(venueGroup.position.x - 2.2, -24, 24), 0, clamp(venueGroup.position.z + 2.2, -33, 33));
-      isMoving = true;
+      setSafeWalkTarget(venueGroup.position.x - 2.2, venueGroup.position.z + 2.2, 4.5);
       pendingInteraction = null;
       onVenueSelect?.(venueHit.object.userData.venueId);
       return;
@@ -2079,8 +2560,7 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     if (raycaster.ray.intersectPlane(groundPlane, intersection)) {
       const limit = interiorActive ? 5.8 : 33;
       if (Math.abs(intersection.x) < (interiorActive ? 6.1 : 24) && Math.abs(intersection.z) < limit) {
-        moveTarget.set(intersection.x, 0, intersection.z);
-        isMoving = true;
+        setSafeWalkTarget(intersection.x, intersection.z, 5.5);
         pendingInteraction = null;
       }
     }
@@ -2182,25 +2662,42 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     const elapsed = clock.elapsedTime;
     updateTimeOfDay();
     for (const item of traffic) {
+      const { x: currentX, z: currentZ } = item.object.position;
+      let nextX = currentX;
+      let nextZ = currentZ;
+      let wrapping = false;
       if (item.axis === 'x') {
-        item.object.position.x += item.speed * item.dir * delta;
-        if (item.dir > 0 && item.object.position.x > item.max) item.object.position.x = item.min;
-        if (item.dir < 0 && item.object.position.x < item.min) item.object.position.x = item.max;
+        nextX += item.speed * item.dir * delta;
+        if (item.dir > 0 && nextX > item.max) { nextX = item.min; wrapping = true; }
+        if (item.dir < 0 && nextX < item.min) { nextX = item.max; wrapping = true; }
       } else {
-        item.object.position.z += item.speed * item.dir * delta;
-        if (item.dir > 0 && item.object.position.z > item.max) item.object.position.z = item.min;
-        if (item.dir < 0 && item.object.position.z < item.min) item.object.position.z = item.max;
+        nextZ += item.speed * item.dir * delta;
+        if (item.dir > 0 && nextZ > item.max) { nextZ = item.min; wrapping = true; }
+        if (item.dir < 0 && nextZ < item.min) { nextZ = item.max; wrapping = true; }
       }
+      const { halfX, halfZ } = worldVehicleFootprint(item.object);
+      const blocked = wrapping
+        ? aabbBlockedAt(nextX, nextZ, halfX, halfZ, worldColliders)
+        : aabbPathBlocked(currentX, currentZ, nextX, nextZ, halfX, halfZ, worldColliders);
+      if (!blocked) item.object.position.set(nextX, item.object.position.y, nextZ);
     }
+    const pedestrianBlockers = getWorldActorColliders();
     pedestrians.forEach((p) => {
       const phase = elapsed * p.speed + p.phase;
       const walk = Math.sin(phase) * 0.46;
-      p.object.position.x = p.startX + (p.walkX ? walk : 0);
-      p.object.position.z = p.startZ + (!p.walkX ? walk : 0);
+      const targetX = p.startX + (p.walkX ? walk : 0);
+      const targetZ = p.startZ + (!p.walkX ? walk : 0);
+      const movement = moveCircleSafely(p.object.position, targetX - p.object.position.x, targetZ - p.object.position.z, p.collisionRadius, pedestrianBlockers, worldBounds);
+      p.object.userData.walking = movement.moved;
+      if (movement.moved) p.object.rotation.y = Math.atan2(movement.x, movement.z);
       p.object.position.y = Math.abs(Math.sin(elapsed * 2.2 + p.phase)) * 0.035;
-      p.object.userData.legs?.forEach((leg, index) => { leg.rotation.x = Math.sin(phase + index * Math.PI) * 0.48; });
-      p.object.userData.arms?.forEach((arm, index) => { arm.rotation.x = Math.sin(phase + index * Math.PI + Math.PI) * 0.25; });
-      if (p.object.userData.torso) p.object.userData.torso.position.y = 0.7 + Math.abs(Math.sin(phase * 2)) * 0.025;
+      p.object.userData.legs?.forEach((leg, index) => {
+        leg.rotation.x = movement.moved ? Math.sin(phase + index * Math.PI) * 0.48 : THREE.MathUtils.damp(leg.rotation.x, 0, 8, delta);
+      });
+      p.object.userData.arms?.forEach((arm, index) => {
+        arm.rotation.x = movement.moved ? Math.sin(phase + index * Math.PI + Math.PI) * 0.25 : THREE.MathUtils.damp(arm.rotation.x, 0, 8, delta);
+      });
+      if (p.object.userData.torso) p.object.userData.torso.position.y = 0.7 + (movement.moved ? Math.abs(Math.sin(phase * 2)) * 0.025 : 0);
     });
     const currentMeeting = meetingRef?.current;
     const meetingIsVisible = Boolean(currentMeeting?.id && ['open', 'closed'].includes(currentMeeting.status));
@@ -2242,31 +2739,54 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     if (keyState.has('s') || keyState.has('arrowdown')) dz += 1;
     if (keyState.has('a') || keyState.has('arrowleft')) dx -= 1;
     if (keyState.has('d') || keyState.has('arrowright')) dx += 1;
-    const wasWalking = Boolean(dx || dz || isMoving);
+    const playerRadius = 0.5;
+    const movementColliders = activeCollisionRects();
+    const movementBounds = activeWorldBounds();
+    let playerMoved = false;
     if (dx || dz) {
       const len = Math.hypot(dx, dz) || 1;
-      const boundX = interiorActive ? 5.55 : 24;
-      const boundZ = interiorActive ? 5.45 : 33;
-      player.position.x = clamp(player.position.x + (dx / len) * speed, -boundX, boundX);
-      player.position.z = clamp(player.position.z + (dz / len) * speed, -boundZ, boundZ);
-      player.rotation.y = Math.atan2(dx, dz);
+      const movement = moveCircleSafely(player.position, (dx / len) * speed, (dz / len) * speed, playerRadius, movementColliders, movementBounds);
+      playerMoved = movement.moved;
+      if (movement.moved) player.rotation.y = Math.atan2(movement.x, movement.z);
       isMoving = false;
+      movementWaypoints = [];
+      movementWaypointIndex = 0;
       pendingInteraction = null;
     } else if (isMoving) {
-      const difference = new THREE.Vector3(moveTarget.x - player.position.x, 0, moveTarget.z - player.position.z);
-      if (difference.length() < speed * 1.25) {
-        player.position.x = moveTarget.x;
-        player.position.z = moveTarget.z;
-        isMoving = false;
-        if (pendingInteraction?.type === 'exit') exitInterior();
-        else if (pendingInteraction) enterInterior(pendingInteraction);
-      } else {
-        difference.normalize().multiplyScalar(speed * 0.8);
-        player.position.add(difference);
-        player.rotation.y = Math.atan2(difference.x, difference.z);
+      const waypoint = movementWaypoints[movementWaypointIndex] || { x: moveTarget.x, z: moveTarget.z };
+      const remainingX = waypoint.x - player.position.x;
+      const remainingZ = waypoint.z - player.position.z;
+      const remaining = Math.hypot(remainingX, remainingZ);
+      const scale = remaining > 1e-6 ? Math.min(1, (speed * 0.8) / remaining) : 1;
+      const movement = moveCircleSafely(player.position, remainingX * scale, remainingZ * scale, playerRadius, movementColliders, movementBounds);
+      playerMoved = movement.moved;
+      if (movement.moved) player.rotation.y = Math.atan2(movement.x, movement.z);
+      const distanceToWaypoint = Math.hypot(waypoint.x - player.position.x, waypoint.z - player.position.z);
+      if (distanceToWaypoint < 0.06) {
+        if (movementWaypointIndex < movementWaypoints.length - 1) {
+          movementWaypointIndex += 1;
+        } else if (Math.hypot(moveTarget.x - player.position.x, moveTarget.z - player.position.z) < 0.06
+          && !circleBlockedAt(moveTarget.x, moveTarget.z, playerRadius, movementColliders)) {
+          isMoving = false;
+          movementWaypoints = [];
+          movementWaypointIndex = 0;
+          if (pendingInteraction?.type === 'exit') exitInterior();
+          else if (pendingInteraction) enterInterior(pendingInteraction);
+        }
+      } else if (!movement.moved) {
+        const retryPath = findWalkPath(player.position, moveTarget, playerRadius, movementColliders, movementBounds);
+        if (retryPath?.length) {
+          movementWaypoints = retryPath;
+          movementWaypointIndex = 0;
+        } else {
+          isMoving = false;
+          movementWaypoints = [];
+          movementWaypointIndex = 0;
+          pendingInteraction = null;
+        }
       }
     }
-    const walkingNow = wasWalking && (dx || dz || isMoving || pendingInteraction === null);
+    const walkingNow = playerMoved;
     player.userData.legs?.forEach((leg, index) => {
       leg.rotation.x = walkingNow ? Math.sin(elapsed * 11 + index * Math.PI) * 0.52 : THREE.MathUtils.damp(leg.rotation.x, 0, 8, delta);
     });
