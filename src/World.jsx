@@ -707,21 +707,80 @@ function makeLocalityMicroLandmark(locality, stateInfo, localityStyle, palette) 
   return group;
 }
 
-function makePerson(shirt = '#f3a17b', skin = '#7d5138') {
+function makePerson(shirt = '#f3a17b', skin = '#7d5138', appearance = {}) {
   const group = new THREE.Group();
-  const shirtMaterial = new THREE.MeshStandardMaterial({ color: shirt, roughness: 0.82 });
+  const headStyle = ['close', 'natural', 'wrap', 'cap'].includes(appearance.headStyle) ? appearance.headStyle : 'close';
+  const shirtColor = appearance.outfitColor || shirt;
+  const skinColor = appearance.skinTone || skin;
+  const shirtMaterial = new THREE.MeshStandardMaterial({ color: shirtColor, roughness: 0.82 });
   const trouserMaterial = new THREE.MeshStandardMaterial({ color: '#363f38', roughness: 0.95 });
-  const skinMaterial = new THREE.MeshStandardMaterial({ color: skin, roughness: 0.86 });
-  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.22, 0.42, 3, 6), shirtMaterial);
+  const skinMaterial = new THREE.MeshStandardMaterial({ color: skinColor, roughness: 0.86 });
+  const darkMaterial = new THREE.MeshStandardMaterial({ color: '#201d1a', roughness: 0.9 });
+  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.22, 0.42, 3, 8), shirtMaterial);
   torso.position.y = 0.7;
   torso.castShadow = true;
   group.add(torso);
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.19, 12, 10), skinMaterial);
-  head.position.y = 1.22;
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.09, 0.17, 8), skinMaterial);
+  neck.position.y = 1.11;
+  neck.castShadow = true;
+  group.add(neck);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.19, 14, 12), skinMaterial);
+  head.position.y = 1.25;
   head.castShadow = true;
   group.add(head);
-  const legs = [];
   for (const side of [-1, 1]) {
+    const ear = new THREE.Mesh(new THREE.SphereGeometry(0.043, 8, 8), skinMaterial);
+    ear.position.set(side * 0.182, 1.245, 0.005);
+    group.add(ear);
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.023, 7, 6), darkMaterial);
+    eye.position.set(side * 0.064, 1.272, 0.164);
+    group.add(eye);
+  }
+  const nose = new THREE.Mesh(new THREE.SphereGeometry(0.026, 7, 6), skinMaterial);
+  nose.scale.set(0.75, 1.2, 0.7);
+  nose.position.set(0, 1.218, 0.184);
+  group.add(nose);
+  const hairMaterial = new THREE.MeshStandardMaterial({ color: '#232521', roughness: 0.97 });
+  if (headStyle === 'wrap') {
+    const wrap = new THREE.Mesh(new THREE.SphereGeometry(0.207, 12, 8), new THREE.MeshStandardMaterial({ color: '#d5b96f', roughness: 0.9 }));
+    wrap.position.set(0, 1.355, -0.005);
+    wrap.scale.set(1.02, 0.49, 1.02);
+    wrap.castShadow = true;
+    group.add(wrap);
+    const fold = new THREE.Mesh(new THREE.TorusGeometry(0.157, 0.018, 5, 14), new THREE.MeshStandardMaterial({ color: '#b8924d', roughness: 0.95 }));
+    fold.rotation.x = Math.PI / 2;
+    fold.position.set(0, 1.32, 0);
+    group.add(fold);
+  } else if (headStyle === 'cap') {
+    const crown = new THREE.Mesh(new THREE.SphereGeometry(0.205, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: '#263b35', roughness: 0.92 }));
+    crown.position.set(0, 1.295, -0.005);
+    crown.castShadow = true;
+    group.add(crown);
+    const brim = box(0.31, 0.035, 0.2, '#263b35', { castShadow: true });
+    brim.position.set(0, 1.31, 0.095);
+    group.add(brim);
+  } else {
+    const hair = new THREE.Mesh(new THREE.SphereGeometry(headStyle === 'natural' ? 0.202 : 0.194, 12, 8), hairMaterial);
+    hair.position.set(0, headStyle === 'natural' ? 1.345 : 1.335, -0.005);
+    hair.scale.set(1, headStyle === 'natural' ? 0.68 : 0.4, 1.02);
+    hair.castShadow = true;
+    group.add(hair);
+  }
+  const legs = [];
+  const arms = [];
+  for (const side of [-1, 1]) {
+    const arm = new THREE.Group();
+    arm.position.set(side * 0.245, 0.89, 0);
+    const sleeve = new THREE.Mesh(new THREE.CapsuleGeometry(0.082, 0.22, 3, 7), shirtMaterial);
+    sleeve.position.y = -0.13;
+    sleeve.castShadow = true;
+    arm.add(sleeve);
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.068, 8, 8), skinMaterial);
+    hand.position.y = -0.3;
+    arm.add(hand);
+    group.add(arm);
+    arms.push(arm);
+
     const leg = new THREE.Group();
     leg.position.set(side * 0.12, 0.43, 0);
     const trouser = new THREE.Mesh(new THREE.CapsuleGeometry(0.068, 0.24, 3, 6), trouserMaterial);
@@ -735,6 +794,7 @@ function makePerson(shirt = '#f3a17b', skin = '#7d5138') {
     legs.push(leg);
   }
   group.userData.legs = legs;
+  group.userData.arms = arms;
   group.userData.torso = torso;
   return group;
 }
@@ -1438,7 +1498,7 @@ function buildInteriorRoom(info, palette, playerColor) {
   return group;
 }
 
-function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, playerColor, meetingRef, meetingMessagesRef, focusRef, partyFocusRef, exitInteriorRef, interiorChangeRef) {
+function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, playerColor, playerAppearance, meetingRef, meetingMessagesRef, focusRef, partyFocusRef, exitInteriorRef, interiorChangeRef) {
   const stateInfo = STATES.find((item) => item.name === state) || STATES[0];
   const profile = STATE_WORLD_PROFILES[stateInfo.name] || STATE_WORLD_PROFILES.Lagos;
   const localityStyle = createLocalityVisualProfile(stateInfo, profile, locality);
@@ -1775,7 +1835,7 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     pedestrians.push({ object: person, phase: rand() * Math.PI * 2, speed: 0.35 + rand() * 0.35, startX: x, startZ: z, walkX: rand() > 0.5 });
   }
 
-  const player = makePerson(playerColor || '#d8f36b', '#764c37');
+  const player = makePerson(playerColor || '#d8f36b', playerAppearance?.skinTone || '#764c37', playerAppearance || {});
   player.scale.set(1.15, 1.15, 1.15);
   player.position.set(-5.8, 0, 3.5);
   const playerHalo = new THREE.Mesh(new THREE.TorusGeometry(0.56, 0.06, 8, 26), new THREE.MeshBasicMaterial({ color: '#d8f36b' }));
@@ -2092,6 +2152,7 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
       p.object.position.z = p.startZ + (!p.walkX ? walk : 0);
       p.object.position.y = Math.abs(Math.sin(elapsed * 2.2 + p.phase)) * 0.035;
       p.object.userData.legs?.forEach((leg, index) => { leg.rotation.x = Math.sin(phase + index * Math.PI) * 0.48; });
+      p.object.userData.arms?.forEach((arm, index) => { arm.rotation.x = Math.sin(phase + index * Math.PI + Math.PI) * 0.25; });
       if (p.object.userData.torso) p.object.userData.torso.position.y = 0.7 + Math.abs(Math.sin(phase * 2)) * 0.025;
     });
     const currentMeeting = meetingRef?.current;
@@ -2162,6 +2223,9 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     player.userData.legs?.forEach((leg, index) => {
       leg.rotation.x = walkingNow ? Math.sin(elapsed * 11 + index * Math.PI) * 0.52 : THREE.MathUtils.damp(leg.rotation.x, 0, 8, delta);
     });
+    player.userData.arms?.forEach((arm, index) => {
+      arm.rotation.x = walkingNow ? Math.sin(elapsed * 11 + index * Math.PI + Math.PI) * 0.25 : THREE.MathUtils.damp(arm.rotation.x, 0, 8, delta);
+    });
     if (player.userData.torso) player.userData.torso.position.y = 0.7 + (walkingNow ? Math.abs(Math.sin(elapsed * 11 * 2)) * 0.03 : 0);
     if (!interiorActive && !isFocusingCamera) {
       const followDelta = new THREE.Vector3(player.position.x - previousPlayerPosition.x, 0, player.position.z - previousPlayerPosition.z);
@@ -2176,6 +2240,9 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     for (const avatar of remoteSprites.values()) {
       avatar.userData.legs?.forEach((leg, index) => {
         leg.rotation.x = avatar.userData.walking ? Math.sin(elapsed * 9.5 + index * Math.PI) * 0.44 : THREE.MathUtils.damp(leg.rotation.x, 0, 8, delta);
+      });
+      avatar.userData.arms?.forEach((arm, index) => {
+        arm.rotation.x = avatar.userData.walking ? Math.sin(elapsed * 9.5 + index * Math.PI + Math.PI) * 0.22 : THREE.MathUtils.damp(arm.rotation.x, 0, 8, delta);
       });
     }
     if (isFocusingCamera) {
@@ -2221,7 +2288,7 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
   };
 }
 
-export default function World({ state, locality = null, locationKey = 'state-capital', selectedVenueId = 'square', focusRequest = 0, onVenueSelect, onMove, remotePlayers = [], playerColor = '#d8f36b', meeting = null, meetingMessages = [], partyOfficeActionRef, exitInteriorActionRef, onInteriorChange }) {
+export default function World({ state, locality = null, locationKey = 'state-capital', selectedVenueId = 'square', focusRequest = 0, onVenueSelect, onMove, remotePlayers = [], playerColor = '#d8f36b', playerAppearance = {}, meeting = null, meetingMessages = [], partyOfficeActionRef, exitInteriorActionRef, onInteriorChange }) {
   const mountRef = useRef(null);
   const positionRef = useRef({ x: -5.8, z: 3.5 });
   const remoteRef = useRef(remotePlayers);
@@ -2252,6 +2319,7 @@ export default function World({ state, locality = null, locationKey = 'state-cap
         positionRef,
         remoteRef,
         playerColor,
+        playerAppearance,
         meetingRef,
         meetingMessagesRef,
         focusRef,
@@ -2265,7 +2333,7 @@ export default function World({ state, locality = null, locationKey = 'state-cap
       setWorldError(true);
       return undefined;
     }
-  }, [state, playerColor, locationKey]);
+  }, [state, playerColor, playerAppearance?.skinTone, playerAppearance?.headStyle, playerAppearance?.outfitColor, locationKey]);
 
   useEffect(() => {
     if (!hasMountedFocusRef.current) { hasMountedFocusRef.current = true; return; }

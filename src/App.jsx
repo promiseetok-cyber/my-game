@@ -6,6 +6,7 @@ import {
   Map, MapPin, Megaphone, MessageCircle, Move, Plane, Radio, Scale, Search,
   Send, Shield, ShieldAlert, Sparkles, TrendingUp, UserRound, Users, Wallet,
   X, Zap, Briefcase, Crown, BadgeCheck, CircleHelp, Eye, ScrollText, LockKeyhole,
+  Compass, Menu, Smartphone, Maximize2, Minimize2, Shirt,
 } from 'lucide-react';
 import World from './World.jsx';
 import { createLocalPartyBranches } from './partyBranches.js';
@@ -39,6 +40,30 @@ const CAPITAL_LGA_BY_STATE = {
 };
 const wardKey = (ward) => ward ? `${ward.name}|${ward.lat}|${ward.lon}` : '';
 const partyRegisterDateLabel = new Date(`${PARTY_REGISTER_CHECKED_AT}T12:00:00+01:00`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase();
+const AVATAR_SKIN_OPTIONS = [
+  { label: 'Deep umber', value: '#54372d' }, { label: 'Warm umber', value: '#764c37' },
+  { label: 'Copper brown', value: '#966448' }, { label: 'Golden brown', value: '#b4805c' },
+  { label: 'Light brown', value: '#c39270' },
+];
+const AVATAR_HEAD_OPTIONS = [
+  { id: 'close', label: 'Close cut' }, { id: 'natural', label: 'Natural' },
+  { id: 'wrap', label: 'Head wrap' }, { id: 'cap', label: 'Cap' },
+];
+const AVATAR_OUTFIT_OPTIONS = [
+  { id: 'accent', label: 'Party / role accent', value: null },
+  { id: 'teal', label: 'Lagoon teal', value: '#267a72' }, { id: 'amber', label: 'Market amber', value: '#b87937' },
+  { id: 'indigo', label: 'Indigo', value: '#465879' }, { id: 'cream', label: 'Cotton cream', value: '#ddd0ab' },
+  { id: 'burgundy', label: 'Burgundy', value: '#713f4d' },
+];
+const DEFAULT_AVATAR_APPEARANCE = { skinTone: '#764c37', headStyle: 'close', outfitColor: null };
+const normalizeAvatarAppearance = (value = {}) => {
+  const source = value && typeof value === 'object' ? value : {};
+  return {
+    skinTone: AVATAR_SKIN_OPTIONS.some((option) => option.value === source.skinTone) ? source.skinTone : DEFAULT_AVATAR_APPEARANCE.skinTone,
+    headStyle: AVATAR_HEAD_OPTIONS.some((option) => option.id === source.headStyle) ? source.headStyle : DEFAULT_AVATAR_APPEARANCE.headStyle,
+    outfitColor: AVATAR_OUTFIT_OPTIONS.some((option) => option.value === source.outfitColor) ? source.outfitColor : null,
+  };
+};
 const scoreMeetingResponses = (messages = []) => {
   const constructive = /\b(plan|timeline|budget|evidence|listen|include|publish|follow[- ]?up|accountab|data|service|proposal|cost|measure|respect|agree)\b/i;
   const dismissive = /\b(ignore|silence|shut up|punish|liar|enemy|useless|they all|never listen)\b/i;
@@ -63,6 +88,7 @@ const defaultProfile = {
   cash: 1_000_000, trust: 32, influence: 12, integrity: 78,
   coalition: 1, energy: 88, scandals: 0, evidence: 0, wins: 0,
   currentOffice: null, lastContest: null, legalBoost: false, completed: false,
+  appearance: DEFAULT_AVATAR_APPEARANCE,
 };
 
 function migrateProfile(stored = {}) {
@@ -73,12 +99,13 @@ function migrateProfile(stored = {}) {
   const base = { ...defaultProfile, ...stored, cash };
   if (institutional) return {
     ...base, roleMode: 'institutional', institution: role.id, party: null, partyId: null, partyTag: null,
-    color: role.color, currentOffice: null,
+    color: role.color, currentOffice: null, appearance: normalizeAvatarAppearance(stored.appearance),
   };
   return {
     ...base, roleMode: 'political', institution: null,
     party: party.name, partyId: party.id, partyTag: party.tag, color: party.color,
     currentOffice: stored.currentOffice && typeof stored.currentOffice === 'object' ? stored.currentOffice : null,
+    appearance: normalizeAvatarAppearance(stored.appearance),
   };
 }
 
@@ -231,6 +258,9 @@ function App() {
   const [selectedWardKey, setSelectedWardKey] = useState('');
   const [communityFocusRequest, setCommunityFocusRequest] = useState(0);
   const [page, setPage] = useState('world');
+  const [immersiveMode, setImmersiveMode] = useState(true);
+  const [navigationOpen, setNavigationOpen] = useState(false);
+  const [phoneOpen, setPhoneOpen] = useState(false);
   const [activeVenueId, setActiveVenueId] = useState(() => boot?.profile?.roleMode === 'institutional' && INSTITUTION_ROLES.some((role) => role.id === boot?.profile?.institution) ? getInstitutionStartVenue(boot.profile.institution, bootStateName) : 'square');
   const [venueFocusRequest, setVenueFocusRequest] = useState(0);
   const [feed, setFeed] = useState([
@@ -303,6 +333,7 @@ function App() {
   const institutionRole = isInstitutional ? getInstitutionRole(profile.institution) : null;
   const currentParty = isInstitutional ? null : PARTY_OPTIONS.find((item) => item.name === profile.party) || PARTY_OPTIONS[0];
   const playerColor = profile.color || currentParty?.color || institutionRole?.color || PARTY_OPTIONS[0].color;
+  const playerAppearance = profile.appearance || DEFAULT_AVATAR_APPEARANCE;
   const progressPercent = Math.min(100, (missionProgress / 3) * 100);
   const daysToFederal = Math.ceil((new Date('2027-01-16T00:00:00+01:00').getTime() - Date.now()) / 86_400_000);
   const daysToState = Math.ceil((new Date('2027-02-06T00:00:00+01:00').getTime() - Date.now()) / 86_400_000);
@@ -540,6 +571,19 @@ function App() {
     setFeed((items) => [{ id: `${Date.now()}-${Math.random()}`, title, text, type, time: `DAY ${String(storyDay).padStart(2, '0')}` }, ...items].slice(0, 8));
   };
   const showToast = (message) => setToast(message);
+  const saveAvatarAppearance = (appearance) => {
+    setProfile((current) => ({ ...current, appearance: normalizeAvatarAppearance(appearance) }));
+    setModal(null);
+    showToast('Avatar look saved to this story');
+  };
+  const immersiveActive = page === 'world' && immersiveMode;
+  const closeWorldPanels = () => { setNavigationOpen(false); setPhoneOpen(false); };
+  useEffect(() => {
+    if (!navigationOpen && !phoneOpen) return undefined;
+    const onKeyDown = (event) => { if (event.key === 'Escape') closeWorldPanels(); };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [navigationOpen, phoneOpen]);
   const increaseProgress = () => setMissionProgress((current) => Math.min(3, current + 1));
 
   const restoreCloudSave = (save, silent = false) => {
@@ -1006,15 +1050,28 @@ function App() {
     if (page === 'offices') return <OfficesPage />;
     if (page === 'civic') return <CivicPage />;
     if (page === 'atlas') return <AtlasPage query={atlasQuery} setQuery={setAtlasQuery} zone={selectedZone} setZone={setSelectedZone} selected={selectedStateName} onTravel={travelToState} />;
-    return <WorldPage stateInfo={stateInfo} stateWorldProfile={stateWorldProfile} venue={activeVenue} venueName={activeVenueName} focusRequest={venueFocusRequest} locationKey={sceneLocationKey} locality={sceneLocality} localityData={stateLocalities?.state === stateInfo.name ? stateLocalities : null} localityLoading={localityLoading || (!localityError && stateLocalities?.state !== stateInfo.name)} localityError={localityError} selectedLgaName={selectedLgaName} selectedWardKey={selectedWardKey} onSelectLga={selectLga} onSelectWard={selectWardByKey} onSelectVenue={goToVenue} remotePlayers={remotePlayers} onMove={sendMove} playerColor={playerColor} onlineCount={onlineCount} networkStatus={networkStatus} onTravel={travelToState} daysToFederal={daysToFederal} daysToState={daysToState} storyDay={storyDay} activeMeeting={activeMeeting} meetingMessages={meetingMessages} currentParty={currentParty} institutionRole={institutionRole} onExploreSideStory={openSideStory} onJoinPolitical={requestPoliticalSwitch} />;
+    return <WorldPage stateInfo={stateInfo} stateWorldProfile={stateWorldProfile} venue={activeVenue} venueName={activeVenueName} focusRequest={venueFocusRequest} locationKey={sceneLocationKey} locality={sceneLocality} localityData={stateLocalities?.state === stateInfo.name ? stateLocalities : null} localityLoading={localityLoading || (!localityError && stateLocalities?.state !== stateInfo.name)} localityError={localityError} selectedLgaName={selectedLgaName} selectedWardKey={selectedWardKey} onSelectLga={selectLga} onSelectWard={selectWardByKey} onSelectVenue={goToVenue} remotePlayers={remotePlayers} onMove={sendMove} playerColor={playerColor} playerAppearance={playerAppearance} onlineCount={onlineCount} networkStatus={networkStatus} onTravel={travelToState} daysToFederal={daysToFederal} daysToState={daysToState} storyDay={storyDay} activeMeeting={activeMeeting} meetingMessages={meetingMessages} currentParty={currentParty} institutionRole={institutionRole} isInstitutional={isInstitutional} chapter={currentChapter} missionProgress={missionProgress} onOpenCareer={() => setPage('career')} onExploreSideStory={openSideStory} onJoinPolitical={requestPoliticalSwitch} />;
   };
 
-  return <div className="app-shell">
+  return <div className={`app-shell ${immersiveActive ? 'immersive-shell' : ''} ${navigationOpen ? 'nav-open' : ''} ${phoneOpen ? 'phone-open' : ''}`}>
     <header className="topbar">
       <div className="brand-lockup"><div className="brand-mark"><span /><i /></div><div className="brand-type"><strong>NIGERIA <b>2027</b></strong><small>A LIFE IN PUBLIC OFFICE</small></div></div>
       <div className="topbar-middle"><div className="season-pill"><span className="season-dot" /> STORY MODE <span className="season-divider" /> {isInstitutional ? 'INSTITUTIONAL ROLEPLAY' : 'POLITICAL LADDER'}</div><div className="election-clock"><CalendarDays size={14} /><span>FEDERAL <b>16 JAN 2027</b></span><i /> <span>STATE <b>06 FEB 2027</b></span></div></div>
-      <div className="topbar-actions"><div className={`network-chip ${networkStatus}`}><span className="pulse-dot" />{networkStatus === 'online' ? `${onlineCount || 1} IN WORLD` : networkStatus === 'connecting' ? 'CONNECTING' : 'LOCAL MODE'}</div><button className="wallet-chip" onClick={() => showToast('In-game funds only · no real money or withdrawals')} title="In-game funds only"><Wallet size={15} /><span>₦{money(profile.cash)}</span></button><button className="top-avatar" onClick={() => setModal({ type: 'account' })} title={authSession?.access_token ? `Signed in${authSession.user?.email ? ` as ${authSession.user.email}` : ''}` : 'Account sign-in and cloud-save settings'}>{initials(profile.alias)}</button></div>
+      <div className="topbar-actions">
+        <div className="world-topbar-tools" aria-label="Game controls">
+          <button type="button" onClick={() => { setNavigationOpen((open) => !open); setPhoneOpen(false); }} aria-expanded={navigationOpen} aria-label="Open game menu" title="Game menu"><Menu size={16} /></button>
+          {page === 'world' && <>
+            <button type="button" onClick={() => { setPhoneOpen((open) => !open); setNavigationOpen(false); }} aria-expanded={phoneOpen} aria-label="Open social phone" title="World chat, DMs and meetings"><Smartphone size={15} /></button>
+            <button type="button" className="immersion-toggle" onClick={() => { setImmersiveMode((active) => !active); closeWorldPanels(); }} aria-label={immersiveMode ? 'Exit immersive view' : 'Enter immersive view'} title={immersiveMode ? 'Exit immersive view' : 'Enter immersive view'}>{immersiveMode ? <Minimize2 size={15} /> : <Maximize2 size={15} />}</button>
+          </>}
+        </div>
+        <div className={`network-chip ${networkStatus}`}><span className="pulse-dot" />{networkStatus === 'online' ? `${onlineCount || 1} IN WORLD` : networkStatus === 'connecting' ? 'CONNECTING' : 'LOCAL MODE'}</div>
+        <button className="wallet-chip" onClick={() => showToast('In-game funds only · no real money or withdrawals')} title="In-game funds only"><Wallet size={15} /><span className="wallet-full">₦{money(profile.cash)}</span><span className="wallet-compact">₦{profile.cash >= 1_000_000 ? `${(profile.cash / 1_000_000).toFixed(1)}m` : money(profile.cash)}</span></button>
+        <button className="avatar-customize-shortcut" onClick={() => setModal({ type: 'avatar-customize' })} title="Customize your avatar" aria-label="Customize your avatar"><Shirt size={15} /></button>
+        <button className="top-avatar" onClick={() => setModal({ type: 'account' })} title={authSession?.access_token ? `Signed in${authSession.user?.email ? ` as ${authSession.user.email}` : ''}` : 'Account sign-in and cloud-save settings'} aria-label="Account and cloud-save settings">{initials(profile.alias)}</button>
+      </div>
     </header>
+    {(navigationOpen || phoneOpen) && <button className="world-drawer-backdrop" onClick={closeWorldPanels} aria-label="Close game panel" />}
     <div className="app-layout">
       <aside className="left-sidebar">
         <div className={`candidate-summary ${isInstitutional ? 'institutional-summary' : ''}`}>
@@ -1023,8 +1080,8 @@ function App() {
           <div className="candidate-meta"><span><MapPin size={12} />{stateInfo.capital}, {stateInfo.name}</span>{isInstitutional ? <span><Shield size={12} />NON-PARTISAN ROLEPLAY</span> : <span><Flag size={12} />{String(stageIndex + 1).padStart(2, '0')} / 12</span>}</div>
           {isInstitutional ? <><div className="institutional-mini-note">No separate office or promotion ladder. Join the single political ladder later only if you choose.</div><button className="candidate-switch-button" onClick={requestPoliticalSwitch}>OPTIONALLY JOIN PARTY LADDER <ArrowRight size={12} /></button></> : <>{profile.currentOffice && <div className="current-position-chip"><small>ONE CURRENT POSITION · WON IN A PAID CONTEST</small><strong>{profile.currentOffice.title}</strong><span>Released before your next office contest.</span></div>}<div className="career-mini-progress"><span style={{ width: `${((stageIndex + 1) / CHAPTERS.length) * 100}%` }} /></div><div className="mini-progress-caption"><span>POLITICAL LADDER</span><b>{Math.round(((stageIndex + 1) / CHAPTERS.length) * 100)}%</b></div></>}
         </div>
-        <div className="sidebar-section-title">COMMAND DECK</div><nav className="side-nav" aria-label="Game navigation">{NAV_ITEMS.map((item) => { const Icon = item.icon; return <button key={item.id} className={`nav-item ${page === item.id ? 'active' : ''}`} onClick={() => setPage(item.id)}><Icon size={17} strokeWidth={1.8} /><span>{item.id === 'career' && isInstitutional ? 'Story record' : item.label}</span>{item.id === 'world' && <span className="nav-online" />}</button>; })}</nav>
-        <div className="sidebar-nation-card"><div className="nation-card-top"><span><Globe2 size={13} /> NIGERIA MAP</span><span>36 + FCT</span></div><strong>37 capital visits</strong><p>Travel the atlas. Hear a different set of local priorities in every stop.</p><button onClick={() => setPage('atlas')}>OPEN STATE ATLAS <ArrowRight size={13} /></button></div>
+        <div className="sidebar-section-title">COMMAND DECK</div><nav className="side-nav" aria-label="Game navigation">{NAV_ITEMS.map((item) => { const Icon = item.icon; return <button key={item.id} className={`nav-item ${page === item.id ? 'active' : ''}`} onClick={() => { setPage(item.id); closeWorldPanels(); }}><Icon size={17} strokeWidth={1.8} /><span>{item.id === 'career' && isInstitutional ? 'Story record' : item.label}</span>{item.id === 'world' && <span className="nav-online" />}</button>; })}</nav>
+        <div className="sidebar-nation-card"><div className="nation-card-top"><span><Globe2 size={13} /> NIGERIA MAP</span><span>36 + FCT</span></div><strong>37 capital visits</strong><p>Travel the atlas. Hear a different set of local priorities in every stop.</p><button onClick={() => { setPage('atlas'); closeWorldPanels(); }}>OPEN STATE ATLAS <ArrowRight size={13} /></button></div>
         <div className="sidebar-bottom"><div className="live-server-card"><div className="server-card-head"><span>REALTIME PROTOTYPE</span><span className={`server-led ${networkStatus}`} /></div><div className="server-card-status"><Radio size={14} /><b>{networkStatus === 'online' ? 'World link active' : networkStatus === 'connecting' ? 'Connecting to world' : 'Offline · local play'}</b></div><small>{authConfig.persistenceEnabled ? 'Account identity · persistent story records enabled' : 'Guest preview · rooms/messages are temporary until database setup'}</small></div><button className="sidebar-reset" onClick={() => setModal({ type: 'reset' })}><Sparkles size={15} />Start a new story</button></div>
       </aside>
       <main className="main-content">
@@ -1032,7 +1089,7 @@ function App() {
         {renderMainPage()}
       </main>
       <aside className="right-rail">
-        <div className="rail-title-row"><div><div className="rail-eyebrow"><span className="pulse-dot" />{isInstitutional ? 'CURRENT STORY ROLE' : 'CURRENT OBJECTIVE'}</div><h2>{isInstitutional ? 'NON-PARTISAN' : `CHAPTER ${currentChapter.number}`}</h2></div><button className="rail-more" onClick={() => setPage('career')} aria-label="Open career or story record"><ChevronRight size={17} /></button></div>
+        <div className="rail-title-row"><div><div className="rail-eyebrow"><span className="pulse-dot" />{isInstitutional ? 'CURRENT STORY ROLE' : 'CURRENT OBJECTIVE'}</div><h2>{isInstitutional ? 'NON-PARTISAN' : `CHAPTER ${currentChapter.number}`}</h2></div>{immersiveActive ? <button className="rail-more" onClick={() => setPhoneOpen(false)} aria-label="Close world phone"><X size={16} /></button> : <button className="rail-more" onClick={() => setPage('career')} aria-label="Open career or story record"><ChevronRight size={17} /></button>}</div>
         {isInstitutional ? <InstitutionalRolePanel role={institutionRole} /> : <div className="mission-card"><div className="mission-card-top"><span>{currentChapter.phase}</span><span>{currentChapter.number} / 12</span></div><h3>{currentChapter.title}</h3><p>{currentChapter.goal}</p><div className="mission-description">{currentChapter.description}</div><div className="mission-objectives">{currentChapter.objectives.map((item, index) => <div className={missionProgress > index ? 'done' : ''} key={item}><span>{missionProgress > index ? <Check size={10} /> : String(index + 1).padStart(2, '0')}</span>{item}</div>)}</div><div className="mission-fact"><span>FIELD NOTE</span>{currentChapter.fact}</div><div className="objective-office"><div className="office-glyph"><Landmark size={18} /></div><div><small>{currentChapter.kind === 'story' ? 'NO OFFICE AWARDED' : `PAID CONTEST · ₦${money(currentChapter.contestFee)}`}</small><strong>{currentChapter.office}</strong></div></div><div className="objective-meter"><div><span>MANDATE PREP</span><b>{missionProgress} / 3</b></div><div className="objective-meter-track"><span style={{ width: `${progressPercent}%` }} /></div></div><div className="mission-actions-row">{currentChapter.kind === 'story' ? <button className="primary-action" onClick={continueCareer} disabled={missionProgress < 3}>ADVANCE CHAPTER <ArrowRight size={14} /></button> : <button className="primary-action" onClick={() => runContest()} disabled={missionProgress < 3}>{currentChapter.kind === 'appointment' ? 'ENTER PAID MERIT REVIEW' : currentChapter.kind === 'primary' ? 'ENTER PAID INTERNAL CONTEST' : 'ENTER PAID ELECTION CONTEST'} · ₦{money(currentChapter.contestFee)} <ArrowRight size={14} /></button>}<button className="icon-action" onClick={() => setPage('career')} title="View the full career path"><BookOpen size={16} /></button></div></div>}
         <div className={`stats-panel ${isInstitutional ? 'institutional-stats-panel' : ''}`}><div className="stats-panel-title"><span>{isInstitutional ? 'INSTITUTIONAL STORY RECORD' : 'CAMPAIGN HEALTH'}</span><span className="stats-live"><Activity size={12} /> LIVE</span></div><StatBar label={isInstitutional ? 'COMMUNITY TRUST' : 'PUBLIC TRUST'} value={profile.trust} color="mint" icon={Users} /><StatBar label={isInstitutional ? 'REPUTATION' : 'INFLUENCE'} value={profile.influence} color="blue" icon={TrendingUp} /><StatBar label="INTEGRITY" value={profile.integrity} color="lime" icon={Shield} /><div className={`resource-row ${isInstitutional ? 'single-resource' : ''}`}><div className="resource-box"><div><Zap size={13} /><span>ENERGY</span></div><strong>{profile.energy}<small>/100</small></strong><div className="micro-track"><span style={{ width: `${profile.energy}%` }} /></div></div>{!isInstitutional && <div className="resource-box"><div><Users size={13} /><span>COALITION</span></div><strong>{profile.coalition}<small>/12</small></strong><div className="micro-track coalition"><span style={{ width: `${(profile.coalition / 12) * 100}%` }} /></div></div>}</div><div className="cash-line"><span><Banknote size={13} /> {isInstitutional ? 'STORY FUNDS · FICTIONAL' : 'CAMPAIGN PURSE'}</span><strong>₦{money(profile.cash)}</strong></div>{!isInstitutional && profile.scandals > 0 && <div className="risk-line"><ShieldAlert size={13} /> INTEGRITY RISK · {profile.scandals} OPEN FLAG{profile.scandals === 1 ? '' : 'S'}</div>}</div>
         {isInstitutional ? <InstitutionalStoryActionPanel role={institutionRole} stateName={stateInfo.name} onExplore={openSideStory} onJoinPolitical={requestPoliticalSwitch} /> : <div className="quick-actions-panel"><div className="quick-actions-heading"><div><span className="rail-eyebrow">YOUR NEXT MOVE</span><h3>Story interactions</h3></div><button className="rest-button" onClick={rest} title="Rest to restore energy"><Clock3 size={13} />REST</button></div><div className="action-list">{ACTIONS.map((action) => { const Icon = action.icon; return <button key={action.id} className={`action-row ${action.color}`} onClick={() => startCampaignAction(action.id)} disabled={profile.cash < action.cost || profile.energy < action.energy}><span className="action-icon"><Icon size={16} /></span><span className="action-copy"><strong>{action.label}</strong><small>{action.detail}</small></span><ChevronRight size={15} className="action-chevron" /></button>; })}<button className="action-row consult-action" onClick={openConsultation}><span className="action-icon"><Briefcase size={16} /></span><span className="action-copy"><strong>Consult a senior</strong><small>Listen to what they ask of you</small></span><ChevronRight size={15} className="action-chevron" /></button></div><div className="risk-actions"><button onClick={() => setModal({ type: 'illegal-confirm' })}><Banknote size={13} />Try illicit inducement <span>HIGH RISK</span></button><button onClick={() => setModal({ type: 'legal' })}><Scale size={13} />Open court desk <span>{profile.evidence} FILES</span></button></div></div>}
@@ -1046,7 +1103,8 @@ function App() {
     {modal?.type === 'story-action' && <StoryActionModal scene={CAMPAIGN_SCENES[modal.actionId]} npc={modal.npc} actionLabel={modal.actionId === 'rally' ? 'PUBLISH ADDRESS' : modal.actionId === 'policy' ? 'RECORD POLICY BRIEF' : 'RECORD RESPONSE'} onClose={() => setModal(null)} onComplete={(text, choiceId) => finishStoryAction(modal.actionId, text, choiceId)} />}
     {modal?.type === 'side-story' && <StoryActionModal scene={isInstitutional ? getStorySceneForRole(modal.storyId, institutionRole) : OTHER_SIDE_STORIES.find((story) => story.id === modal.storyId)} title={isInstitutional ? getStorySceneForRole(modal.storyId, institutionRole)?.title : OTHER_SIDE_STORIES.find((story) => story.id === modal.storyId)?.title} classification={isInstitutional ? getStorySceneForRole(modal.storyId, institutionRole)?.classification : OTHER_SIDE_STORIES.find((story) => story.id === modal.storyId)?.classification} isSideStory institutionalRole={isInstitutional ? institutionRole : null} onClose={() => setModal(null)} onComplete={(text, choiceId) => finishSideStory(modal.storyId, text, choiceId)} />}
     {modal?.type === 'account' && <AccountModal authReady={authReady} authConfig={authConfig} authSession={authSession} authBusy={authBusy} alias={profile.alias} onSubmit={submitAccount} onSignOut={signOut} onClose={() => setModal(null)} onSuccess={(result) => { if (result.save?.profile?.started) restoreCloudSave(result.save); else { setAccountProfileReady(result.profileChecked !== false); setModal(null); showToast(result.profileChecked === false ? 'Account connected · cloud profile check is retrying; local progress remains available.' : authConfig.persistenceEnabled ? `Account connected · the current ${isInstitutional ? 'institutional story' : 'political story'} will autosave.` : 'Signed in · database setup is still needed for cloud saves and persistent messages.'); } }} />}
-    {modal && !['story-action', 'side-story', 'account'].includes(modal.type) && <GameModal modal={modal} onClose={() => setModal(null)} onAcceptMeetingInvite={acceptMeetingInvite} onIllegalConfirm={attemptVoteBuying} onPrepareEvidence={prepareEvidence} onFilePetition={filePetition} onReset={resetGame} onContestConfirm={() => runContest(true)} onJoinPolitical={joinPoliticalLadder} profile={profile} />}
+    {modal?.type === 'avatar-customize' && <AvatarCustomizer appearance={playerAppearance} playerColor={playerColor} onClose={() => setModal(null)} onSave={saveAvatarAppearance} />}
+    {modal && !['story-action', 'side-story', 'account', 'avatar-customize'].includes(modal.type) && <GameModal modal={modal} onClose={() => setModal(null)} onAcceptMeetingInvite={acceptMeetingInvite} onIllegalConfirm={attemptVoteBuying} onPrepareEvidence={prepareEvidence} onFilePetition={filePetition} onReset={resetGame} onContestConfirm={() => runContest(true)} onJoinPolitical={joinPoliticalLadder} profile={profile} />}
   </div>;
 }
 
@@ -1135,7 +1193,7 @@ function PartyDirectory({ parties, branches, activeParty, stateInfo, locality, o
   </section>;
 }
 
-function WorldPage({ stateInfo, stateWorldProfile, venue, venueName, focusRequest, locationKey, locality, localityData, localityLoading, localityError, selectedLgaName, selectedWardKey, onSelectLga, onSelectWard, onSelectVenue, remotePlayers, onMove, playerColor, onlineCount, networkStatus, onTravel, daysToFederal, daysToState, storyDay, activeMeeting, meetingMessages, currentParty, institutionRole, onExploreSideStory, onJoinPolitical }) {
+function WorldPage({ stateInfo, stateWorldProfile, venue, venueName, focusRequest, locationKey, locality, localityData, localityLoading, localityError, selectedLgaName, selectedWardKey, onSelectLga, onSelectWard, onSelectVenue, remotePlayers, onMove, playerColor, playerAppearance, onlineCount, networkStatus, onTravel, daysToFederal, daysToState, storyDay, activeMeeting, meetingMessages, currentParty, institutionRole, isInstitutional, chapter, missionProgress, onOpenCareer, onExploreSideStory, onJoinPolitical }) {
   const [venueFilter, setVenueFilter] = useState('ALL');
   const [worldView, setWorldView] = useState('story');
   const [interiorInfo, setInteriorInfo] = useState(null);
@@ -1157,7 +1215,14 @@ function WorldPage({ stateInfo, stateWorldProfile, venue, venueName, focusReques
     <div className="world-topline"><div className="world-live"><span className="pulse-dot" />LOCAL WORLD <b>{(locality?.ward || stateInfo.capital).toUpperCase()}</b><span className="line-sep" />{stateInfo.zone.toUpperCase()}</div><div className="world-date"><Clock3 size={13} />{dateLabel(storyDay)} <span>·</span> 15:42 WAT <span className="weather-dot" /> WARM SUN</div><div className="world-connect"><span className={`network-led ${networkStatus}`} />{networkStatus === 'online' ? `${onlineCount || 1} PLAYERS` : 'LOCAL INSTANCE'}</div><div className="world-mode-tabs" role="tablist" aria-label="Choose map view"><button type="button" role="tab" aria-selected={worldView === 'story'} className={worldView === 'story' ? 'active' : ''} onClick={() => setWorldView('story')}><Move size={12} />3D STORY</button><button type="button" role="tab" aria-selected={worldView === 'map'} className={worldView === 'map' ? 'active' : ''} onClick={() => setWorldView('map')}><Map size={12} />LIVE MAP</button></div></div>
     <div className={`world-view-frame ${worldView === 'map' ? 'map-mode' : ''} ${interiorInfo ? 'inside-interior' : ''}`}>
       {worldView === 'map' ? <Suspense fallback={<div className="maplibre-load-shell"><span className="maplibre-spinner" />Loading MapLibre…</div>}><MapLibreWorld stateInfo={stateInfo} locality={locality} locationKey={locationKey} /></Suspense> : <>
-      <World state={stateInfo.name} locality={locality} locationKey={locationKey} selectedVenueId={venue.id} focusRequest={focusRequest} onVenueSelect={onSelectVenue} onMove={onMove} remotePlayers={remotePlayers} playerColor={playerColor} meeting={activeMeeting} meetingMessages={meetingMessages} partyOfficeActionRef={partyOfficeActionRef} exitInteriorActionRef={exitInteriorActionRef} onInteriorChange={setInteriorInfo} /><div className="scene-vignette" />{interiorInfo && <div className="interior-overlay"><div className="interior-overlay-top"><div><div className="interior-kicker"><i />{interiorInfo.type === 'party-office' ? 'SIMULATED PARTY BRANCH' : `${interiorInfo.type || 'COMMUNITY'} INTERIOR`}</div><h3>{interiorInfo.title}</h3><p className="interior-locality">{locality ? `${locality.ward} ward · ${locality.lga} LGA · ${stateInfo.name}` : `${stateInfo.capital} · ${stateInfo.name}`}</p></div><button type="button" onClick={() => exitInteriorActionRef.current?.()} aria-label="Exit interior"><X size={13} /></button></div>{interiorInfo.party && <><div className="interior-party-brand"><img src={interiorInfo.party.logo} alt="" /><span><b>{interiorInfo.party.name} ({interiorInfo.party.tag})</b><small>REGISTERED PARTY · NATIONAL DATA FROM INEC</small></span></div><div className="interior-register-note"><strong>INEC REGISTER SNAPSHOT · {interiorInfo.nationalOfficers?.checkedAt}</strong><span>National officers are shown separately from the fictional ward branch below.</span><a href={interiorInfo.nationalOfficers?.source} target="_blank" rel="noreferrer">Open official INEC party register</a></div><div className="interior-national-roster"><span>NATIONAL CHAIR<b>{interiorInfo.nationalOfficers?.chair || 'Not listed in snapshot'}</b></span><span>NATIONAL SECRETARY<b>{interiorInfo.nationalOfficers?.secretary || 'Not listed in snapshot'}</b></span></div><div className="interior-fiction-heading"><span>WARD EXECUTIVE TEAM</span><b>SIMULATED · FICTIONAL</b></div><div className="interior-executive-list">{(interiorInfo.branch || []).map((person) => <div key={person.id}><span>{person.position}</span><b>{person.name}</b></div>)}</div></>}<div className="interior-description">{interiorInfo.type === 'party-office' ? 'This ward office and its local officers are generated for gameplay; they are not verified real premises or real officials.' : interiorInfo.type === 'vehicle' ? 'A stylised vehicle interior for the fictional procedural city. Vehicle availability and placement are game simulation.' : 'A fictional procedural interior built for exploration and story scenes, not a surveyed or official facility.'}</div><button className="interior-exit-button" type="button" onClick={() => exitInteriorActionRef.current?.()}>EXIT TO STREET <span>TAP</span></button></div>}
+      <World state={stateInfo.name} locality={locality} locationKey={locationKey} selectedVenueId={venue.id} focusRequest={focusRequest} onVenueSelect={onSelectVenue} onMove={onMove} remotePlayers={remotePlayers} playerColor={playerColor} playerAppearance={playerAppearance} meeting={activeMeeting} meetingMessages={meetingMessages} partyOfficeActionRef={partyOfficeActionRef} exitInteriorActionRef={exitInteriorActionRef} onInteriorChange={setInteriorInfo} /><div className="scene-vignette" />
+      <div className={`scene-mission-card ${isInstitutional ? 'institutional-mission-hud' : ''}`}>
+        <div className="scene-mission-head"><span><i />{activeMeeting ? 'CIVIC MEETING LIVE' : isInstitutional ? 'FICTIONAL ROLEPLAY' : 'ACTIVE MISSION'}</span><b>{activeMeeting ? `${activeMeeting.participants || 1} HERE` : isInstitutional ? 'STORY' : `${missionProgress}/3`}</b></div>
+        <strong>{activeMeeting?.title || (isInstitutional ? institutionRole?.personnelLabel || 'Institutional story' : chapter?.title || 'Continue your story')}</strong>
+        <p>{activeMeeting?.topic || (isInstitutional ? 'Explore a fictional institution story. No employment, appointment or separate office ladder.' : missionProgress >= 3 ? 'Preparations complete. Review the chapter and continue when you are ready.' : chapter?.objectives?.[missionProgress] || chapter?.goal || 'Move through the district and meet your next contact.')}</p>
+        {!isInstitutional && <div className="scene-mission-meter"><span style={{ width: `${Math.min(100, (missionProgress / 3) * 100)}%` }} /></div>}
+        <button type="button" onClick={onOpenCareer}>{isInstitutional ? 'OPEN STORY RECORD' : 'OPEN MISSION FILE'} <ArrowRight size={12} /></button>
+      </div>{interiorInfo && <div className="interior-overlay"><div className="interior-overlay-top"><div><div className="interior-kicker"><i />{interiorInfo.type === 'party-office' ? 'SIMULATED PARTY BRANCH' : `${interiorInfo.type || 'COMMUNITY'} INTERIOR`}</div><h3>{interiorInfo.title}</h3><p className="interior-locality">{locality ? `${locality.ward} ward · ${locality.lga} LGA · ${stateInfo.name}` : `${stateInfo.capital} · ${stateInfo.name}`}</p></div><button type="button" onClick={() => exitInteriorActionRef.current?.()} aria-label="Exit interior"><X size={13} /></button></div>{interiorInfo.party && <><div className="interior-party-brand"><img src={interiorInfo.party.logo} alt="" /><span><b>{interiorInfo.party.name} ({interiorInfo.party.tag})</b><small>REGISTERED PARTY · NATIONAL DATA FROM INEC</small></span></div><div className="interior-register-note"><strong>INEC REGISTER SNAPSHOT · {interiorInfo.nationalOfficers?.checkedAt}</strong><span>National officers are shown separately from the fictional ward branch below.</span><a href={interiorInfo.nationalOfficers?.source} target="_blank" rel="noreferrer">Open official INEC party register</a></div><div className="interior-national-roster"><span>NATIONAL CHAIR<b>{interiorInfo.nationalOfficers?.chair || 'Not listed in snapshot'}</b></span><span>NATIONAL SECRETARY<b>{interiorInfo.nationalOfficers?.secretary || 'Not listed in snapshot'}</b></span></div><div className="interior-fiction-heading"><span>WARD EXECUTIVE TEAM</span><b>SIMULATED · FICTIONAL</b></div><div className="interior-executive-list">{(interiorInfo.branch || []).map((person) => <div key={person.id}><span>{person.position}</span><b>{person.name}</b></div>)}</div></>}<div className="interior-description">{interiorInfo.type === 'party-office' ? 'This ward office and its local officers are generated for gameplay; they are not verified real premises or real officials.' : interiorInfo.type === 'vehicle' ? 'A stylised vehicle interior for the fictional procedural city. Vehicle availability and placement are game simulation.' : 'A fictional procedural interior built for exploration and story scenes, not a surveyed or official facility.'}</div><button className="interior-exit-button" type="button" onClick={() => exitInteriorActionRef.current?.()}>EXIT TO STREET <span>TAP</span></button></div>}
       <div className="scene-location-card"><div className="scene-card-kicker"><span className="scene-pin" />{locality ? 'YOUR WARD' : 'STATE CAPITAL'} <span>·</span> {stateInfo.zone.toUpperCase()}</div><h2>{locality?.lga || stateInfo.capital}<span>,</span> {stateInfo.name}</h2><p>{locality ? `${locality.ward} · ${stateWorldProfile.biome}` : `${stateWorldProfile.biome} · ${stateInfo.capital}`} · fictional procedural scene</p><div className="scene-local-style"><span>LOCAL STREET STYLE</span><b>{localityVisual.label}</b><small>{localityVisual.trafficMix.slice(0, 3).join(' · ')}</small></div><div className="scene-local-landmark"><MapPin size={13} /><span>STATE SIGNATURE</span><b>{stateInfo.landmark}</b></div></div>
       <div className="scene-brief-card"><div className="brief-head"><span className="brief-live"><Radio size={12} /> ELECTION CLOCK</span><span>INEC CALENDAR</span></div><div className="brief-countdown"><div><strong>{Number.isFinite(daysToFederal) ? Math.max(0, daysToFederal) : '—'}</strong><span>DAYS TO FEDERAL</span></div><i /><div><strong>{Number.isFinite(daysToState) ? Math.max(0, daysToState) : '—'}</strong><span>DAYS TO STATE</span></div></div><div className="brief-dates"><span>16 JAN 2027</span><span>06 FEB 2027</span></div></div>
       <div className="mini-map-card"><div className="mini-map-top"><span>{locality ? `${locality.lga.toUpperCase()} GRID` : 'CAPITAL GRID'}</span><span className="map-north">N ↑</span></div><svg viewBox="0 0 150 102" role="img" aria-label="Stylised local street grid"><path d="M8 26H138M8 50H138M8 75H138M31 10V92M67 10V92M103 10V92M128 10V92" stroke="rgba(241,240,215,.42)" strokeWidth="3" /><path d="M8 50H138M67 10V92" stroke="#d6f176" strokeWidth="6" /><circle cx="83" cy="40" r="5" fill="#fff5db" /><circle cx="83" cy="40" r="12" fill="none" stroke="#d6f176" strokeWidth="1.5" /><path d="M83 27l-5 8h10z" fill="#d6f176" /></svg><div className="mini-map-foot"><span><i /> YOU</span><span>NOT TO SCALE</span></div></div>
@@ -1305,6 +1370,51 @@ function AccountAccessForm({ authReady, authEnabled, persistenceConfigured, pers
       <button className="account-submit" type="submit" disabled={busy}>{busy ? 'WORKING…' : mode === 'signup' ? 'CREATE SECURE ACCOUNT' : 'SIGN IN'} <ArrowRight size={13} /></button>
     </form>
     <small className="account-privacy-note"><LockKeyhole size={11} />Passwords are handled by the configured account provider, not stored in the game database.</small>
+  </div>;
+}
+
+function AvatarCustomizer({ appearance, playerColor, onClose, onSave }) {
+  const [draft, setDraft] = useState(() => normalizeAvatarAppearance(appearance));
+  const previewShirt = draft.outfitColor || playerColor;
+  const headShape = draft.headStyle === 'wrap'
+    ? <path d="M52 59 Q80 22 108 59 L104 71 Q80 60 56 71Z" fill="#dbb978" />
+    : draft.headStyle === 'cap'
+      ? <><path d="M54 52 Q80 26 106 53 L104 61 Q80 54 55 63Z" fill="#273b35" /><path d="M80 58 Q104 56 112 64 Q94 68 78 64Z" fill="#273b35" /></>
+      : <path d={draft.headStyle === 'natural' ? 'M54 65 Q49 36 78 33 Q111 34 107 65 Q102 54 95 51 Q77 62 61 53Z' : 'M55 64 Q55 39 80 38 Q104 40 105 64 Q95 52 80 53 Q66 52 55 64Z'} fill="#202522" />;
+  return <div className="modal-backdrop avatar-customizer-backdrop" onMouseDown={onClose}>
+    <section className="avatar-customizer modal-card" role="dialog" aria-modal="true" aria-label="Customize your avatar" onMouseDown={(event) => event.stopPropagation()}>
+      <button className="modal-close" onClick={onClose} aria-label="Close avatar customizer"><X size={18} /></button>
+      <div className="dialog-topline"><span className="dialog-icon"><Shirt size={19} /></span><span className="modal-eyebrow">PLAYER IDENTITY · STORY SAVE</span></div>
+      <h2>Make this character yours.</h2>
+      <p>The original NIGERIA 2027 avatar can be edited at any time. Changes apply to the 3D character and save with this local story.</p>
+      <div className="avatar-customizer-layout">
+        <div className="avatar-preview-card">
+          <div className="avatar-preview-skyline"><i /><i /><i /><i /><span>FIELD PROFILE</span></div>
+          <svg className="avatar-preview-figure" viewBox="0 0 160 250" role="img" aria-label="Live preview of the player character">
+            <ellipse cx="80" cy="229" rx="42" ry="9" fill="rgba(0,0,0,.34)" />
+            <path d="M61 143 L99 143 L107 211 L89 211 L80 166 L70 211 L52 211Z" fill="#343c36" />
+            <path d="M57 204 L73 204 L70 224 L47 224 Q46 216 57 204M87 204 L103 204 Q112 215 112 224 L83 224Z" fill="#252d28" />
+            <path d="M57 83 Q80 72 103 83 L111 142 Q80 154 49 142Z" fill={previewShirt} />
+            <path d="M57 91 L42 101 L31 137 L43 141 L62 116M103 91 L119 101 L130 137 L118 141 L98 116" fill={previewShirt} />
+            <path d="M31 132 L43 136 L42 147 L33 149Z M118 136 L130 132 L128 149 L119 147Z" fill={draft.skinTone} />
+            <rect x="70" y="70" width="20" height="20" rx="7" fill={draft.skinTone} />
+            <ellipse cx="80" cy="54" rx="25" ry="30" fill={draft.skinTone} />
+            {headShape}
+            <circle cx="71" cy="59" r="2" fill="#211b19" /><circle cx="89" cy="59" r="2" fill="#211b19" />
+            <path d="M74 72 Q80 75 86 72" fill="none" stroke="#512f28" strokeWidth="2" strokeLinecap="round" />
+            <path d="M62 96 L80 106 L98 96" fill="none" stroke="rgba(255,255,255,.27)" strokeWidth="2" />
+          </svg>
+          <div className="avatar-preview-name"><span><i /> ACTIVE PLAYER</span><b>FIELD LOOK · {draft.headStyle.toUpperCase()}</b></div>
+        </div>
+        <div className="avatar-controls">
+          <fieldset className="avatar-choice-group"><legend>SKIN TONE</legend><div className="avatar-skin-options">{AVATAR_SKIN_OPTIONS.map((option) => <button key={option.value} type="button" className={draft.skinTone === option.value ? 'selected' : ''} style={{ '--swatch': option.value }} onClick={() => setDraft((current) => ({ ...current, skinTone: option.value }))} aria-label={option.label} title={option.label}><i /></button>)}</div><small>{AVATAR_SKIN_OPTIONS.find((option) => option.value === draft.skinTone)?.label}</small></fieldset>
+          <fieldset className="avatar-choice-group"><legend>HEAD STYLE</legend><div className="avatar-head-options">{AVATAR_HEAD_OPTIONS.map((option) => <button key={option.id} type="button" className={draft.headStyle === option.id ? 'selected' : ''} onClick={() => setDraft((current) => ({ ...current, headStyle: option.id }))}>{option.label}</button>)}</div></fieldset>
+          <fieldset className="avatar-choice-group"><legend>OUTFIT COLOUR</legend><div className="avatar-outfit-options">{AVATAR_OUTFIT_OPTIONS.map((option) => <button key={option.id} type="button" className={draft.outfitColor === option.value ? 'selected' : ''} style={{ '--swatch': option.value || playerColor }} onClick={() => setDraft((current) => ({ ...current, outfitColor: option.value }))} title={option.label} aria-label={option.label}><i />{option.id === 'accent' && <span>ROLE</span>}</button>)}</div><small>ROLE ACCENT {draft.outfitColor ? 'OVERRIDDEN' : 'ACTIVE'}</small></fieldset>
+          <div className="avatar-customizer-note"><Shield size={13} /><span>Appearance only. It does not change your political alignment, institutional role, character stats or in-game funds.</span></div>
+        </div>
+      </div>
+      <div className="avatar-customizer-actions"><button type="button" className="secondary-button" onClick={onClose}>CANCEL</button><button type="button" className="primary-action" onClick={() => onSave(draft)}>SAVE PLAYER LOOK <ArrowRight size={14} /></button></div>
+    </section>
   </div>;
 }
 
