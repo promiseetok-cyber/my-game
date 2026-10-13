@@ -5,8 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { Server } from 'socket.io';
-import { CAREER_TRACKS, DEFAULT_CAREER_TRACK, INSTITUTIONAL_STORY_ARCS } from '../src/careerTracks.js';
-import { STATES } from '../src/data.js';
+import { CHAPTERS, OTHER_SIDE_STORIES, STATES } from '../src/data.js';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const distPath = path.join(projectRoot, 'dist');
@@ -110,14 +109,17 @@ async function authenticatedUser(req, res) {
 
 function sanitizedSave(input = {}) {
   const sourceProfile = input.profile && typeof input.profile === 'object' ? input.profile : {};
-  const trackId = CAREER_TRACKS.some((track) => track.id === input.careerTrack) ? input.careerTrack : DEFAULT_CAREER_TRACK;
   const knownStates = STATES.map((state) => state.name);
   const state = knownStates.includes(input.state) ? input.state : 'Lagos';
+  const validInstitutions = new Set(['election-admin', 'judiciary', 'cbn']);
+  const institutionalRole = sourceProfile.roleMode === 'institutional' && validInstitutions.has(sourceProfile.institution);
   const profile = {
     started: Boolean(sourceProfile.started),
+    roleMode: institutionalRole ? 'institutional' : 'political',
+    institution: institutionalRole ? sourceProfile.institution : null,
     alias: safeText(sourceProfile.alias, 26) || 'New Candidate',
-    party: safeText(sourceProfile.party, 60),
-    partyTag: safeText(sourceProfile.partyTag, 12),
+    party: institutionalRole ? null : safeText(sourceProfile.party, 60),
+    partyTag: institutionalRole ? null : safeText(sourceProfile.partyTag, 12),
     color: /^#[0-9a-f]{6}$/i.test(String(sourceProfile.color || '')) ? sourceProfile.color : palette[0],
     cash: clamp(Math.round(safeNumber(sourceProfile.cash, 1_000_000)), 0, 1_000_000),
     trust: clamp(Math.round(safeNumber(sourceProfile.trust, 32)), 0, 100),
@@ -131,21 +133,14 @@ function sanitizedSave(input = {}) {
     lastContest: sourceProfile.lastContest && typeof sourceProfile.lastContest === 'object' ? sourceProfile.lastContest : null,
     legalBoost: Boolean(sourceProfile.legalBoost),
     completed: Boolean(sourceProfile.completed),
-    completedSideStories: Array.isArray(sourceProfile.completedSideStories) ? sourceProfile.completedSideStories.filter((id) => INSTITUTIONAL_STORY_ARCS.some((arc) => arc.id === id)).slice(0, 12) : [],
   };
-  const progressInput = input.progressByTrack && typeof input.progressByTrack === 'object' ? input.progressByTrack : {};
-  const progressByTrack = {};
-  for (const track of CAREER_TRACKS) {
-    const progress = progressInput[track.id] && typeof progressInput[track.id] === 'object' ? progressInput[track.id] : {};
-    progressByTrack[track.id] = {
-      stageIndex: clamp(Math.floor(safeNumber(progress.stageIndex, 0)), 0, track.stages.length - 1),
-      missionProgress: clamp(Math.floor(safeNumber(progress.missionProgress, 0)), 0, 3),
-    };
-  }
+  const validStoryIds = new Set(OTHER_SIDE_STORIES.map((story) => story.id));
   return {
     profile,
-    careerTrack: trackId,
-    progressByTrack,
+    careerTrack: 'politics',
+    stageIndex: clamp(Math.floor(safeNumber(input.stageIndex, 0)), 0, CHAPTERS.length - 1),
+    missionProgress: clamp(Math.floor(safeNumber(input.missionProgress, 0)), 0, 3),
+    sideStoriesSeen: Array.isArray(input.sideStoriesSeen) ? input.sideStoriesSeen.filter((id) => validStoryIds.has(id)).slice(0, 32) : [],
     storyDay: clamp(Math.floor(safeNumber(input.storyDay, 1)), 1, 100_000),
     state,
     updatedAt: new Date().toISOString(),
@@ -183,7 +178,6 @@ function publicMeeting(meeting, viewerSocketId = '') {
     createdAt: meeting.createdAt,
     participants: meeting.members.size,
     votes: tally,
-    cloudBacked: Boolean(persistenceConfigured && meeting.hostUserId),
     isHost: viewerSocketId ? meeting.hostSocketId === viewerSocketId || Boolean(meeting.hostUserId && sessions.get(viewerSocketId)?.userId === meeting.hostUserId) : false,
     outcome: meeting.outcome || null,
   };
@@ -244,10 +238,19 @@ async function loadOpenMeetingsFromDb() {
   return allOpenMeetings();
 }
 
-app.get('/api/config', (_req, res) => {
+app.get('/api/config', async (_req, res) => {
+  let persistenceReady = false;
+  if (persistenceConfigured) {
+    try {
+      const schemaProbes = [['profiles', 'id'], ['meetings', 'id'], ['meeting_participants', 'meeting_id'], ['meeting_messages', 'id'], ['meeting_votes', 'meeting_id'], ['direct_messages', 'id']];
+      await Promise.all(schemaProbes.map(([table, column]) => dbRequest(table, { select: column, limit: '0' })));
+      persistenceReady = true;
+    } catch { /* The client will stay honest and use guest/session-only mode until setup is fixed. */ }
+  }
   res.json({
     authEnabled: authConfigured,
-    persistenceEnabled: persistenceConfigured,
+    persistenceConfigured,
+    persistenceEnabled: persistenceReady,
     accountProvider: authConfigured ? 'supabase' : null,
     guestMode: true,
   });
@@ -488,6 +491,11 @@ io.on('connection', async (socket) => {
     const others = [...sessions.values()].filter((item) => item.room === room && item.id !== socket.id).map(publicPlayer);
     socket.emit('world:snapshot', { self: publicPlayer(player), players: others, online: roomCount(room) });
     socket.to(room).emit('player:joined', publicPlayer(player));
+    for (const other of sessions.values()) {
+      if (other.room !== room || other.id === player.id) continue;
+      socket.emit('player:contact', { id: other.id, accountId: other.userId || null });
+      io.to(other.id).emit('player:contact', { id: player.id, accountId: player.userId || null });
+    }
     io.to(room).emit('world:count', { online: roomCount(room), state: state.name });
   });
 
@@ -522,15 +530,6 @@ io.on('connection', async (socket) => {
       message,
       at: Date.now(),
     });
-  });
-
-  socket.on('dm:lookup', (payload = {}) => {
-    const player = sessions.get(socket.id);
-    const target = sessions.get(safeText(payload.peerId, 80));
-    if (!player || !target || target.id === player.id) return;
-    // Only disclose a stable account identifier to the player who explicitly
-    // opened that direct-message thread; it is never broadcast with presence.
-    socket.emit('dm:peer', { peerId: target.id, peerAccountId: target.userId || null });
   });
 
   socket.on('dm:send', async (payload = {}) => {
@@ -712,14 +711,16 @@ io.on('connection', async (socket) => {
     const invitation = {
       id: randomUUID(),
       meeting: publicMeeting(meeting),
+      meetingId: meeting.id,
       fromName: player.name,
       state: meeting.location.state,
       at: Date.now(),
       type: 'meeting_invite',
     };
     io.to(target.id).emit('meeting:invite', invitation);
-    io.to(target.id).emit('dm:message', { ...invitation, peerId: player.id, peerAccountId: player.userId || null, incoming: true, body: `Invited you to “${meeting.title}”.`, fromName: player.name });
-    socket.emit('dm:message', { ...invitation, peerId: target.id, peerAccountId: target.userId || null, incoming: false, body: `Invited ${target.name} to “${meeting.title}”.` });
+    const inviteText = `Meeting invitation: ${meeting.title}`;
+    socket.emit('dm:message', { ...invitation, peerId: target.id, peerAccountId: target.userId || null, incoming: false, fromId: player.id, fromName: player.name, body: `Invited ${target.name} to “${meeting.title}”.` });
+    io.to(target.id).emit('dm:message', { ...invitation, peerId: player.id, peerAccountId: player.userId || null, incoming: true, fromId: player.id, fromName: player.name, body: inviteText });
     if (persistenceConfigured && player.userId && target.userId) {
       await persistQuietly('direct_messages', {}, { method: 'POST', body: {
         id: invitation.id,
@@ -758,7 +759,7 @@ io.on('connection', async (socket) => {
     const outcome = tally.support > tally.concern ? 'supported' : tally.concern > tally.support ? 'rework' : 'contested';
     meeting.outcome = { outcome, votes: tally, participants: meeting.members.size, closedBy: player.name, summary: safeText(payload.summary, 220), closedAt: Date.now() };
     meeting.status = 'closed';
-    if (persistenceConfigured && meeting.hostUserId) {
+    if (persistenceConfigured) {
       await persistQuietly('meetings', { id: `eq.${meeting.id}` }, { method: 'PATCH', body: { status: 'closed', outcome: meeting.outcome, ended_at: new Date().toISOString() }, prefer: 'return=minimal' }, 'meeting-close');
     }
     io.to(`meeting:${meeting.id}`).emit('meeting:closed', { meeting: publicMeeting(meeting), outcome: meeting.outcome });
