@@ -533,7 +533,13 @@ function makeStreetLight(scene, x, z) {
   scene.add(arm);
   const lamp = box(0.48, 0.16, 0.26, '#d7d8c3', { castShadow: false });
   lamp.position.set(x + 0.67, 4.08, z);
+  lamp.material.emissive.set('#f4cf8a');
+  lamp.material.emissiveIntensity = 0;
   scene.add(lamp);
+  const light = new THREE.PointLight('#ffd99b', 0, 15, 2);
+  light.position.set(x + 0.67, 3.98, z);
+  scene.add(light);
+  return { light, bulb: lamp.material };
 }
 
 function makeUtilityPole(scene, x, z) {
@@ -1498,7 +1504,7 @@ function buildInteriorRoom(info, palette, playerColor) {
   return group;
 }
 
-function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, playerColor, playerAppearance, meetingRef, meetingMessagesRef, focusRef, partyFocusRef, exitInteriorRef, interiorChangeRef) {
+function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, playerColor, playerAppearance, worldMinuteRef, meetingRef, meetingMessagesRef, focusRef, partyFocusRef, exitInteriorRef, interiorChangeRef) {
   const stateInfo = STATES.find((item) => item.name === state) || STATES[0];
   const profile = STATE_WORLD_PROFILES[stateInfo.name] || STATE_WORLD_PROFILES.Lagos;
   const localityStyle = createLocalityVisualProfile(stateInfo, profile, locality);
@@ -1529,7 +1535,8 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
   renderer.domElement.style.touchAction = 'none';
   root.appendChild(renderer.domElement);
 
-  scene.add(new THREE.HemisphereLight('#e7f7ff', '#6b6448', 2.05));
+  const ambientSky = new THREE.HemisphereLight('#e7f7ff', '#6b6448', 2.05);
+  scene.add(ambientSky);
   const sun = new THREE.DirectionalLight('#fff1c8', 3.8);
   sun.position.set(-14, 31, 15);
   sun.castShadow = true;
@@ -1617,7 +1624,7 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     marker.position.set(6.3, 0.045, primaryRoadAt + bump * 0.38);
     scene.add(marker);
   }
-  [[-13.8, -4.1], [13.9, -3.4], [-14.2, 13.5], [14.3, 14.1], [3.5, 16.2]].forEach(([x, z]) => makeStreetLight(scene, x, z));
+  const streetLampFixtures = [[-13.8, -4.1], [13.9, -3.4], [-14.2, 13.5], [14.3, 14.1], [3.5, 16.2]].map(([x, z]) => makeStreetLight(scene, x, z));
   const utilityXs = [-18, -9, 0, 9, 18];
   utilityXs.forEach((x) => makeUtilityPole(scene, x, 3.15));
   const wireMaterial = new THREE.LineBasicMaterial({ color: '#40453e', transparent: true, opacity: 0.72 });
@@ -2129,11 +2136,51 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
   resize();
 
   let frame = 0;
+  let lastLightingMinute = -1;
+  const skyDay = new THREE.Color('#8ccde6');
+  const skyDusk = new THREE.Color('#d48a69');
+  const skyNight = new THREE.Color('#172435');
+  const fogDay = new THREE.Color('#b9d8d6');
+  const fogDusk = new THREE.Color('#9a7a75');
+  const fogNight = new THREE.Color('#293746');
+  const currentSky = new THREE.Color();
+  const currentFog = new THREE.Color();
   const clock = new THREE.Clock();
+  const updateTimeOfDay = () => {
+    const minute = ((Number(worldMinuteRef?.current) || 0) % 1440 + 1440) % 1440;
+    if (minute === lastLightingMinute) return;
+    lastLightingMinute = minute;
+    const hour = minute / 60;
+    const solarArc = Math.sin(((hour - 6) / 12) * Math.PI);
+    const daylight = clamp((solarArc + 0.06) / 1.06, 0.035, 1);
+    const dawn = clamp(1 - Math.abs(hour - 6.5) / 1.8, 0, 1);
+    const dusk = clamp(1 - Math.abs(hour - 18) / 1.8, 0, 1);
+    const twilight = Math.max(dawn, dusk);
+    currentSky.copy(skyNight).lerp(skyDay, daylight);
+    currentFog.copy(fogNight).lerp(fogDay, daylight);
+    if (twilight > 0) {
+      currentSky.lerp(skyDusk, twilight * 0.63);
+      currentFog.lerp(fogDusk, twilight * 0.45);
+    }
+    scene.background.copy(currentSky);
+    scene.fog.color.copy(currentFog);
+    ambientSky.intensity = 0.56 + daylight * 1.52;
+    sun.intensity = 0.36 + daylight * 3.42;
+    const sunAngle = ((hour - 12) / 12) * Math.PI;
+    sun.position.set(Math.cos(sunAngle) * 23, Math.max(3.2, daylight * 31), Math.sin(sunAngle) * 23);
+    fill.intensity = 0.22 + daylight * 0.5;
+    renderer.toneMappingExposure = 0.95 + daylight * 0.37;
+    const lampPower = clamp((0.48 - daylight) * 2.2, 0, 1);
+    streetLampFixtures.forEach(({ light, bulb }) => {
+      light.intensity = lampPower * 1.45;
+      bulb.emissiveIntensity = lampPower * 1.2;
+    });
+  };
   const animate = () => {
     frame = requestAnimationFrame(animate);
     const delta = Math.min(clock.getDelta(), 0.04);
     const elapsed = clock.elapsedTime;
+    updateTimeOfDay();
     for (const item of traffic) {
       if (item.axis === 'x') {
         item.object.position.x += item.speed * item.dir * delta;
@@ -2234,7 +2281,7 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     previousPlayerPosition.copy(player.position);
     if (elapsed - lastEmit > 0.18) {
       lastEmit = elapsed;
-      if (!interiorActive) playerRef.current = { x: player.position.x, z: player.position.z };
+      if (!interiorActive) playerRef.current = { x: player.position.x, z: player.position.z, heading: player.rotation.y };
     }
     updateRemotePlayers(remoteRef.current);
     for (const avatar of remoteSprites.values()) {
@@ -2288,9 +2335,11 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
   };
 }
 
-export default function World({ state, locality = null, locationKey = 'state-capital', selectedVenueId = 'square', focusRequest = 0, onVenueSelect, onMove, remotePlayers = [], playerColor = '#d8f36b', playerAppearance = {}, meeting = null, meetingMessages = [], partyOfficeActionRef, exitInteriorActionRef, onInteriorChange }) {
+export default function World({ state, locality = null, locationKey = 'state-capital', selectedVenueId = 'square', focusRequest = 0, onVenueSelect, onMove, remotePlayers = [], playerColor = '#d8f36b', playerAppearance = {}, worldMinute = 942, meeting = null, meetingMessages = [], partyOfficeActionRef, exitInteriorActionRef, onInteriorChange }) {
   const mountRef = useRef(null);
-  const positionRef = useRef({ x: -5.8, z: 3.5 });
+  const positionRef = useRef({ x: -5.8, z: 3.5, heading: 0 });
+  const worldMinuteRef = useRef(worldMinute);
+  worldMinuteRef.current = worldMinute;
   const remoteRef = useRef(remotePlayers);
   const moveCallbackRef = useRef(onMove);
   const venueCallbackRef = useRef(onVenueSelect);
@@ -2320,6 +2369,7 @@ export default function World({ state, locality = null, locationKey = 'state-cap
         remoteRef,
         playerColor,
         playerAppearance,
+        worldMinuteRef,
         meetingRef,
         meetingMessagesRef,
         focusRef,
