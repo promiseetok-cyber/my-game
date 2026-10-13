@@ -1494,9 +1494,9 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
   .immersive-shell .scene-location-card h2 { font-size: 16px; }
   .immersive-shell .scene-local-style { display: none; }
   .immersive-shell .scene-local-landmark { margin-top: 6px; padding-top: 6px; }
-  .immersive-shell .scene-mission-card { max-width: 223px; padding: 8px; }
+  .immersive-shell .scene-mission-card { max-width: 188px; padding: 8px; }
   .immersive-shell .scene-mission-card > p { font-size: 7px; }
-  .immersive-shell .scene-current-site { bottom: 10px; width: min(155px,calc(100% - 165px)); padding: 7px; }
+  .immersive-shell .scene-current-site { right: 9px; bottom: 10px; width: min(114px,calc(100% - 208px)); padding: 7px; }
   .immersive-shell .scene-current-site > div > span:not(:last-child) { display: none; }
   .immersive-shell .scene-current-site strong { font-size: 8px; }
   .immersive-shell .scene-current-site span:last-child { font-size: 7px; }
