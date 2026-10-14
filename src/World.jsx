@@ -1911,18 +1911,22 @@ function buildPartyOfficeInterior(info, palette, playerColor) {
   group.userData.officeFan = fan;
   group.add(fan);
 
-  // A branded wall board, national flag, filing shelves and a counter establish a ward office.
+  // Keep the noticeboard as one uncluttered focal point: a header, branch label, and visible pinned notices.
   const wallBoard = box(5.9, 1.18, 0.12, '#3d6549', { castShadow: false, roughness: 0.9 });
   wallBoard.position.set(0, 3.05, -6.16);
   group.add(wallBoard);
-  const boardLabel = labelSprite(`${info.party?.tag || 'WARD'} SECRETARIAT`, accent);
-  boardLabel.position.set(0, 3.12, -6.04);
-  boardLabel.scale.set(3.25, 0.7, 1);
+  const boardLabel = labelSprite(`${info.party?.tag || 'WARD'} NOTICEBOARD`, accent);
+  boardLabel.position.set(0, 3.42, -6.04);
+  boardLabel.scale.set(2.95, 0.44, 1);
   group.add(boardLabel);
-  const boardSub = labelSprite('COMMUNITY DESK · SIMULATED BRANCH', '#f3d69a');
-  boardSub.position.set(0, 2.55, -6.02);
-  boardSub.scale.set(2.85, 0.52, 1);
-  group.add(boardSub);
+  for (const [index, noteColor] of ['#eee0bd', '#dce7d8', '#ead0ad'].entries()) {
+    const noticePaper = box(1.35, 0.32, 0.035, noteColor, { castShadow: false, roughness: 0.98 });
+    noticePaper.position.set((index - 1) * 1.75, 2.88, -6.045);
+    group.add(noticePaper);
+    const noticeLine = box(0.83, 0.025, 0.018, '#83735b', { castShadow: false, roughness: 1 });
+    noticeLine.position.set((index - 1) * 1.75, 2.88, -6.022);
+    group.add(noticeLine);
+  }
   const noticeAnchor = new THREE.Group();
   noticeAnchor.position.set(0, 0, -5.62);
   const noticeInteraction = {
@@ -2067,14 +2071,6 @@ function buildPartyOfficeInterior(info, palette, playerColor) {
   group.userData.executiveTargets = executiveTargets;
   group.userData.seatTargets = seatTargets;
 
-  const title = labelSprite(`${info.party?.tag || 'PARTY'} · WARD OFFICE`, accent);
-  title.position.set(0, 3.12, -6.13);
-  title.scale.set(2.7, 0.62, 1);
-  group.add(title);
-  const purpose = labelSprite('LOCAL PARTY SECRETARIAT', '#e8d39a');
-  purpose.position.set(0, 2.57, -6.12);
-  purpose.scale.set(2.4, 0.48, 1);
-  group.add(purpose);
   const exitDoor = addDoorPortal(group, { id: `exit-${info.id || 'party-office'}`, title: 'Exit to street', type: 'exit', accent: '#e5c465', x: 0, z: wallZ - 0.02, width: 1.55, height: 2.48 });
   exitDoor.userData.interaction = { id: 'exit-interior', title: 'Exit to street', type: 'exit' };
   group.userData.officeFan = fan;
