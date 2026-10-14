@@ -1,3 +1,5 @@
+import { PARTY_REGISTRY } from './partyRegistry.js';
+
 export const STATES = [
   { name: 'Abia', capital: 'Umuahia', zone: 'South East', landmark: 'Ariaria market district', terrain: 'southeast' },
   { name: 'Adamawa', capital: 'Yola', zone: 'North East', landmark: 'River Benue waterfront', terrain: 'northeast' },
@@ -40,85 +42,85 @@ export const STATES = [
 
 export const CHAPTERS = [
   {
-    id: 'ward-roots', number: '01', title: 'Start in public', phase: 'SHARED CIVIC STORY', office: 'Youth Leader / community organiser',
-    location: 'Community square', goal: 'Listen, convene, and build a public record before choosing a profession.', kind: 'story', shared: true,
-    description: 'A common civic chapter for every route: gather different voices, make a practical commitment, and publish what the community said. A party Youth Leader is an internal organising role; community organising can also be voluntary civic work.',
-    objectives: ['Hold a listening session', 'Write a public commitment', 'Choose a professional route'],
-    fact: 'This is not a public elected office. Party Youth Leader is an internal party position; a community organiser is a voluntary civic role.'
+    id: 'ward-roots', number: '01', title: 'Start in public', phase: 'SHARED CIVIC STORY', office: 'Community organiser · no office awarded',
+    location: 'Community square', goal: 'Listen, convene, and build a public record before the first contested position.', kind: 'story', shared: true,
+    description: 'A common civic opening: gather different voices, make a practical commitment, and publish what the community said before continuing the political ladder. This is a voluntary story step, not a political appointment or office. Other public institutions appear as optional side stories.',
+    objectives: ['Hold a listening session', 'Write a public commitment', 'Continue the political ladder'],
+    fact: 'No political position is awarded in this opening scene. Community organising is voluntary; later offices require a paid, contested process.'
   },
   {
-    id: 'party-congress', number: '02', title: 'The ward congress', phase: 'PARTY POLITICS', office: 'Ward executive / delegate',
-    location: 'Party office', goal: 'Win a transparent internal contest.', kind: 'primary',
+    id: 'party-congress', number: '02', title: 'The ward congress', phase: 'PARTY POLITICS', office: 'Ward Chairperson',
+    location: 'Party office', goal: 'Win a transparent, paid internal contest.', kind: 'primary', contestFee: 15000,
     description: 'Party gatekeepers can open doors—or close them. Build support through a record, clear rules, and a coalition rather than secret promises.',
     objectives: ['Meet party members', 'Agree a public platform', 'Face a delegate vote'],
     fact: 'Party primaries and congresses are internal party processes, not public elections.'
   },
   {
     id: 'councillor', number: '03', title: 'A seat at council', phase: 'LOCAL GOVERNMENT', office: 'Councillor',
-    location: 'Ward hall', goal: 'Represent a ward on the council.', kind: 'race',
+    location: 'Ward hall', goal: 'Represent a ward on the council.', kind: 'race', contestFee: 20000,
     description: 'Take a local campaign from the ward hall to election day. Local-government election arrangements differ from federal and state contests.',
     objectives: ['Set out a ward agenda', 'Meet residents in public', 'Win the ward vote'],
     fact: 'State Independent Electoral Commissions conduct local-government elections in the states; INEC conducts FCT Area Council elections.'
   },
   {
-    id: 'council-chair', number: '04', title: 'The council table', phase: 'LOCAL GOVERNMENT', office: 'Chairman / Vice-Chairman',
-    location: 'Council chambers', goal: 'Lead a local-government administration.', kind: 'race',
+    id: 'council-chair', number: '04', title: 'The council table', phase: 'LOCAL GOVERNMENT', office: 'Local Government Council Chairperson',
+    location: 'Council chambers', goal: 'Lead a local-government administration.', kind: 'race', contestFee: 25000,
     description: 'The council race is about services, budgets, and trust. Residents will remember whether a campaign promise turns into an accountable plan.',
     objectives: ['Build an LGA-wide coalition', 'Defend a service budget', 'Win the council race'],
     fact: 'Local-government structures and election cycles can vary by state.'
   },
   {
     id: 'assembly', number: '05', title: 'The state house', phase: 'STATE POLITICS', office: 'Member, State House of Assembly',
-    location: 'State Assembly', goal: 'Represent a state constituency.', kind: 'race',
+    location: 'State Assembly', goal: 'Represent a state constituency.', kind: 'race', contestFee: 30000,
     description: 'A constituency campaign becomes a test of legislation, oversight, and public access—not just rallies.',
     objectives: ['Draft a bill brief', 'Answer a public debate', 'Win the constituency race'],
     fact: 'State Houses of Assembly make laws on matters assigned to states and oversee state government.'
   },
   {
     id: 'house-reps', number: '06', title: 'The green chamber', phase: 'FEDERAL LEGISLATURE', office: 'Member, House of Representatives',
-    location: 'National Assembly', goal: 'Carry a federal constituency to Abuja.', kind: 'race',
+    location: 'National Assembly', goal: 'Carry a federal constituency to Abuja.', kind: 'race', contestFee: 35000,
     description: 'Federal constituency work means balancing local casework with national legislation and scrutiny.',
     objectives: ['Build a constituency service record', 'Debate a national issue', 'Win the federal constituency'],
     fact: 'The National Assembly has a Senate and a House of Representatives.'
   },
   {
     id: 'senate', number: '07', title: 'The red chamber', phase: 'FEDERAL LEGISLATURE', office: 'Senator',
-    location: 'Senate wing', goal: 'Represent a senatorial district.', kind: 'race',
+    location: 'Senate wing', goal: 'Represent a senatorial district.', kind: 'race', contestFee: 40000,
     description: 'A senatorial campaign is state-wide. A credible record, inclusion, and cross-district relationships matter more than a single headline.',
     objectives: ['Coordinate across districts', 'Table a policy package', 'Win the senatorial race'],
     fact: 'Each state returns three senators; the FCT returns one.'
   },
   {
-    id: 'house-leadership', number: '08', title: 'The leadership vote', phase: 'LEGISLATIVE CAUCUS', office: 'Speaker / Senate President',
-    location: 'Caucus room', goal: 'Earn colleagues’ confidence for chamber leadership.', kind: 'primary',
-    description: 'These titles are chosen by legislators from among themselves. The player must already hold a legislative seat; a public campaign alone cannot award them.',
+    id: 'house-leadership', number: '08', title: 'The leadership vote', phase: 'LEGISLATIVE CAUCUS', office: 'Senate President',
+    location: 'Caucus room', goal: 'Win a competitive internal leadership vote in a later chamber term.', kind: 'primary', contestFee: 20000,
+    description: 'This is a paid internal vote among fictional chamber colleagues in a later term. Before entering a new contest, the player leaves the previous simulated office; the game tracks exactly one current position at a time.',
     objectives: ['Consult across caucuses', 'Publish a rules-and-reform pledge', 'Secure a caucus vote'],
     fact: 'The Speaker and Senate President are elected internally by members of their respective chambers.'
   },
   {
-    id: 'cabinet', number: '09', title: 'A call to serve', phase: 'PUBLIC APPOINTMENT', office: 'Commissioner / Minister',
-    location: 'Executive secretariat', goal: 'Earn an appointment on merit and public record.', kind: 'appointment',
+    id: 'cabinet', number: '09', title: 'A call to serve', phase: 'PUBLIC APPOINTMENT', office: 'State Commissioner',
+    location: 'Executive secretariat', goal: 'Compete in a paid merit review among fictional nominees.', kind: 'appointment', contestFee: 25000,
     description: 'Some influential titles are appointed rather than directly elected. Build a public-service case, then face confirmation or oversight where required.',
     objectives: ['Show a track record', 'Answer a scrutiny hearing', 'Accept or decline a portfolio'],
     fact: 'Ministers and commissioners are appointments; they are not separate ballot positions.'
   },
   {
-    id: 'governor', number: '10', title: 'The state mandate', phase: 'STATEWIDE ELECTION', office: 'Governor / Deputy Governor',
-    location: 'State capital', goal: 'Win a statewide ticket and govern with accountability.', kind: 'race',
+    id: 'governor', number: '10', title: 'The state mandate', phase: 'STATEWIDE ELECTION', office: 'Governor',
+    location: 'State capital', goal: 'Win a statewide ticket and govern with accountability.', kind: 'race', contestFee: 50000,
     description: 'Build a ticket, defend a state plan, and campaign across very different communities without treating any group as a monolith.',
     objectives: ['Select a running mate', 'Debate a state budget', 'Win the governorship'],
     fact: 'Governors are elected with deputy governors; some state governorships are off-cycle.'
   },
   {
-    id: 'party-convention', number: '11', title: 'The national convention', phase: 'PARTY POLITICS', office: 'National party officer / presidential nominee',
-    location: 'Convention arena', goal: 'Secure a presidential ticket through the party process.', kind: 'primary',
+    id: 'party-convention', number: '11', title: 'The national convention', phase: 'PARTY POLITICS', office: 'Presidential Party Nominee',
+    location: 'Convention arena', goal: 'Win the paid, competitive party nomination contest.', kind: 'primary', contestFee: 40000,
     description: 'A convention brings delegates, caucuses, coalition partners, and policy negotiations together. Every deal has a public-interest cost and a political cost.',
     objectives: ['Negotiate a coalition', 'Present a national platform', 'Win the party nomination'],
     fact: 'Party offices are internal; the presidential nominee is then presented to voters at the general election.'
   },
   {
-    id: 'presidency', number: '12', title: 'Nigeria decides', phase: 'NATIONAL ELECTION', office: 'President / Vice-President',
-    location: 'Abuja', goal: 'Win the national contest—or accept the result and choose a lawful next step.', kind: 'race',
+    id: 'presidency', number: '12', title: 'Nigeria decides', phase: 'NATIONAL ELECTION', office: 'President',
+    location: 'Abuja', goal: 'Win the national contest—or accept the result and choose a lawful next step.', kind: 'race', contestFee: 75000,
     description: 'The final chapter is a fictional 2027 scenario. Outcomes emerge from your decisions and simulated voter priorities; the game does not predict the real election.',
     objectives: ['Publish a costed national compact', 'Reach all six geopolitical zones', 'Face the simulated national vote'],
     fact: 'INEC’s current calendar lists 16 January 2027 for presidential and National Assembly polls and 6 February 2027 for governorship and State Assembly polls.'
@@ -196,22 +198,22 @@ export const OFFICE_CATALOG = [
     ]
   },
   {
-    group: 'PUBLIC INSTITUTIONS — NON-PARTISAN', icon: '○', roles: [
+    group: 'APPOINTED / INDEPENDENT — PUBLIC INSTITUTIONS', icon: '○', roles: [
       ['INEC Chairperson / National Commissioner', 'Election-management leadership; institutionally distinct from party politics.'],
       ['Resident Electoral Commissioner (REC)', 'INEC’s state/FCT representative; not a partisan campaign office.'],
       ['Electoral Officer / Returning Officer', 'Election administration and result-return roles assigned for specific processes.'],
-      ['SIEC Chairperson / Commissioner', 'State Independent Electoral Commission leadership for local elections; arrangements are governed by the relevant state rules.'],
-      ['Chief Justice of Nigeria / Supreme Court Justice', 'Judicial office; not an elected campaign title. Appointment follows constitutional procedures.'],
+      ['SIEC Chairperson / Commissioner', 'State Independent Electoral Commission leadership for local elections; separate from INEC.'],
+      ['Chief Justice of Nigeria / Supreme Court Justice', 'Judicial office; not an elected campaign title.'],
       ['Court of Appeal / High Court Judge', 'Judicial offices governed by constitutional appointment processes and qualifications.'],
       ['Election Petition Tribunal member', 'Judicial assignment for a petition; not a route to political office.'],
     ]
   },
   {
-    group: 'APPOINTED — CENTRAL BANK / PROFESSIONAL SERVICE', icon: '○', roles: [
-      ['CBN Governor', 'Appointed by the President, subject to Senate confirmation under the CBN Act 2007; not elected.'],
-      ['CBN Deputy Governor', 'Appointed role requiring recognized financial experience and Senate confirmation under the CBN Act.'],
-      ['Monetary Policy Committee member', 'The committee includes statutory office-holders and appointed members; it is not a campaign post.'],
-      ['CBN economist / analyst / department director', 'Professional service roles inside the Bank; recruitment and promotion are separate from political campaigns.'],
+    group: 'CENTRAL BANK — PROFESSIONAL / APPOINTED', icon: '○', roles: [
+      ['CBN Governor / Deputy Governor', 'Appointed under the Central Bank of Nigeria Act, subject to Senate confirmation; not elected posts.'],
+      ['CBN Director / department head', 'Senior central-bank service role; recruitment and career rules are institution-specific.'],
+      ['Monetary Policy Committee member', 'Committee membership follows statutory provisions; it is not a party nomination or public election.'],
+      ['Central-bank economist / analyst', 'Professional policy and research service role, distinct from elected executive office.'],
     ]
   },
 ];
@@ -264,7 +266,54 @@ export const CAMPAIGN_SCENES = {
   },
 };
 
+export const OTHER_SIDE_STORIES = [
+  {
+    id: 'judiciary', title: 'Behind the bench', classification: 'INDEPENDENT JUDICIARY · NOT A CAMPAIGN OFFICE',
+    venueId: 'court', speaker: 'Fictional judicial officer',
+    prompt: 'A petition creates pressure for a quick public answer. Write how you will respect the court’s independence while responding to residents.',
+    fact: 'Judges are not elected. Judicial appointments follow constitutional processes and qualifications; election petitions are decided through evidence and due process.',
+    choices: [
+      { id: 'respect-process', label: 'Respect the court and publish only verified facts', effects: { trust: 3, influence: 1, integrity: 4 }, outcome: 'The campaign gives the court space to decide the case independently and shares only verified public information.' },
+      { id: 'support-evidence', label: 'Ask counsel to explain evidence and timelines', effects: { trust: 2, influence: 2, integrity: 3 }, outcome: 'The response centres evidence, standing and statutory timelines—not pressure on a judge.' },
+    ],
+  },
+  {
+    id: 'inec', title: 'The election desk', classification: 'INEC · FEDERAL / STATE POLLS & FCT AREA COUNCILS',
+    venueId: 'inec-office', speaker: 'Fictional election administrator',
+    prompt: 'An observer raises a concern about public communication. Write a question that asks for transparency without directing an independent administrator.',
+    fact: 'INEC is an independent constitutional commission. Its officials administer elections; they are not party campaign staff. INEC also conducts FCT Area Council elections.',
+    choices: [
+      { id: 'public-process', label: 'Request the published procedure and public record', effects: { trust: 2, influence: 2, integrity: 4 }, outcome: 'The campaign asks for the established public process and avoids private pressure on election officials.' },
+      { id: 'observer-access', label: 'Support lawful observer access and clear communication', effects: { trust: 3, influence: 1, integrity: 4 }, outcome: 'The discussion focuses on transparent information and lawful access for accredited observers.' },
+    ],
+  },
+  {
+    id: 'siec', title: 'Local elections, local rules', classification: 'STATE INDEPENDENT ELECTORAL COMMISSION · NOT INEC',
+    venueId: 'siec-office', speaker: 'Fictional state election administrator',
+    prompt: 'Residents ask which body conducts local-government elections. Type a clear response that does not confuse state and federal responsibilities.',
+    fact: 'State Independent Electoral Commissions conduct state local-government elections; INEC conducts FCT Area Council elections. State laws and arrangements differ.',
+    choices: [
+      { id: 'name-the-body', label: 'Name the correct commission and explain its remit', effects: { trust: 3, influence: 2, integrity: 3 }, outcome: 'The answer distinguishes the State Independent Electoral Commission from INEC and points people to the relevant state process.' },
+      { id: 'check-state-law', label: 'Check the state law before making a claim', effects: { trust: 2, influence: 1, integrity: 4 }, outcome: 'The answer is careful: local procedures vary, so the public should verify the state-specific rules.' },
+    ],
+  },
+  {
+    id: 'cbn', title: 'Monetary policy briefing', classification: 'CENTRAL BANK · PROFESSIONAL / APPOINTED SERVICE',
+    venueId: 'cbn-office', speaker: 'Fictional central-bank economist',
+    prompt: 'A policy choice has competing effects on prices, growth and financial stability. Write a question about evidence and accountability without promising to direct an independent central bank.',
+    fact: 'CBN Governor and Deputy Governors are appointed under the CBN Act, subject to Senate confirmation; the office is not elected and is distinct from party politics.',
+    choices: [
+      { id: 'ask-tradeoffs', label: 'Ask for evidence, risks and trade-offs', effects: { trust: 2, influence: 2, integrity: 4 }, outcome: 'The exchange focuses on evidence and trade-offs, while respecting statutory responsibilities.' },
+      { id: 'public-explain', label: 'Request a plain-language public explanation', effects: { trust: 3, influence: 2, integrity: 3 }, outcome: 'The brief ends with a commitment to explain policy choices clearly without pretending the politician controls them.' },
+    ],
+  },
+];
+
 export const WORLD_VENUES = [
+  { id: 'inec-office', short: 'INEC DESK', label: 'Election Commission Office', type: 'office', x: -10, z: -1, color: '#8fe2dc', desc: 'A fictional non-partisan election-administration story encounter.' },
+  { id: 'siec-office', short: 'SIEC DESK', label: 'State Election Commission', type: 'office', x: -8, z: -5, color: '#8fe2dc', desc: 'A fictional state-level local-election administration encounter.' },
+  { id: 'cbn-office', short: 'CBN DESK', label: 'Central Bank Office', type: 'office', x: 12, z: 3, color: '#8cb9ff', desc: 'A fictional central-banking policy briefing; not a political campaign venue.' },
+
   { id: 'ward', short: 'WARD HQ', label: 'Ward Office', type: 'office', x: -9, z: 4, color: '#d9f36b', desc: 'Meet ward organisers and work on the service charter.' },
   { id: 'square', short: 'CIVIC SQUARE', label: 'Community Square', type: 'square', x: -2, z: -5, color: '#ffc76a', desc: 'A public listening circle with residents and local associations.' },
   { id: 'market', short: 'MARKET', label: 'Market Street', type: 'market', x: 7, z: 5, color: '#ff9c75', desc: 'A busy trading district. Hear different concerns; no single group speaks for everyone.' },
@@ -307,7 +356,7 @@ export const RESEARCH_NOTES = [
   {
     tag: 'THE 2027 SCENARIO',
     title: 'A simulation, not a prediction',
-    body: 'INEC’s current election calendar lists 16 January 2027 for Presidential/National Assembly elections and 6 February 2027 for Governorship/State Assembly elections. The real results are not known. Every candidate, party, poll result, and storyline in this game is fictional.',
+    body: 'INEC’s election calendar lists 16 January 2027 for Presidential/National Assembly elections and 6 February 2027 for Governorship/State Assembly elections. The real results are not known. Party names/logos and dated national officer fields use INEC’s register; player characters, local branches, contests, endorsements, and story outcomes are fictional.',
     source: 'INEC — Full Election Calendar',
     url: 'https://inecnigeria.org/elections/calendar'
   },
@@ -361,8 +410,4 @@ export const MAP_POINTS = {
   'Federal Capital Territory': [218, 189],
 };
 
-export const PARTY_OPTIONS = [
-  { name: 'Common Ground Party', tag: 'CGP', color: '#d8f36b', tone: 'A broad coalition built around practical public services.' },
-  { name: 'Renewal League', tag: 'RL', color: '#ff9c75', tone: 'A reformist platform focused on accountability and jobs.' },
-  { name: 'People’s Future Movement', tag: 'PFM', color: '#8cb9ff', tone: 'A civic coalition focused on access, opportunity, and inclusion.' },
-];
+export const PARTY_OPTIONS = PARTY_REGISTRY;

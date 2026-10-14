@@ -5,8 +5,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { Server } from 'socket.io';
-import { CAREER_TRACKS, DEFAULT_CAREER_TRACK, INSTITUTIONAL_STORY_ARCS } from '../src/careerTracks.js';
-import { STATES } from '../src/data.js';
+import { CHAPTERS, OTHER_SIDE_STORIES, STATES } from '../src/data.js';
+import { meetingArrivalPoint } from '../src/meetingWorld.js';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const distPath = path.join(projectRoot, 'dist');
@@ -110,14 +110,17 @@ async function authenticatedUser(req, res) {
 
 function sanitizedSave(input = {}) {
   const sourceProfile = input.profile && typeof input.profile === 'object' ? input.profile : {};
-  const trackId = CAREER_TRACKS.some((track) => track.id === input.careerTrack) ? input.careerTrack : DEFAULT_CAREER_TRACK;
   const knownStates = STATES.map((state) => state.name);
   const state = knownStates.includes(input.state) ? input.state : 'Lagos';
+  const validInstitutions = new Set(['election-admin', 'judiciary', 'cbn']);
+  const institutionalRole = sourceProfile.roleMode === 'institutional' && validInstitutions.has(sourceProfile.institution);
   const profile = {
     started: Boolean(sourceProfile.started),
+    roleMode: institutionalRole ? 'institutional' : 'political',
+    institution: institutionalRole ? sourceProfile.institution : null,
     alias: safeText(sourceProfile.alias, 26) || 'New Candidate',
-    party: safeText(sourceProfile.party, 60),
-    partyTag: safeText(sourceProfile.partyTag, 12),
+    party: institutionalRole ? null : safeText(sourceProfile.party, 60),
+    partyTag: institutionalRole ? null : safeText(sourceProfile.partyTag, 12),
     color: /^#[0-9a-f]{6}$/i.test(String(sourceProfile.color || '')) ? sourceProfile.color : palette[0],
     cash: clamp(Math.round(safeNumber(sourceProfile.cash, 1_000_000)), 0, 1_000_000),
     trust: clamp(Math.round(safeNumber(sourceProfile.trust, 32)), 0, 100),
@@ -131,21 +134,14 @@ function sanitizedSave(input = {}) {
     lastContest: sourceProfile.lastContest && typeof sourceProfile.lastContest === 'object' ? sourceProfile.lastContest : null,
     legalBoost: Boolean(sourceProfile.legalBoost),
     completed: Boolean(sourceProfile.completed),
-    completedSideStories: Array.isArray(sourceProfile.completedSideStories) ? sourceProfile.completedSideStories.filter((id) => INSTITUTIONAL_STORY_ARCS.some((arc) => arc.id === id)).slice(0, 12) : [],
   };
-  const progressInput = input.progressByTrack && typeof input.progressByTrack === 'object' ? input.progressByTrack : {};
-  const progressByTrack = {};
-  for (const track of CAREER_TRACKS) {
-    const progress = progressInput[track.id] && typeof progressInput[track.id] === 'object' ? progressInput[track.id] : {};
-    progressByTrack[track.id] = {
-      stageIndex: clamp(Math.floor(safeNumber(progress.stageIndex, 0)), 0, track.stages.length - 1),
-      missionProgress: clamp(Math.floor(safeNumber(progress.missionProgress, 0)), 0, 3),
-    };
-  }
+  const validStoryIds = new Set(OTHER_SIDE_STORIES.map((story) => story.id));
   return {
     profile,
-    careerTrack: trackId,
-    progressByTrack,
+    careerTrack: 'politics',
+    stageIndex: clamp(Math.floor(safeNumber(input.stageIndex, 0)), 0, CHAPTERS.length - 1),
+    missionProgress: clamp(Math.floor(safeNumber(input.missionProgress, 0)), 0, 3),
+    sideStoriesSeen: Array.isArray(input.sideStoriesSeen) ? input.sideStoriesSeen.filter((id) => validStoryIds.has(id)).slice(0, 32) : [],
     storyDay: clamp(Math.floor(safeNumber(input.storyDay, 1)), 1, 100_000),
     state,
     updatedAt: new Date().toISOString(),
@@ -165,13 +161,20 @@ function publicPlayer(player) {
     x: player.x,
     z: player.z,
     accountBacked: Boolean(player.userId),
+    meetingId: player.meetingId || null,
+    meetingStatus: player.meetingStatus || null,
+    meetingSlot: Number.isInteger(player.meetingSlot) ? player.meetingSlot : null,
   };
 }
 
 function publicMeeting(meeting, viewerSocketId = '') {
   const votes = meetingVotes.get(meeting.id) || new Map();
   const tally = { support: 0, mixed: 0, concern: 0 };
+  const attendees = [...meeting.members].map((socketId) => sessions.get(socketId)).filter(Boolean);
   for (const value of votes.values()) if (Object.hasOwn(tally, value)) tally[value] += 1;
+  const enRoute = attendees.filter((player) => player.meetingStatus === 'en-route').length;
+  const atVenue = attendees.filter((player) => ['at-venue', 'in-session'].includes(player.meetingStatus)).length;
+  const inSession = attendees.filter((player) => player.meetingStatus === 'in-session').length;
   return {
     id: meeting.id,
     title: meeting.title,
@@ -182,8 +185,11 @@ function publicMeeting(meeting, viewerSocketId = '') {
     status: meeting.status,
     createdAt: meeting.createdAt,
     participants: meeting.members.size,
+    interested: meeting.members.size,
+    enRoute,
+    atVenue,
+    inSession,
     votes: tally,
-    cloudBacked: Boolean(persistenceConfigured && meeting.hostUserId),
     isHost: viewerSocketId ? meeting.hostSocketId === viewerSocketId || Boolean(meeting.hostUserId && sessions.get(viewerSocketId)?.userId === meeting.hostUserId) : false,
     outcome: meeting.outcome || null,
   };
@@ -195,6 +201,16 @@ function allOpenMeetings() {
 
 function liveParticipants(meeting) {
   return [...meeting.members].map((socketId) => publicPlayer(sessions.get(socketId))).filter(Boolean);
+}
+
+function assignMeetingSlot(meeting, socketId) {
+  if (!meeting.arrivalSlots) meeting.arrivalSlots = new Map();
+  if (meeting.arrivalSlots.has(socketId)) return meeting.arrivalSlots.get(socketId);
+  const occupied = new Set(meeting.arrivalSlots.values());
+  let slot = 0;
+  while (occupied.has(slot)) slot += 1;
+  meeting.arrivalSlots.set(socketId, slot);
+  return slot;
 }
 
 async function hydrateMeeting(row) {
@@ -216,6 +232,7 @@ async function hydrateMeeting(row) {
     status: row.status || 'closed',
     createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
     members: new Set(),
+    arrivalSlots: new Map(),
     outcome: row.outcome || null,
   };
   meetings.set(meeting.id, meeting);
@@ -244,10 +261,19 @@ async function loadOpenMeetingsFromDb() {
   return allOpenMeetings();
 }
 
-app.get('/api/config', (_req, res) => {
+app.get('/api/config', async (_req, res) => {
+  let persistenceReady = false;
+  if (persistenceConfigured) {
+    try {
+      const schemaProbes = [['profiles', 'id'], ['meetings', 'id'], ['meeting_participants', 'meeting_id'], ['meeting_messages', 'id'], ['meeting_votes', 'meeting_id'], ['direct_messages', 'id']];
+      await Promise.all(schemaProbes.map(([table, column]) => dbRequest(table, { select: column, limit: '0' })));
+      persistenceReady = true;
+    } catch { /* The client will stay honest and use guest/session-only mode until setup is fixed. */ }
+  }
   res.json({
     authEnabled: authConfigured,
-    persistenceEnabled: persistenceConfigured,
+    persistenceConfigured,
+    persistenceEnabled: persistenceReady,
     accountProvider: authConfigured ? 'supabase' : null,
     guestMode: true,
   });
@@ -480,6 +506,9 @@ io.on('connection', async (socket) => {
       color,
       x: -5.8,
       z: 3.5,
+      meetingId: previous?.meetingId || null,
+      meetingStatus: previous?.meetingStatus || null,
+      meetingSlot: Number.isInteger(previous?.meetingSlot) ? previous.meetingSlot : null,
       joinedAt: Date.now(),
     };
     sessions.set(socket.id, player);
@@ -488,6 +517,11 @@ io.on('connection', async (socket) => {
     const others = [...sessions.values()].filter((item) => item.room === room && item.id !== socket.id).map(publicPlayer);
     socket.emit('world:snapshot', { self: publicPlayer(player), players: others, online: roomCount(room) });
     socket.to(room).emit('player:joined', publicPlayer(player));
+    for (const other of sessions.values()) {
+      if (other.room !== room || other.id === player.id) continue;
+      socket.emit('player:contact', { id: other.id, accountId: other.userId || null });
+      io.to(other.id).emit('player:contact', { id: player.id, accountId: player.userId || null });
+    }
     io.to(room).emit('world:count', { online: roomCount(room), state: state.name });
   });
 
@@ -524,15 +558,6 @@ io.on('connection', async (socket) => {
     });
   });
 
-  socket.on('dm:lookup', (payload = {}) => {
-    const player = sessions.get(socket.id);
-    const target = sessions.get(safeText(payload.peerId, 80));
-    if (!player || !target || target.id === player.id) return;
-    // Only disclose a stable account identifier to the player who explicitly
-    // opened that direct-message thread; it is never broadcast with presence.
-    socket.emit('dm:peer', { peerId: target.id, peerAccountId: target.userId || null });
-  });
-
   socket.on('dm:send', async (payload = {}) => {
     const player = sessions.get(socket.id);
     const recipientId = safeText(payload.recipientId, 80);
@@ -563,6 +588,7 @@ io.on('connection', async (socket) => {
   socket.on('meeting:create', async (payload = {}) => {
     const player = sessions.get(socket.id);
     if (!player) return;
+    if (player.meetingId) { socket.emit('meeting:error', { message: 'Leave your current gathering before starting another one.' }); return; }
     const id = randomUUID();
     const venueId = safeText(payload.location?.venueId, 32) || 'square';
     const meeting = {
@@ -583,8 +609,12 @@ io.on('connection', async (socket) => {
       status: 'open',
       createdAt: Date.now(),
       members: new Set([socket.id]),
+      arrivalSlots: new Map([[socket.id, 0]]),
       outcome: null,
     };
+    player.meetingId = id;
+    player.meetingStatus = 'en-route';
+    player.meetingSlot = 0;
     meetings.set(id, meeting);
     meetingMessages.set(id, []);
     meetingVotes.set(id, new Map());
@@ -608,6 +638,7 @@ io.on('connection', async (socket) => {
         display_name: player.name,
       }, prefer: 'resolution=merge-duplicates,return=minimal' }, 'meeting-host');
     }
+    io.to(player.room).emit('player:meeting-status', publicPlayer(player));
     socket.emit('meeting:snapshot', { meeting: publicMeeting(meeting, socket.id), messages: [], participants: liveParticipants(meeting) });
     io.emit('meeting:list', allOpenMeetings());
   });
@@ -627,7 +658,15 @@ io.on('connection', async (socket) => {
       socket.emit('meeting:error', { message: 'That meeting has ended or is no longer available.' });
       return;
     }
+    if (player.meetingId && player.meetingId !== id) {
+      socket.emit('meeting:error', { message: 'Leave your current gathering before travelling to another one.' });
+      return;
+    }
+    const alreadyMember = meeting.members.has(socket.id);
     meeting.members.add(socket.id);
+    player.meetingId = id;
+    if (!alreadyMember) player.meetingStatus = 'en-route';
+    player.meetingSlot = assignMeetingSlot(meeting, socket.id);
     socket.join(`meeting:${id}`);
     if (persistenceConfigured && meeting.hostUserId && player.userId) {
       await persistQuietly('meeting_participants', { on_conflict: 'meeting_id,participant_key' }, { method: 'POST', body: {
@@ -638,14 +677,49 @@ io.on('connection', async (socket) => {
       }, prefer: 'resolution=merge-duplicates,return=minimal' }, 'meeting-participant');
     }
     const messages = meetingMessages.get(id) || [];
+    io.to(player.room).emit('player:meeting-status', publicPlayer(player));
+    io.to(`meeting:${id}`).emit('meeting:participants', liveParticipants(meeting));
     socket.emit('meeting:snapshot', { meeting: publicMeeting(meeting, socket.id), messages, participants: liveParticipants(meeting) });
-    socket.to(`meeting:${id}`).emit('meeting:participants', liveParticipants(meeting));
+    io.emit('meeting:list', allOpenMeetings());
+  });
+
+  socket.on('meeting:arrived', ({ meetingId } = {}) => {
+    const player = sessions.get(socket.id);
+    const id = safeText(meetingId, 80);
+    const meeting = meetings.get(id);
+    if (!player || !meeting || meeting.status !== 'open' || !meeting.members.has(socket.id)) return;
+    const venueId = meeting.location?.venueId || 'square';
+    const slot = Number.isInteger(player.meetingSlot) ? player.meetingSlot : null;
+    const arrival = meetingArrivalPoint(id, venueId, socket.id, slot);
+    if (Math.hypot(player.x - arrival.x, player.z - arrival.z) > 4.5) {
+      socket.emit('meeting:error', { message: 'Walk to the gathering marker before opening the live discussion.' });
+      return;
+    }
+    player.meetingStatus = 'at-venue';
+    io.to(player.room).emit('player:meeting-status', publicPlayer(player));
+    io.to(`meeting:${id}`).emit('meeting:participants', liveParticipants(meeting));
+    io.emit('meeting:list', allOpenMeetings());
+  });
+
+  socket.on('meeting:enter', ({ meetingId } = {}) => {
+    const player = sessions.get(socket.id);
+    const id = safeText(meetingId, 80);
+    const meeting = meetings.get(id);
+    if (!player || !meeting || meeting.status !== 'open' || !meeting.members.has(socket.id)) return;
+    if (player.meetingStatus !== 'at-venue' && player.meetingStatus !== 'in-session') {
+      socket.emit('meeting:error', { message: 'Reach the venue before opening the live discussion.' });
+      return;
+    }
+    player.meetingStatus = 'in-session';
+    io.to(player.room).emit('player:meeting-status', publicPlayer(player));
+    io.to(`meeting:${id}`).emit('meeting:participants', liveParticipants(meeting));
+    io.emit('meeting:list', allOpenMeetings());
   });
 
   socket.on('meeting:message', async (payload = {}) => {
     const player = sessions.get(socket.id);
     const meeting = meetings.get(safeText(payload.meetingId, 80));
-    if (!player || !meeting || meeting.status !== 'open' || !meeting.members.has(socket.id)) return;
+    if (!player || !meeting || meeting.status !== 'open' || !meeting.members.has(socket.id) || !['at-venue', 'in-session'].includes(player.meetingStatus)) return;
     const now = Date.now();
     if (now - socket.data.lastMeetingMessageAt < 600) return;
     socket.data.lastMeetingMessageAt = now;
@@ -657,6 +731,7 @@ io.on('connection', async (socket) => {
       id: randomUUID(),
       meetingId: meeting.id,
       senderId: player.userId,
+      senderSocketId: socket.id,
       senderName: player.name,
       kind,
       body,
@@ -685,7 +760,7 @@ io.on('connection', async (socket) => {
     const player = sessions.get(socket.id);
     const meeting = meetings.get(safeText(payload.meetingId, 80));
     const vote = ['support', 'mixed', 'concern'].includes(payload.vote) ? payload.vote : null;
-    if (!player || !meeting || meeting.status !== 'open' || !meeting.members.has(socket.id) || !vote) return;
+    if (!player || !meeting || meeting.status !== 'open' || !meeting.members.has(socket.id) || !['at-venue', 'in-session'].includes(player.meetingStatus) || !vote) return;
     const votes = meetingVotes.get(meeting.id) || new Map();
     const voterKey = player.userId || socket.id;
     votes.set(voterKey, vote);
@@ -712,14 +787,16 @@ io.on('connection', async (socket) => {
     const invitation = {
       id: randomUUID(),
       meeting: publicMeeting(meeting),
+      meetingId: meeting.id,
       fromName: player.name,
       state: meeting.location.state,
       at: Date.now(),
       type: 'meeting_invite',
     };
     io.to(target.id).emit('meeting:invite', invitation);
-    io.to(target.id).emit('dm:message', { ...invitation, peerId: player.id, peerAccountId: player.userId || null, incoming: true, body: `Invited you to “${meeting.title}”.`, fromName: player.name });
-    socket.emit('dm:message', { ...invitation, peerId: target.id, peerAccountId: target.userId || null, incoming: false, body: `Invited ${target.name} to “${meeting.title}”.` });
+    const inviteText = `Meeting invitation: ${meeting.title}`;
+    socket.emit('dm:message', { ...invitation, peerId: target.id, peerAccountId: target.userId || null, incoming: false, fromId: player.id, fromName: player.name, body: `Invited ${target.name} to “${meeting.title}”.` });
+    io.to(target.id).emit('dm:message', { ...invitation, peerId: player.id, peerAccountId: player.userId || null, incoming: true, fromId: player.id, fromName: player.name, body: inviteText });
     if (persistenceConfigured && player.userId && target.userId) {
       await persistQuietly('direct_messages', {}, { method: 'POST', body: {
         id: invitation.id,
@@ -735,18 +812,24 @@ io.on('connection', async (socket) => {
   });
 
   socket.on('meeting:leave', ({ meetingId } = {}) => {
+    const player = sessions.get(socket.id);
     const id = safeText(meetingId, 80);
     const meeting = meetings.get(id);
-    if (!meeting || !meeting.members.has(socket.id)) return;
+    if (!player || !meeting || !meeting.members.has(socket.id)) return;
     meeting.members.delete(socket.id);
+    meeting.arrivalSlots?.delete(socket.id);
+    if (player.meetingId === id) { player.meetingId = null; player.meetingStatus = null; player.meetingSlot = null; }
     socket.leave(`meeting:${id}`);
-    socket.to(`meeting:${id}`).emit('meeting:participants', liveParticipants(meeting));
+    io.to(player.room).emit('player:meeting-status', publicPlayer(player));
+    io.to(`meeting:${id}`).emit('meeting:participants', liveParticipants(meeting));
+    io.emit('meeting:list', allOpenMeetings());
   });
 
   socket.on('meeting:close', async (payload = {}) => {
     const player = sessions.get(socket.id);
     const meeting = meetings.get(safeText(payload.meetingId, 80));
     if (!player || !meeting || meeting.status !== 'open' || !meeting.members.has(socket.id)) return;
+    if (!['at-venue', 'in-session'].includes(player.meetingStatus)) { socket.emit('meeting:error', { message: 'The host must reach the meeting venue before publishing its record.' }); return; }
     const isHost = meeting.hostSocketId === socket.id || Boolean(meeting.hostUserId && player.userId === meeting.hostUserId);
     if (!isHost) {
       socket.emit('meeting:error', { message: 'Only the meeting host can publish the meeting record.' });
@@ -758,9 +841,17 @@ io.on('connection', async (socket) => {
     const outcome = tally.support > tally.concern ? 'supported' : tally.concern > tally.support ? 'rework' : 'contested';
     meeting.outcome = { outcome, votes: tally, participants: meeting.members.size, closedBy: player.name, summary: safeText(payload.summary, 220), closedAt: Date.now() };
     meeting.status = 'closed';
-    if (persistenceConfigured && meeting.hostUserId) {
+    if (persistenceConfigured) {
       await persistQuietly('meetings', { id: `eq.${meeting.id}` }, { method: 'PATCH', body: { status: 'closed', outcome: meeting.outcome, ended_at: new Date().toISOString() }, prefer: 'return=minimal' }, 'meeting-close');
     }
+    for (const socketId of meeting.members) {
+      const attendee = sessions.get(socketId);
+      if (attendee?.meetingId === meeting.id) {
+        attendee.meetingId = null; attendee.meetingStatus = null; attendee.meetingSlot = null;
+        io.to(attendee.room).emit('player:meeting-status', publicPlayer(attendee));
+      }
+    }
+    io.to(`meeting:${meeting.id}`).emit('meeting:participants', liveParticipants(meeting));
     io.to(`meeting:${meeting.id}`).emit('meeting:closed', { meeting: publicMeeting(meeting), outcome: meeting.outcome });
     io.emit('meeting:list', allOpenMeetings());
   });
@@ -772,11 +863,15 @@ io.on('connection', async (socket) => {
       socket.to(player.room).emit('player:left', { id: socket.id });
       io.to(player.room).emit('world:count', { online: roomCount(player.room), state: player.state });
     }
+    let leftMeeting = false;
     for (const meeting of meetings.values()) {
       if (meeting.members.delete(socket.id)) {
+        meeting.arrivalSlots?.delete(socket.id);
         socket.to(`meeting:${meeting.id}`).emit('meeting:participants', liveParticipants(meeting));
+        leftMeeting = true;
       }
     }
+    if (leftMeeting) io.emit('meeting:list', allOpenMeetings());
   });
 });
 

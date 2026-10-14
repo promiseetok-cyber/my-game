@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { io as socketClient } from 'socket.io-client';
 import {
   Activity, ArrowRight, Banknote, BookOpen, CalendarDays, Check, ChevronDown,
@@ -6,14 +6,20 @@ import {
   Map, MapPin, Megaphone, MessageCircle, Move, Plane, Radio, Scale, Search,
   Send, Shield, ShieldAlert, Sparkles, TrendingUp, UserRound, Users, Wallet,
   X, Zap, Briefcase, Crown, BadgeCheck, CircleHelp, Eye, ScrollText, LockKeyhole,
+  Compass, Menu, Smartphone, Maximize2, Minimize2, Shirt,
 } from 'lucide-react';
 import World from './World.jsx';
+import { createLocalPartyBranches } from './partyBranches.js';
+import { PARTY_REGISTER_CHECKED_AT, PARTY_REGISTER_SOURCE } from './partyRegistry.js';
 import { STATE_WORLD_PROFILES } from './stateWorldProfiles.js';
+import { createLocalityVisualProfile } from './localityStyles.js';
+import { meetingArrivalPoint } from './meetingWorld.js';
+
+const MapLibreWorld = lazy(() => import('./MapLibreWorld.jsx'));
 import {
-  CAMPAIGN_SCENES, CHAPTERS, MAP_POINTS, NPCS, OFFICE_CATALOG, PARTY_OPTIONS, RESEARCH_NOTES,
+  CAMPAIGN_SCENES, CHAPTERS, MAP_POINTS, NPCS, OFFICE_CATALOG, OTHER_SIDE_STORIES, PARTY_OPTIONS, RESEARCH_NOTES,
   STATES, WORLD_VENUES,
 } from './data.js';
-import { CAREER_TRACKS, DEFAULT_CAREER_TRACK, getCareerTrack, INSTITUTIONAL_STORY_ARCS } from './careerTracks.js';
 
 const SAVE_KEY = 'nigeria-2027-life-sim-v1';
 const AUTH_SAVE_KEY = 'nigeria-2027-auth-v1';
@@ -34,18 +40,75 @@ const CAPITAL_LGA_BY_STATE = {
   'Federal Capital Territory': 'Abuja Municipal Area Council',
 };
 const wardKey = (ward) => ward ? `${ward.name}|${ward.lat}|${ward.lon}` : '';
-const focusWorldOnMobile = () => {
-  if (window.matchMedia?.('(max-width: 1030px)').matches) {
-    window.setTimeout(() => document.querySelector('.world-view-frame')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80);
+const partyRegisterDateLabel = new Date(`${PARTY_REGISTER_CHECKED_AT}T12:00:00+01:00`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase();
+const AVATAR_SKIN_OPTIONS = [
+  { label: 'Deep umber', value: '#54372d' }, { label: 'Warm umber', value: '#764c37' },
+  { label: 'Copper brown', value: '#966448' }, { label: 'Golden brown', value: '#b4805c' },
+  { label: 'Light brown', value: '#c39270' },
+];
+const AVATAR_HEAD_OPTIONS = [
+  { id: 'close', label: 'Close cut' }, { id: 'natural', label: 'Natural' },
+  { id: 'wrap', label: 'Head wrap' }, { id: 'cap', label: 'Cap' },
+];
+const AVATAR_OUTFIT_OPTIONS = [
+  { id: 'accent', label: 'Party / role accent', value: null },
+  { id: 'teal', label: 'Lagoon teal', value: '#267a72' }, { id: 'amber', label: 'Market amber', value: '#b87937' },
+  { id: 'indigo', label: 'Indigo', value: '#465879' }, { id: 'cream', label: 'Cotton cream', value: '#ddd0ab' },
+  { id: 'burgundy', label: 'Burgundy', value: '#713f4d' },
+];
+const DEFAULT_AVATAR_APPEARANCE = { skinTone: '#764c37', headStyle: 'close', outfitColor: null };
+const normalizeAvatarAppearance = (value = {}) => {
+  const source = value && typeof value === 'object' ? value : {};
+  return {
+    skinTone: AVATAR_SKIN_OPTIONS.some((option) => option.value === source.skinTone) ? source.skinTone : DEFAULT_AVATAR_APPEARANCE.skinTone,
+    headStyle: AVATAR_HEAD_OPTIONS.some((option) => option.id === source.headStyle) ? source.headStyle : DEFAULT_AVATAR_APPEARANCE.headStyle,
+    outfitColor: AVATAR_OUTFIT_OPTIONS.some((option) => option.value === source.outfitColor) ? source.outfitColor : null,
+  };
+};
+const scoreMeetingResponses = (messages = []) => {
+  const constructive = /\b(plan|timeline|budget|evidence|listen|include|publish|follow[- ]?up|accountab|data|service|proposal|cost|measure|respect|agree)\b/i;
+  const dismissive = /\b(ignore|silence|shut up|punish|liar|enemy|useless|they all|never listen)\b/i;
+  let score = 0;
+  for (const message of messages) {
+    if (!['speech', 'reply'].includes(message?.kind)) continue;
+    const body = String(message.body || message.message || '');
+    if (constructive.test(body) && !dismissive.test(body)) score += 1;
+    else if (dismissive.test(body) && !constructive.test(body)) score -= 1;
+  }
+  return clamp(score, -3, 3);
+};
+const focusWorldOnMobile = (block = 'center') => {
+  if (block === 'start' || window.matchMedia?.('(max-width: 1030px)').matches) {
+    window.setTimeout(() => document.querySelector('.world-view-frame')?.scrollIntoView({ behavior: 'smooth', block }), 80);
   }
 };
 const defaultProfile = {
-  started: false, alias: 'New Candidate', party: PARTY_OPTIONS[0].name,
+  started: false, roleMode: 'political', institution: null,
+  alias: 'New Candidate', party: PARTY_OPTIONS[0].name, partyId: PARTY_OPTIONS[0].id,
   partyTag: PARTY_OPTIONS[0].tag, color: PARTY_OPTIONS[0].color,
   cash: 1_000_000, trust: 32, influence: 12, integrity: 78,
   coalition: 1, energy: 88, scandals: 0, evidence: 0, wins: 0,
-  lastContest: null, legalBoost: false, completed: false, completedSideStories: [],
+  currentOffice: null, lastContest: null, legalBoost: false, completed: false,
+  appearance: DEFAULT_AVATAR_APPEARANCE,
 };
+
+function migrateProfile(stored = {}) {
+  const party = PARTY_OPTIONS.find((item) => item.id === stored.partyId || item.name === stored.party) || PARTY_OPTIONS[0];
+  const cash = Number.isFinite(stored.cash) ? Math.max(0, Math.floor(stored.cash)) : defaultProfile.cash;
+  const role = INSTITUTION_ROLES.find((item) => item.id === stored.institution);
+  const institutional = stored.roleMode === 'institutional' && Boolean(role);
+  const base = { ...defaultProfile, ...stored, cash };
+  if (institutional) return {
+    ...base, roleMode: 'institutional', institution: role.id, party: null, partyId: null, partyTag: null,
+    color: role.color, currentOffice: null, appearance: normalizeAvatarAppearance(stored.appearance),
+  };
+  return {
+    ...base, roleMode: 'political', institution: null,
+    party: party.name, partyId: party.id, partyTag: party.tag, color: party.color,
+    currentOffice: stored.currentOffice && typeof stored.currentOffice === 'object' ? stored.currentOffice : null,
+    appearance: normalizeAvatarAppearance(stored.appearance),
+  };
+}
 
 function loadSave() {
   try {
@@ -59,22 +122,6 @@ function loadAuthSession() {
     const value = JSON.parse(window.localStorage.getItem(AUTH_SAVE_KEY) || 'null');
     return value && typeof value === 'object' && value.access_token ? value : null;
   } catch { return null; }
-}
-
-function initialProgressByTrack(boot) {
-  const result = Object.fromEntries(CAREER_TRACKS.map((track) => [track.id, { stageIndex: 0, missionProgress: 0 }]));
-  for (const track of CAREER_TRACKS) {
-    const saved = boot?.progressByTrack?.[track.id];
-    if (saved && typeof saved === 'object') result[track.id] = {
-      stageIndex: clamp(Number.isInteger(saved.stageIndex) ? saved.stageIndex : 0, 0, track.stages.length - 1),
-      missionProgress: clamp(Number.isInteger(saved.missionProgress) ? saved.missionProgress : 0, 0, 3),
-    };
-  }
-  if (!boot?.progressByTrack?.politics) result.politics = {
-    stageIndex: Number.isInteger(boot?.stageIndex) ? clamp(boot.stageIndex, 0, CHAPTERS.length - 1) : 0,
-    missionProgress: Number.isInteger(boot?.missionProgress) ? clamp(boot.missionProgress, 0, 3) : 0,
-  };
-  return result;
 }
 
 function dateLabel(day) {
@@ -99,26 +146,113 @@ const ACTIONS = [
   { id: 'rally', label: 'Public rally', detail: 'Make the case · ₦90k', cost: 90_000, energy: 12, icon: Megaphone, color: 'rose' },
 ];
 
+const INSTITUTION_ROLES = [
+  {
+    id: 'election-admin',
+    title: 'Election administration',
+    personnelLabel: 'INEC / SIEC personnel',
+    agency: 'INEC · SIEC',
+    color: '#8fe2dc',
+    venueId: 'inec-office',
+    description: 'A fictional, non-partisan election-administration story role. INEC administers federal and state elections and FCT Area Council elections; state SIECs administer local-government elections in their states.',
+  },
+  {
+    id: 'judiciary',
+    title: 'Judiciary',
+    personnelLabel: 'Judicial personnel',
+    agency: 'JUDICIARY',
+    color: '#9db8ff',
+    venueId: 'court',
+    description: 'A fictional judiciary-side story role focused on independence, procedure and evidence. It is not a judicial appointment, judge role, legal authority or route to elected office.',
+  },
+  {
+    id: 'cbn',
+    title: 'Central banking',
+    personnelLabel: 'CBN personnel',
+    agency: 'CENTRAL BANK OF NIGERIA',
+    color: '#8cb9ff',
+    venueId: 'cbn-office',
+    description: 'A fictional central-banking story role about policy evidence and trade-offs. It does not represent employment, an appointment or authority over real monetary policy.',
+  },
+];
+
+const INSTITUTIONAL_STORY_VARIANTS = {
+  judiciary: {
+    title: 'Court process and independence',
+    classification: 'JUDICIARY PERSONNEL · FICTIONAL ROLEPLAY',
+    speaker: 'Fictional court administration colleague',
+    prompt: 'A pending election petition is attracting public pressure. Write a neutral process update that protects judicial independence, avoids commenting on the merits and points to evidence and lawful timelines.',
+    choices: {
+      'respect-process': { label: 'Use a neutral notice and avoid commenting on the case', outcome: 'The fictional court desk communicates procedure without prejudging the petition or disclosing non-public details.' },
+      'support-evidence': { label: 'Refer process questions to published rules and timelines', outcome: 'The fictional team explains evidence and procedure while leaving the decision to the court.' },
+    },
+  },
+  inec: {
+    title: 'Election procedures and public information',
+    classification: 'INEC PERSONNEL · FICTIONAL ROLEPLAY',
+    speaker: 'Fictional election-administration colleague',
+    prompt: 'An observer asks about an election procedure and public communication. As a fictional, non-partisan participant, write a clear reply that points to published rules without disclosing non-public information or taking a party side.',
+    choices: {
+      'public-process': { label: 'Point to the published procedure and official public record', outcome: 'The fictional desk explains the established public process and does not share non-public information.' },
+      'observer-access': { label: 'Support lawful observer access and consistent communication', outcome: 'The fictional team reinforces even-handed information and lawful observer access.' },
+    },
+  },
+  siec: {
+    title: 'Local elections, local rules',
+    classification: 'SIEC PERSONNEL · FICTIONAL ROLEPLAY',
+    speaker: 'Fictional state election-administration colleague',
+    prompt: 'Residents ask which body administers local-government elections. Write a careful, non-partisan reply that distinguishes the state commission from INEC and points people to the relevant state rules.',
+    choices: {
+      'name-the-body': { label: 'Explain the SIEC remit and the correct public process', outcome: 'The fictional desk distinguishes the state commission’s local-election remit from INEC’s responsibilities.' },
+      'check-state-law': { label: 'Check the state law before making a procedural claim', outcome: 'The fictional team avoids overclaiming and directs residents to the applicable state rules.' },
+    },
+  },
+  cbn: {
+    title: 'Monetary policy briefing',
+    classification: 'CBN PERSONNEL · FICTIONAL ROLEPLAY',
+    speaker: 'Fictional central-bank economist',
+    prompt: 'A policy choice has competing effects on prices, growth and financial stability. Write a plain-language explanation of evidence and trade-offs while respecting the institution’s statutory independence.',
+    choices: {
+      'ask-tradeoffs': { label: 'Explain evidence, risks and trade-offs', outcome: 'The fictional briefing focuses on evidence and policy trade-offs within statutory responsibilities.' },
+      'public-explain': { label: 'Use clear language and an authorised public channel', outcome: 'The fictional team makes the policy discussion easier to understand without implying political control.' },
+    },
+  },
+};
+
+const getInstitutionRole = (id) => INSTITUTION_ROLES.find((role) => role.id === id) || INSTITUTION_ROLES[0];
+const getInstitutionStoryIds = (roleId, stateName) => roleId === 'election-admin'
+  ? stateName === 'Federal Capital Territory' ? ['inec'] : ['siec', 'inec']
+  : roleId === 'judiciary' ? ['judiciary'] : ['cbn'];
+const getInstitutionStartVenue = (roleId, stateName) => roleId === 'election-admin'
+  ? stateName === 'Federal Capital Territory' ? 'inec-office' : 'siec-office'
+  : getInstitutionRole(roleId).venueId;
+const getStorySceneForRole = (storyId, role) => {
+  const story = OTHER_SIDE_STORIES.find((item) => item.id === storyId);
+  if (!story || !role) return story;
+  const variant = INSTITUTIONAL_STORY_VARIANTS[storyId];
+  if (!variant) return story;
+  return {
+    ...story,
+    title: variant.title,
+    classification: variant.classification,
+    speaker: variant.speaker,
+    prompt: `${variant.prompt} Your character remains fictional ${role.personnelLabel.toLowerCase()}; this scene grants no real authority or appointment.`,
+    choices: story.choices.map((choice) => ({ ...choice, ...(variant.choices?.[choice.id] || {}) })),
+  };
+};
+
 function App() {
   const bootRef = useRef(undefined);
   if (bootRef.current === undefined) bootRef.current = loadSave();
   const boot = bootRef.current;
-  const [profile, setProfile] = useState(boot?.profile || defaultProfile);
-  const [careerTrack, setCareerTrack] = useState(CAREER_TRACKS.some((track) => track.id === boot?.careerTrack) ? boot.careerTrack : DEFAULT_CAREER_TRACK);
-  const [progressByTrack, setProgressByTrack] = useState(() => initialProgressByTrack(boot));
-  const activeCareerTrack = getCareerTrack(careerTrack);
-  const activeCareerStages = activeCareerTrack.stages;
-  const stageIndex = Math.min(progressByTrack[careerTrack]?.stageIndex || 0, activeCareerStages.length - 1);
-  const missionProgress = progressByTrack[careerTrack]?.missionProgress || 0;
-  const updateTrackProgress = (field, value) => setProgressByTrack((current) => {
-    const prior = current[careerTrack] || { stageIndex: 0, missionProgress: 0 };
-    const nextValue = typeof value === 'function' ? value(prior[field]) : value;
-    return { ...current, [careerTrack]: { ...prior, [field]: nextValue } };
-  });
-  const setStageIndex = (value) => updateTrackProgress('stageIndex', value);
-  const setMissionProgress = (value) => updateTrackProgress('missionProgress', value);
+  const bootStateName = STATES.some((item) => item.name === boot?.state) ? boot.state : 'Lagos';
+  const initialParty = PARTY_OPTIONS.find((item) => item.id === boot?.profile?.partyId || item.name === boot?.profile?.party) || PARTY_OPTIONS[0];
+  const [profile, setProfile] = useState(() => migrateProfile(boot?.profile || {}));
+  const [stageIndex, setStageIndex] = useState(Number.isInteger(boot?.stageIndex) ? clamp(boot.stageIndex, 0, CHAPTERS.length - 1) : 0);
+  const [missionProgress, setMissionProgress] = useState(Number.isFinite(boot?.missionProgress) ? clamp(boot.missionProgress, 0, 3) : 0);
   const [storyDay, setStoryDay] = useState(Number.isFinite(boot?.storyDay) ? Math.max(1, boot.storyDay) : 1);
-  const [selectedStateName, setSelectedStateName] = useState(STATES.some((item) => item.name === boot?.state) ? boot.state : 'Lagos');
+  const [worldMinute, setWorldMinute] = useState(15 * 60 + 42);
+  const [selectedStateName, setSelectedStateName] = useState(bootStateName);
   const [stateLocalities, setStateLocalities] = useState(null);
   const [localityLoading, setLocalityLoading] = useState(true);
   const [localityError, setLocalityError] = useState('');
@@ -126,22 +260,27 @@ function App() {
   const [selectedWardKey, setSelectedWardKey] = useState('');
   const [communityFocusRequest, setCommunityFocusRequest] = useState(0);
   const [page, setPage] = useState('world');
-  const [activeVenueId, setActiveVenueId] = useState('square');
+  const [immersiveMode, setImmersiveMode] = useState(true);
+  const [navigationOpen, setNavigationOpen] = useState(false);
+  const [phoneOpen, setPhoneOpen] = useState(false);
+  const [activeVenueId, setActiveVenueId] = useState(() => boot?.profile?.roleMode === 'institutional' && INSTITUTION_ROLES.some((role) => role.id === boot?.profile?.institution) ? getInstitutionStartVenue(boot.profile.institution, bootStateName) : 'square');
   const [venueFocusRequest, setVenueFocusRequest] = useState(0);
   const [feed, setFeed] = useState([
     { id: 'start-1', title: 'The campaign begins', text: 'A new candidate enters the ward with an in-game ₦1,000,000 seed fund.', type: 'start', time: 'DAY 01' },
-    { id: 'start-2', title: 'A note on the world', text: 'Original fictional parties, characters, and outcomes. The game does not predict real 2027 results.', type: 'note', time: 'BRIEFING' },
+    { id: 'start-2', title: 'A note on the world', text: 'Party names and logos follow the dated INEC register; local branches, candidates and outcomes are fictional. The game does not predict real 2027 results.', type: 'note', time: 'BRIEFING' },
   ]);
   const [toast, setToast] = useState('');
   const [modal, setModal] = useState(null);
-  const [authConfig, setAuthConfig] = useState({ authEnabled: false, persistenceEnabled: false, accountProvider: null });
+  const [authConfig, setAuthConfig] = useState({ authEnabled: false, persistenceConfigured: false, persistenceEnabled: false, accountProvider: null });
   const [authSession, setAuthSession] = useState(() => loadAuthSession());
   const [authReady, setAuthReady] = useState(false);
-  const [cloudProfileReady, setCloudProfileReady] = useState(() => !loadAuthSession()?.access_token);
+  const [accountProfileReady, setAccountProfileReady] = useState(() => !loadAuthSession());
   const [authBusy, setAuthBusy] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(!boot?.profile?.started);
   const [draftAlias, setDraftAlias] = useState(boot?.profile?.alias && boot.profile.alias !== 'New Candidate' ? boot.profile.alias : '');
-  const [draftParty, setDraftParty] = useState(boot?.profile?.party || PARTY_OPTIONS[0].name);
+  const [draftParty, setDraftParty] = useState(initialParty.name);
+  const [draftMode, setDraftMode] = useState(boot?.profile?.roleMode === 'institutional' ? 'institutional' : 'political');
+  const [draftInstitution, setDraftInstitution] = useState(INSTITUTION_ROLES.some((role) => role.id === boot?.profile?.institution) ? boot.profile.institution : 'election-admin');
   const [draftState, setDraftState] = useState(STATES.some((item) => item.name === boot?.state) ? boot.state : 'Lagos');
   const [chatDraft, setChatDraft] = useState('');
   const [chatMessages, setChatMessages] = useState([
@@ -154,6 +293,7 @@ function App() {
   const [activeMeeting, setActiveMeeting] = useState(null);
   const [meetingMessages, setMeetingMessages] = useState([]);
   const [meetingParticipants, setMeetingParticipants] = useState([]);
+  const [meetingPhase, setMeetingPhase] = useState('idle');
   const [meetingVotes, setMeetingVotes] = useState({ support: 0, mixed: 0, concern: 0 });
   const [meetingDraft, setMeetingDraft] = useState('');
   const [meetingReplyTo, setMeetingReplyTo] = useState(null);
@@ -161,17 +301,33 @@ function App() {
   const [dmDraft, setDmDraft] = useState('');
   const [selectedDmPeer, setSelectedDmPeer] = useState(null);
   const [incomingInvite, setIncomingInvite] = useState(null);
+  const [sideStoriesSeen, setSideStoriesSeen] = useState(Array.isArray(boot?.sideStoriesSeen) ? boot.sideStoriesSeen.filter((id) => typeof id === 'string').slice(0, 32) : []);
   const [consultIndex, setConsultIndex] = useState(0);
   const [atlasQuery, setAtlasQuery] = useState('');
   const [selectedZone, setSelectedZone] = useState('All');
   const socketRef = useRef(null);
   const worldConfigRef = useRef(null);
   const activeMeetingRef = useRef(null);
+  const meetingArrivalIdRef = useRef(null);
+  const meetingDestinationRef = useRef(null);
+  const resolveCampaignMeetingRef = useRef(null);
   const resolvedMeetingsRef = useRef(new Set());
   const cloudRestoreAttemptedRef = useRef(false);
+  const guestBackupSavedRef = useRef(false);
   activeMeetingRef.current = activeMeeting;
 
-  const currentChapter = activeCareerStages[Math.min(stageIndex, activeCareerStages.length - 1)];
+  useEffect(() => {
+    const interval = window.setInterval(() => setWorldMinute((minute) => (minute + 2) % 1440), 10_000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    if (boot?.profile?.started && boot.profile.roleMode === 'institutional' && INSTITUTION_ROLES.some((role) => role.id === boot.profile.institution)) {
+      setVenueFocusRequest((request) => request + 1);
+    }
+  }, []);
+
+  const currentChapter = CHAPTERS[Math.min(stageIndex, CHAPTERS.length - 1)];
   const stateInfo = STATES.find((item) => item.name === selectedStateName) || STATES[0];
   const stateWorldProfile = STATE_WORLD_PROFILES[stateInfo.name] || STATE_WORLD_PROFILES.Lagos;
   const currentLga = stateLocalities?.state === stateInfo.name ? stateLocalities.lgas?.find((item) => item.name === selectedLgaName) || null : null;
@@ -181,8 +337,12 @@ function App() {
   const isCapitalLga = Boolean(currentLga && (currentLga.name === CAPITAL_LGA_BY_STATE[stateInfo.name] || currentLgaSlug.includes(capitalSlug) || capitalSlug.includes(currentLgaSlug)));
   const sceneLocality = currentWard && currentLga ? { state: stateInfo.name, lga: currentLga.name, ward: currentWard.name, lat: currentWard.lat, lon: currentWard.lon, settlement: isCapitalLga ? 'capital' : 'local' } : null;
   const sceneLocationKey = `${sceneLocality ? `${sceneLocality.state}/${sceneLocality.lga}/${sceneLocality.ward}/${sceneLocality.lat}/${sceneLocality.lon}` : `${stateInfo.name}/capital`}/${communityFocusRequest}`;
-  const activeVenue = WORLD_VENUES.find((item) => item.id === activeVenueId) || WORLD_VENUES[1];
-  const currentParty = PARTY_OPTIONS.find((item) => item.name === profile.party) || PARTY_OPTIONS[0];
+  const activeVenue = WORLD_VENUES.find((item) => item.id === activeVenueId) || WORLD_VENUES.find((item) => item.id === 'square') || WORLD_VENUES[0];
+  const isInstitutional = profile.roleMode === 'institutional';
+  const institutionRole = isInstitutional ? getInstitutionRole(profile.institution) : null;
+  const currentParty = isInstitutional ? null : PARTY_OPTIONS.find((item) => item.name === profile.party) || PARTY_OPTIONS[0];
+  const playerColor = profile.color || currentParty?.color || institutionRole?.color || PARTY_OPTIONS[0].color;
+  const playerAppearance = profile.appearance || DEFAULT_AVATAR_APPEARANCE;
   const progressPercent = Math.min(100, (missionProgress / 3) * 100);
   const daysToFederal = Math.ceil((new Date('2027-01-16T00:00:00+01:00').getTime() - Date.now()) / 86_400_000);
   const daysToState = Math.ceil((new Date('2027-02-06T00:00:00+01:00').getTime() - Date.now()) / 86_400_000);
@@ -209,9 +369,13 @@ function App() {
         const configuredCapitalLga = CAPITAL_LGA_BY_STATE[stateInfo.name];
         const capitalLga = lgas.find((item) => item.name === configuredCapitalLga) || lgas.find((item) => locationSlug(item.name).includes(capitalSlug) || capitalSlug.includes(locationSlug(item.name)));
         const firstLga = capitalLga || lgas[0];
+        const destination = meetingDestinationRef.current;
+        const destinationLga = destination?.state === stateInfo.name ? lgas.find((item) => item.name === destination.lga) : null;
+        const destinationWard = destinationLga?.wards?.find((item) => item.name === destination.ward) || null;
         setStateLocalities({ ...payload, lgas });
-        setSelectedLgaName(firstLga?.name || '');
-        setSelectedWardKey(wardKey(firstLga?.wards?.[0]));
+        setSelectedLgaName(destinationWard ? destinationLga.name : firstLga?.name || '');
+        setSelectedWardKey(wardKey(destinationWard || firstLga?.wards?.[0]));
+        if (destinationWard) meetingDestinationRef.current = null;
       })
       .catch((error) => {
         if (active && error.name !== 'AbortError') setLocalityError('The local directory could not be loaded. The 3D capital remains available; try reloading the page.');
@@ -222,14 +386,14 @@ function App() {
 
   useEffect(() => {
     if (!profile.started) return;
-    try { window.localStorage.setItem(SAVE_KEY, JSON.stringify({ profile, careerTrack, progressByTrack, stageIndex, missionProgress, storyDay, state: selectedStateName })); }
+    try { window.localStorage.setItem(SAVE_KEY, JSON.stringify({ profile, stageIndex, missionProgress, storyDay, state: selectedStateName, sideStoriesSeen })); }
     catch { /* Local save is optional in private browsing. */ }
-  }, [profile, careerTrack, progressByTrack, stageIndex, missionProgress, storyDay, selectedStateName]);
+  }, [profile, stageIndex, missionProgress, storyDay, selectedStateName, sideStoriesSeen]);
 
   useEffect(() => {
     let active = true;
     const start = async () => {
-      let config = { authEnabled: false, persistenceEnabled: false, accountProvider: null };
+      let config = { authEnabled: false, persistenceConfigured: false, persistenceEnabled: false, accountProvider: null };
       try {
         const configResponse = await fetch('/api/config');
         if (configResponse.ok) config = { ...config, ...(await configResponse.json()) };
@@ -257,19 +421,33 @@ function App() {
       }
       if (!active) return;
       setAuthReady(true);
-      if (session?.access_token && config.persistenceEnabled && !cloudRestoreAttemptedRef.current) {
-        cloudRestoreAttemptedRef.current = true;
-        try {
-          const response = await fetch('/api/profile', { headers: { Authorization: `Bearer ${session.access_token}` } });
-          const result = response.ok ? await response.json() : null;
-          if (active && result?.save?.profile?.started) restoreCloudSave(result.save, true);
-        } catch { /* A local campaign remains usable when the database is temporarily unavailable. */ }
-        if (active) setCloudProfileReady(true);
-      } else setCloudProfileReady(true);
+      setAccountProfileReady(!(session?.access_token && config.persistenceEnabled));
     };
     start();
     return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    if (!authReady) return undefined;
+    if (!authSession?.access_token || !authConfig.persistenceEnabled) { setAccountProfileReady(true); return undefined; }
+    if (accountProfileReady) return undefined;
+    let active = true;
+    let retryTimer;
+    const loadProfile = async () => {
+      try {
+        const response = await fetch('/api/profile', { headers: { Authorization: `Bearer ${authSession.access_token}` } });
+        if (!response.ok) throw new Error('Profile load unavailable');
+        const result = await response.json();
+        if (!active) return;
+        if (result?.save?.profile?.started && !cloudRestoreAttemptedRef.current) restoreCloudSave(result.save, true);
+        setAccountProfileReady(true);
+      } catch {
+        if (active) retryTimer = window.setTimeout(loadProfile, 12_000);
+      }
+    };
+    loadProfile();
+    return () => { active = false; window.clearTimeout(retryTimer); };
+  }, [authReady, authSession?.access_token, authConfig.persistenceEnabled, accountProfileReady]);
 
   useEffect(() => {
     if (!authReady) return;
@@ -280,15 +458,30 @@ function App() {
   }, [authSession, authReady]);
 
   useEffect(() => {
-    if (!authReady || !cloudProfileReady || !authSession?.access_token || !authConfig.persistenceEnabled || !profile.started) return undefined;
+    if (!authReady || !authSession?.refresh_token) return undefined;
+    const expirySeconds = Number(authSession.expires_at) || Math.floor(Date.now() / 1000) + Number(authSession.expires_in || 3600);
+    const delay = Math.max(1_000, expirySeconds * 1000 - Date.now() - 60_000);
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await fetch('/api/auth/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refresh_token: authSession.refresh_token }) });
+        const result = response.ok ? await response.json() : null;
+        if (result?.session?.access_token) setAuthSession({ ...result.session, expires_at: Number(result.session.expires_at) || Math.floor(Date.now() / 1000) + Number(result.session.expires_in || 3600), user: result.session.user || authSession.user || null });
+        else if (response.status === 400 || response.status === 401) { setAuthSession(null); setToast('Account session expired · sign in again to resume cloud saves'); }
+      } catch { /* Keep the current session available; a later request can retry. */ }
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [authReady, authSession?.refresh_token, authSession?.expires_at]);
+
+  useEffect(() => {
+    if (!accountProfileReady || !authSession?.access_token || !authConfig.persistenceEnabled || !profile.started) return undefined;
     const timer = window.setTimeout(() => {
-      const save = { profile, careerTrack, progressByTrack, storyDay, state: selectedStateName };
+      const save = { profile, stageIndex, missionProgress, storyDay, state: selectedStateName, sideStoriesSeen };
       fetch('/api/profile', { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authSession.access_token}` }, body: JSON.stringify({ save }) })
         .then((response) => { if (!response.ok) throw new Error('Account save failed'); })
         .catch(() => { /* Autosave failure does not disable the local journal. */ });
     }, 700);
     return () => window.clearTimeout(timer);
-  }, [authReady, cloudProfileReady, authSession?.access_token, authConfig.persistenceEnabled, profile, careerTrack, progressByTrack, storyDay, selectedStateName]);
+  }, [accountProfileReady, authSession?.access_token, authConfig.persistenceEnabled, profile, stageIndex, missionProgress, storyDay, selectedStateName, sideStoriesSeen]);
 
   useEffect(() => {
     if (!authSession?.access_token || !authConfig.persistenceEnabled) return;
@@ -338,20 +531,34 @@ function App() {
       setRemotePlayers((current) => current.some((item) => item.id === player.id) ? current : [...current, player]);
       setChatMessages((current) => [{ id: `join-${player.id}`, name: 'WORLD DESK', message: `${player.name || 'A player'} joined ${player.state || 'the world'}.`, system: true, at: Date.now() }, ...current].slice(0, 50));
     });
+    socket.on('player:contact', ({ id, accountId } = {}) => { if (id) setRemotePlayers((current) => current.map((item) => item.id === id ? { ...item, accountId: accountId || null } : item)); });
     socket.on('player:left', ({ id } = {}) => setRemotePlayers((current) => current.filter((item) => item.id !== id)));
     socket.on('player:moved', ({ id, x, z } = {}) => setRemotePlayers((current) => current.map((item) => item.id === id ? { ...item, x, z } : item)));
+    socket.on('player:meeting-status', (player = {}) => {
+      if (!player.id) return;
+      setRemotePlayers((current) => current.map((item) => item.id === player.id ? { ...item, meetingId: player.meetingId || null, meetingStatus: player.meetingStatus || null, meetingSlot: player.meetingSlot ?? null } : item));
+    });
     socket.on('world:chat', (message) => setChatMessages((current) => [message, ...current].slice(0, 50)));
     socket.on('meeting:list', (list) => setAvailableMeetings(Array.isArray(list) ? list : []));
     socket.on('meeting:snapshot', (payload = {}) => {
       if (!payload.meeting) return;
+      const roster = Array.isArray(payload.participants) ? payload.participants : [];
+      const self = roster.find((person) => person.id === socketRef.current?.id);
+      const alreadyAtVenue = ['at-venue', 'in-session'].includes(self?.meetingStatus);
+      meetingArrivalIdRef.current = payload.meeting.status === 'open' && !alreadyAtVenue ? payload.meeting.id : null;
+      setMeetingPhase(payload.meeting.status === 'open' ? alreadyAtVenue ? 'at-venue' : 'en-route' : 'discussion');
       setActiveMeeting({ ...payload.meeting, local: false });
       setMeetingMessages(Array.isArray(payload.messages) ? payload.messages : []);
-      setMeetingParticipants(Array.isArray(payload.participants) ? payload.participants : []);
+      setMeetingParticipants(roster);
       setMeetingVotes(payload.meeting.votes || { support: 0, mixed: 0, concern: 0 });
       setMeetingDraft(''); setMeetingReplyTo(null);
     });
     socket.on('meeting:message', (message) => setMeetingMessages((current) => current.some((item) => item.id === message.id) ? current : [...current, message].slice(-100)));
-    socket.on('meeting:participants', (participants) => setMeetingParticipants(Array.isArray(participants) ? participants : []));
+    socket.on('meeting:participants', (participants) => {
+      const roster = Array.isArray(participants) ? participants : [];
+      setMeetingParticipants(roster);
+      setActiveMeeting((current) => current ? { ...current, participants: roster.length, interested: roster.length, enRoute: roster.filter((item) => item.meetingStatus === 'en-route').length, atVenue: roster.filter((item) => ['at-venue', 'in-session'].includes(item.meetingStatus)).length, inSession: roster.filter((item) => item.meetingStatus === 'in-session').length } : current);
+    });
     socket.on('meeting:update', (payload = {}) => {
       if (payload.meeting) setActiveMeeting((current) => current?.id === payload.meeting.id ? { ...current, ...payload.meeting, isHost: current.isHost } : current);
       if (payload.votes) setMeetingVotes(payload.votes);
@@ -360,13 +567,13 @@ function App() {
     socket.on('meeting:closed', (payload = {}) => {
       const current = activeMeetingRef.current;
       if (payload.meeting) setActiveMeeting((existing) => existing?.id === payload.meeting.id ? { ...existing, ...payload.meeting, status: 'closed', outcome: payload.outcome || payload.meeting.outcome } : existing);
+      if (payload.meeting?.id === current?.id) { meetingArrivalIdRef.current = null; setMeetingPhase('discussion'); }
       if (payload.outcome?.votes) setMeetingVotes(payload.outcome.votes);
-      if (current?.id === payload.meeting?.id && current.isHost && current.actionId) resolveCampaignMeeting(current, payload.outcome);
+      if (current?.id === payload.meeting?.id && current.isHost && current.actionId) resolveCampaignMeetingRef.current?.(current, payload.outcome);
     });
     socket.on('meeting:invite', (invite) => { setIncomingInvite(invite); setModal({ type: 'meeting-invite', invite }); });
     socket.on('meeting:error', (payload = {}) => showToast(payload.message || 'Meeting action could not be completed.'));
     socket.on('dm:message', (message) => setDmMessages((current) => current.some((item) => item.id === message.id) ? current : [...current, message].slice(-150)));
-    socket.on('dm:peer', ({ peerId, peerAccountId } = {}) => setSelectedDmPeer((current) => current?.id === peerId ? { ...current, accountId: peerAccountId } : current));
     return () => { socket.removeAllListeners(); socket.disconnect(); socketRef.current = null; };
   }, [authReady, authSession?.access_token]);
 
@@ -387,18 +594,48 @@ function App() {
     setFeed((items) => [{ id: `${Date.now()}-${Math.random()}`, title, text, type, time: `DAY ${String(storyDay).padStart(2, '0')}` }, ...items].slice(0, 8));
   };
   const showToast = (message) => setToast(message);
+  const saveAvatarAppearance = (appearance) => {
+    setProfile((current) => ({ ...current, appearance: normalizeAvatarAppearance(appearance) }));
+    setModal(null);
+    showToast('Avatar look saved to this story');
+  };
+  const immersiveActive = page === 'world' && immersiveMode;
+  const closeWorldPanels = () => { setNavigationOpen(false); setPhoneOpen(false); };
+  const openPhonePanel = () => { setPage('world'); setImmersiveMode(true); setNavigationOpen(false); setPhoneOpen(true); };
+  const openMobileWorld = () => { setPage('world'); setImmersiveMode(true); closeWorldPanels(); };
+  const navigateMobile = (nextPage) => { setPage(nextPage); closeWorldPanels(); };
+  useEffect(() => {
+    if (!navigationOpen && !phoneOpen) return undefined;
+    const onKeyDown = (event) => { if (event.key === 'Escape') closeWorldPanels(); };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [navigationOpen, phoneOpen]);
   const increaseProgress = () => setMissionProgress((current) => Math.min(3, current + 1));
 
   const restoreCloudSave = (save, silent = false) => {
     if (!save || typeof save !== 'object') return false;
-    setProfile({ ...defaultProfile, ...(save.profile || {}), started: true });
-    const nextTrack = CAREER_TRACKS.some((track) => track.id === save.careerTrack) ? save.careerTrack : DEFAULT_CAREER_TRACK;
-    setCareerTrack(nextTrack);
-    setProgressByTrack(initialProgressByTrack(save));
+    cloudRestoreAttemptedRef.current = true;
+    if (profile.started && !guestBackupSavedRef.current) {
+      try { window.localStorage.setItem(`${SAVE_KEY}-before-account-link`, JSON.stringify({ profile, stageIndex, missionProgress, storyDay, state: selectedStateName, sideStoriesSeen })); guestBackupSavedRef.current = true; }
+      catch { /* A local backup is best-effort. */ }
+    }
+    const restoredProfile = migrateProfile({ ...(save.profile || {}), started: true });
+    setProfile(restoredProfile);
+    setDraftParty(restoredProfile.party || PARTY_OPTIONS[0].name);
+    setDraftMode(restoredProfile.roleMode === 'institutional' ? 'institutional' : 'political');
+    setDraftInstitution(restoredProfile.institution || 'election-admin');
+    setStageIndex(clamp(Number.isInteger(save.stageIndex) ? save.stageIndex : 0, 0, CHAPTERS.length - 1));
+    setMissionProgress(clamp(Number.isInteger(save.missionProgress) ? save.missionProgress : 0, 0, 3));
+    setSideStoriesSeen(Array.isArray(save.sideStoriesSeen) ? save.sideStoriesSeen : []);
     setStoryDay(Math.max(1, Number(save.storyDay) || 1));
-    setSelectedStateName(STATES.some((item) => item.name === save.state) ? save.state : 'Lagos');
+    const restoredState = STATES.some((item) => item.name === save.state) ? save.state : 'Lagos';
+    setSelectedStateName(restoredState);
+    if (restoredProfile.roleMode === 'institutional') {
+      setActiveVenueId(getInstitutionStartVenue(restoredProfile.institution, restoredState));
+      setVenueFocusRequest((request) => request + 1);
+    }
     setDraftAlias(save.profile?.alias || '');
-    setOnboardingOpen(false); setModal(null);
+    setOnboardingOpen(false); setModal(null); setAccountProfileReady(true);
     if (!silent) showToast('Account career restored from the cloud');
     return true;
   };
@@ -417,20 +654,26 @@ function App() {
       if (result.confirmationRequired || !result.session?.access_token) {
         return { ok: false, error: 'Account created. Confirm your email, then sign in to continue.' };
       }
-      const session = { ...result.session, user: result.session.user || result.user || null };
-      setCloudProfileReady(false);
-      setAuthSession(session);
-      let save = null;
-      if (authConfig.persistenceEnabled) {
-        const profileResponse = await fetch('/api/profile', { headers: { Authorization: `Bearer ${session.access_token}` } });
-        const profileResult = profileResponse.ok ? await profileResponse.json().catch(() => null) : null;
-        save = profileResult?.save || null;
+      const session = { ...result.session, expires_at: Number(result.session.expires_at) || Math.floor(Date.now() / 1000) + Number(result.session.expires_in || 3600), user: result.session.user || result.user || null };
+      cloudRestoreAttemptedRef.current = false; guestBackupSavedRef.current = false;
+      if (profile.started) {
+        try { window.localStorage.setItem(`${SAVE_KEY}-before-account-link`, JSON.stringify({ profile, stageIndex, missionProgress, storyDay, state: selectedStateName, sideStoriesSeen })); guestBackupSavedRef.current = true; }
+        catch { /* A local backup is best-effort. */ }
       }
-      if (save?.profile?.started) restoreCloudSave(save, true);
-      setCloudProfileReady(true);
-      return { ok: true, session, save };
+      setAccountProfileReady(false); setAuthSession(session);
+      let save = null;
+      let profileChecked = !authConfig.persistenceEnabled;
+      if (authConfig.persistenceEnabled) {
+        try {
+          const profileResponse = await fetch('/api/profile', { headers: { Authorization: `Bearer ${session.access_token}` } });
+          profileChecked = profileResponse.ok;
+          const profileResult = profileChecked ? await profileResponse.json().catch(() => null) : null;
+          save = profileResult?.save || null;
+          if (profileChecked && profileResult?.save?.profile?.started) cloudRestoreAttemptedRef.current = true;
+        } catch { profileChecked = false; }
+      }
+      return { ok: true, session, save, profileChecked };
     } catch {
-      setCloudProfileReady(true);
       return { ok: false, error: 'Could not reach the account service. Your local campaign is still available.' };
     } finally { setAuthBusy(false); }
   };
@@ -438,23 +681,71 @@ function App() {
   const signOut = async () => {
     const token = authSession?.access_token;
     if (token) fetch('/api/auth/logout', { method: 'POST', headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
-    setAuthSession(null); setCloudProfileReady(true); setDmMessages([]); setToast('Signed out · local campaign remains on this device'); setModal(null);
+    setAuthSession(null); setAccountProfileReady(true); setDmMessages([]); setToast('Signed out · local campaign remains on this device'); setModal(null);
   };
 
   const startCandidate = () => {
+    const roleMode = draftMode === 'institutional' ? 'institutional' : 'political';
+    const role = getInstitutionRole(draftInstitution);
     const party = PARTY_OPTIONS.find((item) => item.name === draftParty) || PARTY_OPTIONS[0];
     const alias = draftAlias.trim().slice(0, 26) || 'New Candidate';
-    setProfile({ ...defaultProfile, started: true, alias, party: party.name, partyTag: party.tag, color: party.color, cash: 1_000_000 });
-    setCareerTrack(DEFAULT_CAREER_TRACK); setProgressByTrack(initialProgressByTrack(null)); setStoryDay(1); setSelectedStateName(draftState); setActiveVenueId('square'); setOnboardingOpen(false);
-    setFeed([{ id: `${Date.now()}-welcome`, title: 'Civic story begins', text: `₦1,000,000 fictional seed fund added. Start with the shared youth/community chapter, then choose a professional branch.`, type: 'start', time: 'DAY 01' }]);
-    setToast(authSession ? 'Career launched · ₦1,000,000 in-game seed fund' : 'Guest career launched · ₦1,000,000 in-game seed fund');
+    const venueId = roleMode === 'institutional' ? getInstitutionStartVenue(role.id, draftState) : 'square';
+    setProfile({
+      ...defaultProfile,
+      started: true,
+      roleMode,
+      institution: roleMode === 'institutional' ? role.id : null,
+      alias,
+      party: roleMode === 'political' ? party.name : null,
+      partyId: roleMode === 'political' ? party.id : null,
+      partyTag: roleMode === 'political' ? party.tag : null,
+      color: roleMode === 'political' ? party.color : role.color,
+      currentOffice: null,
+      cash: 1_000_000,
+    });
+    setStageIndex(0); setMissionProgress(0); setSideStoriesSeen([]); setStoryDay(1);
+    setSelectedStateName(draftState); setActiveVenueId(venueId); setVenueFocusRequest((request) => request + 1);
+    setOnboardingOpen(false); setModal(null); setAccountProfileReady(true);
+    const startText = roleMode === 'institutional'
+      ? `₦1,000,000 fictional story funds added. You begin as fictional ${role.personnelLabel.toLowerCase()} in a non-partisan roleplay—no real appointment or authority. The single political ladder remains optional; you can join it later through a registered party.`
+      : `₦1,000,000 fictional seed fund added. Begin with the shared civic chapter and continue up one political ladder; judiciary, election administration and CBN remain optional story encounters.`;
+    setFeed([{ id: `${Date.now()}-welcome`, title: roleMode === 'institutional' ? 'Institutional story begins' : 'Civic story begins', text: startText, type: 'start', time: 'DAY 01' }]);
+    setToast(roleMode === 'institutional'
+      ? `${authSession ? 'Story' : 'Guest story'} role launched · ₦1,000,000 in-game funds`
+      : `${authSession ? 'Career' : 'Guest career'} launched · ₦1,000,000 in-game seed fund`);
   };
 
-  const createNewCandidate = () => { setDraftAlias(''); setDraftParty(PARTY_OPTIONS[0].name); setDraftState(selectedStateName); setOnboardingOpen(true); };
+  const requestPoliticalSwitch = () => {
+    if (!isInstitutional) return;
+    setModal({ type: 'join-party' });
+  };
+
+  const joinPoliticalLadder = (partyId) => {
+    const party = PARTY_OPTIONS.find((item) => item.id === partyId) || PARTY_OPTIONS[0];
+    if (!isInstitutional) { showToast('Your character is already on the political ladder.'); setModal(null); return; }
+    setProfile((current) => ({
+      ...current,
+      roleMode: 'political', institution: null,
+      party: party.name, partyId: party.id, partyTag: party.tag, color: party.color,
+      currentOffice: null, lastContest: null, legalBoost: false, completed: false,
+    }));
+    setStageIndex(0); setMissionProgress(0); setActiveVenueId('square');
+    setVenueFocusRequest((request) => request + 1); setPage('world'); setModal(null);
+    setStoryDay((day) => day + 1);
+    addFeed('Entered the single political ladder', `You voluntarily joined ${party.name} (${party.tag}) using the registered-party snapshot. Chapter 1 begins with no office; every later political position still requires a paid, contested process. Your fictional funds and civic-story record remain.`, 'start');
+    setToast(`Political ladder joined · ${party.tag} · no office awarded`);
+    focusWorldOnMobile('start');
+  };
+
+  const createNewCandidate = () => {
+    setDraftAlias(''); setDraftParty(PARTY_OPTIONS[0].name); setDraftMode('political'); setDraftInstitution('election-admin');
+    setDraftState(selectedStateName); setOnboardingOpen(true);
+  };
 
   const actionCost = (actionId) => actionId === 'consult' ? { id: 'consult', label: 'Senior consultation', cost: 25_000, energy: 5 } : ACTIONS.find((item) => item.id === actionId);
 
   const applyStoryOutcome = (actionId, effects, narrative, typedText = '') => {
+    if (isInstitutional) { showToast('Political campaign actions are unavailable until you voluntarily join the single political ladder.'); setModal(null); return false; }
     const action = actionCost(actionId);
     if (!action) return false;
     if (profile.cash < action.cost) { showToast(`Not enough in-game funds for ${action.label.toLowerCase()}.`); setModal(null); return false; }
@@ -477,6 +768,7 @@ function App() {
   };
 
   const startCampaignAction = (actionId) => {
+    if (isInstitutional) { showToast('Campaign actions unlock only if you choose to join the single political ladder.'); return; }
     const action = actionCost(actionId);
     if (!action) return;
     if (profile.cash < action.cost) { showToast(`Not enough in-game funds for ${action.label.toLowerCase()}.`); return; }
@@ -484,14 +776,17 @@ function App() {
     const scene = CAMPAIGN_SCENES[actionId];
     if (actionId === 'listen') {
       const venue = WORLD_VENUES.find((item) => item.id === 'square');
-      setActiveVenueId('square'); setVenueFocusRequest((request) => request + 1); setPage('world'); setToast('Travelling to the community meeting'); focusWorldOnMobile();
+      setMeetingPhase('en-route'); meetingArrivalIdRef.current = null;
+      setActiveVenueId('square'); setVenueFocusRequest((request) => request + 1); setPage('world'); setToast('Travelling to the community meeting'); focusWorldOnMobile('start');
       const location = { state: selectedStateName, lga: currentLga?.name || '', ward: currentWard?.name || '', venueId: 'square', venueName: venue?.label || 'Community Square' };
       if (socketRef.current?.connected) {
         socketRef.current.emit('meeting:create', { title: 'Town hall · community priorities', topic: 'Listen to different neighbourhood concerns, deliver a short typed opening, reply to other speakers, then vote on the meeting direction.', actionId, location });
       } else {
         const id = `local-${Date.now()}`;
-        const localMeeting = { id, title: 'Town hall · community priorities', topic: 'Listen to different neighbourhood concerns, deliver a short typed opening, reply to other speakers, then vote on the meeting direction.', actionId, hostName: profile.alias, location, status: 'open', createdAt: Date.now(), participants: 1, votes: { support: 0, mixed: 0, concern: 0 }, isHost: true, local: true };
-        setActiveMeeting(localMeeting); setMeetingMessages([]); setMeetingParticipants([{ id: 'local-player', name: profile.alias, state: selectedStateName }]); setMeetingVotes({ support: 0, mixed: 0, concern: 0 });
+        const localMeeting = { id, title: 'Town hall · community priorities', topic: 'Listen to different neighbourhood concerns, deliver a short typed opening, reply to other speakers, then vote on the meeting direction.', actionId, hostName: profile.alias, location, status: 'open', createdAt: Date.now(), participants: 1, interested: 1, enRoute: 1, atVenue: 0, votes: { support: 0, mixed: 0, concern: 0 }, isHost: true, local: true };
+        meetingArrivalIdRef.current = id;
+        setMeetingPhase('en-route');
+        setActiveMeeting(localMeeting); setMeetingMessages([]); setMeetingParticipants([{ id: 'local-player', name: profile.alias, state: selectedStateName, meetingId: id, meetingStatus: 'en-route', meetingSlot: 0 }]); setMeetingVotes({ support: 0, mixed: 0, concern: 0 });
       }
       return;
     }
@@ -505,33 +800,35 @@ function App() {
     const scene = CAMPAIGN_SCENES[actionId];
     const choice = scene?.choices?.find((item) => item.id === choiceId);
     if (!choice) return;
-    applyStoryOutcome(actionId, choice.effects, choice.outcome, text);
+    const narrative = modal?.npc ? `${modal.npc.name} heard your response. ${choice.outcome}` : choice.outcome;
+    applyStoryOutcome(actionId, choice.effects, narrative, text);
   };
 
-  const openInstitutionStory = (arcId) => {
-    const arc = INSTITUTIONAL_STORY_ARCS.find((item) => item.id === arcId);
-    if (!arc) return;
-    goToVenue(arc.venueId);
-    setModal({ type: 'institution-story', arcId });
+  const openSideStory = (storyId) => {
+    const story = OTHER_SIDE_STORIES.find((item) => item.id === storyId);
+    if (!story) return;
+    setActiveVenueId(story.venueId); setVenueFocusRequest((request) => request + 1); setPage('world');
+    setModal({ type: 'side-story', storyId });
+    showToast(`Travelling to ${story.title}`); focusWorldOnMobile();
   };
 
-  const finishInstitutionStory = (arcId, text, choiceId) => {
-    const arc = INSTITUTIONAL_STORY_ARCS.find((item) => item.id === arcId);
-    const choice = arc?.choices?.find((item) => item.id === choiceId);
-    if (!arc || !choice) return;
-    const done = Array.isArray(profile.completedSideStories) ? profile.completedSideStories : [];
-    const firstTime = !done.includes(arcId);
+  const finishSideStory = (storyId, text, choiceId) => {
+    const sourceStory = OTHER_SIDE_STORIES.find((item) => item.id === storyId);
+    const story = isInstitutional ? getStorySceneForRole(storyId, institutionRole) : sourceStory;
+    const choice = story?.choices.find((item) => item.id === choiceId);
+    if (!story || !choice) return;
     setProfile((current) => ({
       ...current,
-      trust: clamp(current.trust + (firstTime ? choice.effects.trust : 0)),
-      integrity: clamp(current.integrity + (firstTime ? choice.effects.integrity : 0)),
-      influence: clamp(current.influence + (firstTime ? choice.effects.influence : 0)),
-      completedSideStories: firstTime ? [...done, arcId] : done,
+      trust: clamp(current.trust + choice.effects.trust),
+      influence: clamp(current.influence + choice.effects.influence),
+      integrity: clamp(current.integrity + choice.effects.integrity),
     }));
+    setSideStoriesSeen((current) => current.includes(storyId) ? current : [...current, storyId]);
     setStoryDay((day) => day + 1);
-    addFeed(`${arc.shortLabel} side story`, `${choice.outcome}${text.trim() ? ` Your note: “${text.trim().slice(0, 110)}”.` : ''}`, 'institution');
+    const roleNote = isInstitutional ? ' This is a fictional personnel story record; it grants no appointment, official power or political office.' : '';
+    addFeed(story.title, `${choice.outcome} Your typed response: “${text.trim().slice(0, 120)}”.${roleNote}`, 'civic-story');
     setModal(null);
-    showToast(firstTime ? `${arc.shortLabel} story recorded · the political ladder continues` : 'Side-story notes revisited · no repeated stat reward');
+    showToast(isInstitutional ? 'Institutional story recorded · no appointment or office awarded' : 'Side story recorded · political ladder unchanged');
   };
 
   const openConsultation = () => startCampaignAction('consult');
@@ -544,20 +841,22 @@ function App() {
     const concern = Number(votes.concern) || 0;
     const replies = meetingMessages.filter((item) => item.kind === 'reply').length;
     const voices = Number(outcome.participants) || meetingParticipants.length || 1;
+    const responseSignal = scoreMeetingResponses(meetingMessages);
     let effects;
     let narrative;
     if (outcome.outcome === 'supported' || support > concern) {
-      effects = { trust: 6 + Math.min(2, replies), influence: 3, integrity: 2, coalition: voices > 1 ? 2 : 1 };
-      narrative = `The town hall closed with majority support (${support} support, ${concern} concern). ${replies} replies and ${voices} participant${voices === 1 ? '' : 's'} were recorded; the response shaped the meeting record.`;
+      effects = { trust: 6 + Math.min(2, replies) + responseSignal, influence: 3, integrity: 2 + Math.max(0, responseSignal), coalition: voices > 1 ? 2 : 1 };
+      narrative = `The town hall closed with majority support (${support} support, ${concern} concern). ${replies} replies and ${voices} participant${voices === 1 ? '' : 's'} were recorded; the published response shaped the meeting record.`;
     } else if (outcome.outcome === 'rework' || concern > support) {
-      effects = { trust: -2, influence: 1, integrity: 3, coalition: 1 };
-      narrative = `Residents asked for the proposal to be reworked (${support} support, ${concern} concern). The disagreement lowered short-term trust, but the published record preserves the concerns for follow-up.`;
+      effects = { trust: -2 + responseSignal, influence: 1, integrity: 3 + Math.max(0, responseSignal), coalition: 1 };
+      narrative = `Residents asked for the proposal to be reworked (${support} support, ${concern} concern). Typed responses moderated the trust effect; the published record preserves concerns for follow-up.`;
     } else {
-      effects = { trust: 3, influence: 2, integrity: 3, coalition: voices > 1 ? 1 : 0 };
-      narrative = `The meeting ended without a clear majority. ${replies} replies were included in the minutes; the outcome is recorded as contested rather than forced into consensus.`;
+      effects = { trust: 3 + responseSignal, influence: 2, integrity: 3 + Math.max(0, responseSignal), coalition: voices > 1 ? 1 : 0 };
+      narrative = `The meeting ended without a clear majority. ${replies} replies were included in the minutes; typed responses and the room’s vote shaped a contested record rather than forced consensus.`;
     }
     applyStoryOutcome('listen', effects, narrative);
   };
+  resolveCampaignMeetingRef.current = resolveCampaignMeeting;
 
   const submitMeetingMessage = (event) => {
     event?.preventDefault?.();
@@ -565,7 +864,7 @@ function App() {
     if (!body || !activeMeeting) return;
     const kind = meetingReplyTo ? 'reply' : 'speech';
     if (activeMeeting.local) {
-      const item = { id: `local-${Date.now()}`, meetingId: activeMeeting.id, senderName: profile.alias, kind, body, replyTo: meetingReplyTo?.id || null, at: Date.now() };
+      const item = { id: `local-${Date.now()}`, meetingId: activeMeeting.id, senderId: 'local-player', senderSocketId: 'local-player', senderName: profile.alias, kind, body, replyTo: meetingReplyTo?.id || null, at: Date.now() };
       setMeetingMessages((current) => [...current, item].slice(-100));
     } else if (socketRef.current?.connected) {
       socketRef.current.emit('meeting:message', { meetingId: activeMeeting.id, kind, body, replyTo: meetingReplyTo?.id || null });
@@ -588,34 +887,93 @@ function App() {
       const concern = Number(meetingVotes.concern) || 0;
       const outcome = { outcome: support > concern ? 'supported' : concern > support ? 'rework' : 'contested', votes: meetingVotes, participants: meetingParticipants.length || 1, closedAt: Date.now() };
       setActiveMeeting((current) => ({ ...current, status: 'closed', outcome }));
+      setMeetingPhase('discussion'); meetingArrivalIdRef.current = null;
       resolveCampaignMeeting(activeMeeting, outcome);
     } else socketRef.current?.emit('meeting:close', { meetingId: activeMeeting.id, summary: 'Meeting record published by the host.' });
   };
 
   const leaveMeeting = () => {
     if (activeMeeting && !activeMeeting.local) socketRef.current?.emit('meeting:leave', { meetingId: activeMeeting.id });
+    meetingArrivalIdRef.current = null;
+    setMeetingPhase('idle');
     setActiveMeeting(null); setMeetingMessages([]); setMeetingParticipants([]); setMeetingReplyTo(null);
+  };
+
+  const markMeetingArrived = (meetingId) => {
+    if (!meetingId || meetingArrivalIdRef.current !== meetingId) return;
+    meetingArrivalIdRef.current = null;
+    setMeetingPhase('at-venue');
+    const current = activeMeetingRef.current;
+    if (current?.id === meetingId && current.local) {
+      setMeetingParticipants((participants) => participants.map((item) => item.id === 'local-player' ? { ...item, meetingStatus: 'at-venue' } : item));
+    } else if (socketRef.current?.connected) socketRef.current.emit('meeting:arrived', { meetingId });
+    showToast('At the venue · the gathering is visible in the 3D world.');
+  };
+
+  const enterMeetingDiscussion = () => {
+    if (!activeMeeting) return;
+    if (activeMeeting.status === 'open' && !['at-venue', 'discussion'].includes(meetingPhase)) {
+      showToast('Your character is still travelling. Arrive at the venue before opening the discussion.');
+      return;
+    }
+    setMeetingPhase('discussion');
+    if (activeMeeting.local) setMeetingParticipants((participants) => participants.map((person) => person.id === 'local-player' ? { ...person, meetingStatus: 'in-session' } : person));
+    else if (activeMeeting.status === 'open' && socketRef.current?.connected) socketRef.current.emit('meeting:enter', { meetingId: activeMeeting.id });
+  };
+
+  const minimizeMeetingDiscussion = () => {
+    if (!activeMeeting) return;
+    setMeetingPhase('at-venue');
+  };
+
+  const focusMeetingWorld = () => {
+    const meeting = activeMeetingRef.current;
+    if (!meeting) return;
+    setPage('world'); setImmersiveMode(true); setPhoneOpen(false); setNavigationOpen(false);
+    setActiveVenueId(meeting.location?.venueId || 'square');
+    setVenueFocusRequest((request) => request + 1);
+    if (['at-venue', 'discussion'].includes(meetingPhase)) { setMeetingPhase('at-venue'); meetingArrivalIdRef.current = null; }
+    else { setMeetingPhase('en-route'); meetingArrivalIdRef.current = meeting.id; }
+  };
+
+  const dismissMeeting = () => {
+    if (activeMeeting?.status === 'open' && activeMeeting.isHost) { closeMeeting(); return; }
+    leaveMeeting();
   };
 
   const joinMeeting = (meeting) => {
     if (!meeting?.id) return;
-    const existingMeeting = activeMeetingRef.current;
-    if (existingMeeting && existingMeeting.id !== meeting.id && !existingMeeting.local) socketRef.current?.emit('meeting:leave', { meetingId: existingMeeting.id });
+    const currentMeeting = activeMeetingRef.current;
+    if (currentMeeting?.id === meeting.id) { focusMeetingWorld(); return; }
+    if (currentMeeting && !currentMeeting.local) socketRef.current?.emit('meeting:leave', { meetingId: currentMeeting.id });
+    if (currentMeeting) { setActiveMeeting(null); setMeetingMessages([]); setMeetingParticipants([]); setMeetingPhase('idle'); }
     const location = meeting.location || {};
     const targetState = STATES.find((item) => item.name === location.state);
+    if (targetState && location.lga && location.ward) {
+      const destination = { state: targetState.name, lga: location.lga, ward: location.ward };
+      if (stateLocalities?.state === targetState.name) {
+        const targetLga = stateLocalities.lgas?.find((item) => item.name === destination.lga);
+        const targetWard = targetLga?.wards?.find((item) => item.name === destination.ward);
+        if (targetWard) { setSelectedLgaName(targetLga.name); setSelectedWardKey(wardKey(targetWard)); meetingDestinationRef.current = null; }
+        else meetingDestinationRef.current = destination;
+      } else meetingDestinationRef.current = destination;
+    }
     if (targetState && targetState.name !== selectedStateName) {
       setSelectedStateName(targetState.name); setSelectedLgaName(''); setSelectedWardKey('');
     }
-    setActiveVenueId(location.venueId || 'square'); setVenueFocusRequest((request) => request + 1); setPage('world');
+    meetingArrivalIdRef.current = meeting.id;
+    setMeetingPhase('en-route');
+    setActiveVenueId(location.venueId || 'square'); setVenueFocusRequest((request) => request + 1); setPage('world'); setImmersiveMode(true); setPhoneOpen(false); setNavigationOpen(false);
     setMeetingDraft(''); setMeetingReplyTo(null);
     if (meeting.local) {
       setActiveMeeting(meeting);
       setMeetingMessages([]);
+      setMeetingParticipants([{ id: 'local-player', name: profile.alias, state: selectedStateName, meetingId: meeting.id, meetingStatus: 'en-route', meetingSlot: 0 }]);
       return;
     }
-    if (!socketRef.current?.connected) { showToast('Connect to the world before joining this meeting.'); return; }
+    if (!socketRef.current?.connected) { meetingArrivalIdRef.current = null; setMeetingPhase('idle'); showToast('Connect to the world before joining this meeting.'); return; }
     socketRef.current.emit('meeting:join', { meetingId: meeting.id });
-    focusWorldOnMobile();
+    focusWorldOnMobile('start');
   };
 
   const sendDirectMessage = (event) => {
@@ -624,11 +982,6 @@ function App() {
     if (!body || !selectedDmPeer || !socketRef.current?.connected) return;
     socketRef.current.emit('dm:send', { recipientId: selectedDmPeer.id, message: body });
     setDmDraft('');
-  };
-
-  const selectDmPeer = (peer) => {
-    setSelectedDmPeer(peer || null);
-    if (peer?.id && socketRef.current?.connected) socketRef.current.emit('dm:lookup', { peerId: peer.id });
   };
 
   const inviteToMeeting = (peer) => {
@@ -645,6 +998,7 @@ function App() {
   };
 
   const attemptVoteBuying = () => {
+    if (isInstitutional) { showToast('Institutional roleplay is non-partisan; this campaign mechanic is unavailable.'); setModal(null); return; }
     if (profile.cash < 250_000) { showToast('The abstract risk event costs ₦250,000 in-game.'); setModal(null); return; }
     setProfile((current) => ({ ...current, cash: current.cash - 250_000, influence: clamp(current.influence + 8), trust: clamp(current.trust - 7), integrity: clamp(current.integrity - 24), scandals: current.scandals + 1, energy: clamp(current.energy - 6) }));
     increaseProgress(); setStoryDay((day) => day + 1);
@@ -691,51 +1045,48 @@ function App() {
   };
 
   const continueCareer = () => {
-    if (missionProgress < 3) { showToast('Complete three story interactions to unlock the next political stage.'); return; }
-    const nextIndex = Math.min(stageIndex + 1, activeCareerStages.length - 1);
+    if (isInstitutional) { showToast('This fictional personnel role has no promotion ladder. Institutional stories remain optional encounters; you may join the single political ladder if you choose.'); return; }
+    if (missionProgress < 3) { showToast('Complete three chapter moves to unlock the next political stage.'); return; }
+    const nextIndex = Math.min(stageIndex + 1, CHAPTERS.length - 1);
     setStageIndex(nextIndex); setMissionProgress(0); setStoryDay((day) => day + 1); setPage('world');
-    addFeed('Political chapter unlocked', `${activeCareerStages[nextIndex].title} is now open.`, 'promotion'); showToast(`Political chapter ${String(nextIndex + 1).padStart(2, '0')} unlocked`);
+    addFeed('Chapter unlocked', `${CHAPTERS[nextIndex].title} is now open.`, 'promotion'); showToast(`Chapter ${String(nextIndex + 1).padStart(2, '0')} unlocked`);
   };
 
-  const runContest = () => {
-    if (missionProgress < 3) { showToast('Complete three story interactions before the internal vote, appointment review or election.'); return; }
+  const runContest = (confirmVacating = false) => {
+    if (isInstitutional) { showToast('Institutional personnel cannot enter party contests. Voluntarily join the political ladder first.'); return; }
+    if (missionProgress < 3) { showToast('Complete three story preparations before entering the paid contest.'); return; }
     const chapter = currentChapter;
-    const appointment = chapter.kind === 'appointment';
-    const support = appointment
-      ? clamp(Math.round(profile.integrity * .5 + profile.trust * .17 + profile.influence * .1 + profile.coalition * .8 + missionProgress * 1.2 + (Math.random() * 8 - 4)), 25, 93)
-      : clamp(Math.round(20 + profile.trust * .18 + profile.influence * .2 + profile.coalition * 1.65 + profile.integrity * .05 + missionProgress * 1.55 - profile.scandals * 8 + (profile.legalBoost ? 6 : 0) + (Math.random() * 8 - 4)), 16, 89);
-    const opponent = appointment ? clamp(Math.round(51 + stageIndex * .35 + Math.random() * 8), 48, 76) : clamp(Math.round(47 + stageIndex * .78 + Math.random() * 7), 34, 78);
+    if (chapter.kind === 'story') { showToast('This opening is a civic story, not a political office or contest.'); return; }
+    const fee = Number(chapter.contestFee);
+    if (!Number.isFinite(fee) || fee <= 0) { showToast('This position is not available until a paid, contested process is configured.'); return; }
+    if (profile.cash < fee) { showToast(`This ${chapter.kind === 'appointment' ? 'merit review' : 'contest'} costs ₦${money(fee)} in-game. Build funds before entering.`); return; }
+    if (profile.currentOffice && !confirmVacating) {
+      setModal({ type: 'contest-confirm', office: profile.currentOffice, chapter, fee });
+      return;
+    }
+    const support = clamp(Math.round(20 + profile.trust * .18 + profile.influence * .2 + profile.coalition * 1.65 + profile.integrity * .05 + missionProgress * 1.55 - profile.scandals * 8 + (profile.legalBoost ? 6 : 0) + (Math.random() * 8 - 4)), 16, 89);
+    const opponent = clamp(Math.round(47 + stageIndex * .78 + Math.random() * 7), 34, 78);
     const won = support >= opponent;
-    const typeLabel = appointment ? 'FICTIONAL APPOINTMENT REVIEW' : chapter.kind === 'primary' ? 'SIMULATED INTERNAL PARTY / CAUCUS VOTE' : 'FICTIONAL PUBLIC ELECTION';
-    const contest = {
-      chapterId: chapter.id, chapterTitle: chapter.title, office: chapter.office, won, support, opponent,
-      typeLabel, supportLabel: appointment ? 'YOUR REVIEW SCORE' : chapter.kind === 'primary' ? 'YOUR DELEGATE SUPPORT' : 'YOUR SIMULATED SUPPORT',
-      opponentLabel: appointment ? 'REVIEW THRESHOLD' : chapter.kind === 'primary' ? 'RIVAL SLATE' : 'RIVAL CAMPAIGN',
-      petitioned: false, eligibleForPetition: chapter.kind === 'race', appointment,
-    };
+    const typeLabel = chapter.kind === 'primary' ? 'PAID INTERNAL CONTEST · SIMULATED' : chapter.kind === 'appointment' ? 'COMPETITIVE MERIT REVIEW · NOT A BALLOT' : 'PAID PUBLIC ELECTION · NOT A FORECAST';
+    const contest = { chapterId: chapter.id, chapterTitle: chapter.title, office: chapter.office, won, support, opponent, opponentName: 'Rival candidate', fee, typeLabel, petitioned: false, petitionEligible: chapter.kind === 'race', vacatedOffice: profile.currentOffice?.title || null };
     setStoryDay((day) => day + 2);
     if (won) {
-      const nextIndex = Math.min(stageIndex + 1, activeCareerStages.length - 1);
-      const isFinal = stageIndex === activeCareerStages.length - 1;
-      setProfile((current) => ({
-        ...current, wins: current.wins + 1,
-        trust: clamp(current.trust + (appointment ? 2 : 4)), influence: clamp(current.influence + (appointment ? 2 : 5)),
-        integrity: clamp(current.integrity + 1), coalition: clamp(current.coalition + (appointment ? 0 : 1), 0, 12), energy: clamp(current.energy + 10),
-        lastContest: chapter.kind === 'race' ? contest : current.lastContest,
-        legalBoost: false, completed: isFinal,
-      }));
-      addFeed(appointment ? `Appointment review advanced · ${chapter.office}` : `Political milestone won · ${chapter.office}`, appointment ? 'The fictional merit review advanced your political story. Real appointments require their own lawful procedures and cannot be granted by this simulation.' : `The fictional vote simulation favoured your campaign, ${support} to ${opponent}. This is not a real-world forecast.`, 'win');
+      const nextIndex = Math.min(stageIndex + 1, CHAPTERS.length - 1);
+      const label = chapter.kind === 'appointment' ? 'Competitive appointment review advanced' : chapter.kind === 'primary' ? 'Internal contest won' : 'Public contest won';
+      setProfile((current) => ({ ...current, cash: Math.max(0, current.cash - fee), currentOffice: { title: chapter.office, chapterId: chapter.id, acquiredDay: storyDay + 2, partyId: current.partyId }, wins: current.wins + 1, trust: clamp(current.trust + 4), influence: clamp(current.influence + 5), integrity: clamp(current.integrity + 1), coalition: clamp(current.coalition + 1, 0, 12), energy: clamp(current.energy + 10), lastContest: chapter.kind === 'race' ? contest : current.lastContest, legalBoost: false, completed: stageIndex === CHAPTERS.length - 1 }));
+      addFeed(`${label} · ${chapter.office}`, `Your paid contest was won ${support}–${opponent} against a rival. ${contest.vacatedOffice ? `${contest.vacatedOffice} was vacated before entry; only one current position is recorded. ` : ''}This is a fictional game result, not a real-world election or appointment.`, chapter.kind === 'race' ? 'win' : 'promotion');
       setMissionProgress(0);
-      if (isFinal) setModal({ type: 'ending', contest });
-      else { setStageIndex(nextIndex); setModal({ type: 'result', contest, nextChapter: activeCareerStages[nextIndex] }); }
+      if (stageIndex === CHAPTERS.length - 1) setModal({ type: 'ending', contest });
+      else { setStageIndex(nextIndex); setModal({ type: 'result', contest, nextChapter: CHAPTERS[nextIndex] }); }
     } else {
-      setProfile((current) => ({ ...current, trust: clamp(current.trust - 2), influence: clamp(current.influence - 2), energy: clamp(current.energy - 8), ...(chapter.kind === 'race' ? { lastContest: contest } : {}), legalBoost: false }));
-      addFeed(appointment ? `Review not advanced · ${chapter.office}` : `Result recorded · ${chapter.office}`, appointment ? `The fictional review score was ${support}, below the scenario threshold of ${opponent}. This is not an actual nomination decision.` : `Your simulated score was ${support}; the rival score was ${opponent}. Rebuild support or accept the result. A petition is only relevant to a genuine public-election dispute.`, 'loss');
+      setProfile((current) => ({ ...current, cash: Math.max(0, current.cash - fee), currentOffice: null, trust: clamp(current.trust - 2), influence: clamp(current.influence - 2), energy: clamp(current.energy - 8), lastContest: chapter.kind === 'race' ? contest : current.lastContest, legalBoost: false }));
+      addFeed(`${chapter.kind === 'appointment' ? 'Merit review not advanced' : chapter.kind === 'primary' ? 'Internal contest not won' : 'Election result'} · ${chapter.office}`, `This paid contest had a rival; your score was ${support}, the rival score ${opponent}. No position was awarded. ${contest.vacatedOffice ? `${contest.vacatedOffice} was vacated before entry, so your character now holds no current office. ` : ''}Rebuild support or accept the simulated result.`, 'loss');
       setModal({ type: 'result', contest, nextChapter: null });
     }
   };
 
   const prepareEvidence = () => {
+    if (isInstitutional) { showToast('Election-petition mechanics are available only from the political ladder. You can still explore the court story.'); setModal(null); return; }
     if (profile.cash < 65_000) { showToast('Evidence review requires ₦65,000 in-game.'); return; }
     setProfile((current) => ({ ...current, cash: current.cash - 65_000, evidence: current.evidence + 1, integrity: clamp(current.integrity + 1) }));
     setStoryDay((day) => day + 1); addFeed('Evidence review', 'Your fictional legal team reviewed public records and election procedures. A file is not proof by itself.', 'legal');
@@ -743,8 +1094,9 @@ function App() {
   };
 
   const filePetition = () => {
+    if (isInstitutional) { showToast('Election petitions are available only after a simulated public-election contest.'); setModal(null); return; }
     const contest = profile.lastContest;
-    if (!contest || contest.won || !contest.eligibleForPetition) { showToast('There is no unresolved public-election result available for a petition.'); return; }
+    if (!contest || contest.won || !contest.petitionEligible) { showToast('There is no unresolved public-election loss eligible for the simulated petition desk.'); return; }
     if (profile.evidence < 1) { showToast('Prepare an evidence file before filing.'); return; }
     if (profile.cash < 180_000) { showToast('Filing preparation requires ₦180,000 in-game.'); return; }
     const chance = clamp(.15 + profile.integrity * .0032 + profile.evidence * .11 - profile.scandals * .04, .12, .78);
@@ -765,52 +1117,91 @@ function App() {
 
   const resetGame = () => {
     try { window.localStorage.removeItem(SAVE_KEY); } catch { /* ignore */ }
-    setProfile({ ...defaultProfile }); setCareerTrack(DEFAULT_CAREER_TRACK); setProgressByTrack(initialProgressByTrack(null)); setStoryDay(1); setSelectedStateName('Lagos');
-    setActiveMeeting(null); setMeetingMessages([]); setMeetingParticipants([]); setDraftAlias(''); setDraftParty(PARTY_OPTIONS[0].name); setDraftState('Lagos'); setOnboardingOpen(true); setModal(null);
+    setProfile({ ...defaultProfile }); setStageIndex(0); setMissionProgress(0); setStoryDay(1); setSideStoriesSeen([]); setSelectedStateName('Lagos');
+    setDraftAlias(''); setDraftParty(PARTY_OPTIONS[0].name); setDraftMode('political'); setDraftInstitution('election-admin'); setDraftState('Lagos'); setOnboardingOpen(true); setModal(null);
   };
 
   const renderMainPage = () => {
-    if (page === 'career') return <CareerPage stageIndex={stageIndex} progress={missionProgress} profile={profile} onJump={setPage} onContinue={continueCareer} stages={activeCareerStages} onOpenInstitution={openInstitutionStory} />;
+    if (page === 'career') return <CareerPage stageIndex={stageIndex} progress={missionProgress} profile={profile} onJump={setPage} onContinue={continueCareer} onExploreSideStory={openSideStory} sideStoriesSeen={sideStoriesSeen} onJoinPolitical={requestPoliticalSwitch} />;
     if (page === 'offices') return <OfficesPage />;
     if (page === 'civic') return <CivicPage />;
     if (page === 'atlas') return <AtlasPage query={atlasQuery} setQuery={setAtlasQuery} zone={selectedZone} setZone={setSelectedZone} selected={selectedStateName} onTravel={travelToState} />;
-    return <WorldPage stateInfo={stateInfo} stateWorldProfile={stateWorldProfile} venue={activeVenue} venueName={activeVenueName} focusRequest={venueFocusRequest} locationKey={sceneLocationKey} locality={sceneLocality} localityData={stateLocalities?.state === stateInfo.name ? stateLocalities : null} localityLoading={localityLoading || (!localityError && stateLocalities?.state !== stateInfo.name)} localityError={localityError} selectedLgaName={selectedLgaName} selectedWardKey={selectedWardKey} onSelectLga={selectLga} onSelectWard={selectWardByKey} onSelectVenue={goToVenue} remotePlayers={remotePlayers} onMove={sendMove} playerColor={profile.color || currentParty.color} onlineCount={onlineCount} networkStatus={networkStatus} onTravel={travelToState} daysToFederal={daysToFederal} daysToState={daysToState} storyDay={storyDay} />;
+    return <WorldPage stateInfo={stateInfo} profile={profile} playerId={activeMeeting?.local ? 'local-player' : socketRef.current?.id || 'local-player'} stateWorldProfile={stateWorldProfile} venue={activeVenue} venueName={activeVenueName} focusRequest={venueFocusRequest} locationKey={sceneLocationKey} locality={sceneLocality} localityData={stateLocalities?.state === stateInfo.name ? stateLocalities : null} localityLoading={localityLoading || (!localityError && stateLocalities?.state !== stateInfo.name)} localityError={localityError} selectedLgaName={selectedLgaName} selectedWardKey={selectedWardKey} onSelectLga={selectLga} onSelectWard={selectWardByKey} onSelectVenue={goToVenue} remotePlayers={remotePlayers} onMove={sendMove} playerColor={playerColor} playerAppearance={playerAppearance} onlineCount={onlineCount} networkStatus={networkStatus} onTravel={travelToState} daysToFederal={daysToFederal} daysToState={daysToState} storyDay={storyDay} activeMeeting={activeMeeting} meetingPhase={meetingPhase} meetingParticipants={meetingParticipants} meetingSlot={meetingParticipants.find((person) => person.id === socketRef.current?.id)?.meetingSlot ?? (activeMeeting?.local ? 0 : null)} onMeetingArrival={markMeetingArrived} onEnterMeeting={enterMeetingDiscussion} meetingMessages={meetingMessages} currentParty={currentParty} institutionRole={institutionRole} isInstitutional={isInstitutional} chapter={currentChapter} missionProgress={missionProgress} worldMinute={worldMinute} onOpenCareer={() => setPage('career')} onOpenPhone={openPhonePanel} onNavigate={navigateMobile} onOpenAvatar={() => setModal({ type: 'avatar-customize' })} onExploreSideStory={openSideStory} onJoinPolitical={requestPoliticalSwitch} />;
   };
 
-  return <div className="app-shell">
+  return <div className={`app-shell ${immersiveActive ? 'immersive-shell' : ''} ${navigationOpen ? 'nav-open' : ''} ${phoneOpen ? 'phone-open' : ''}`}>
     <header className="topbar">
       <div className="brand-lockup"><div className="brand-mark"><span /><i /></div><div className="brand-type"><strong>NIGERIA <b>2027</b></strong><small>A LIFE IN PUBLIC OFFICE</small></div></div>
-      <div className="topbar-middle"><div className="season-pill"><span className="season-dot" /> STORY MODE <span className="season-divider" /> ACCELERATED CAREER</div><div className="election-clock"><CalendarDays size={14} /><span>FEDERAL <b>16 JAN 2027</b></span><i /> <span>STATE <b>06 FEB 2027</b></span></div></div>
-      <div className="topbar-actions"><div className={`network-chip ${networkStatus}`}><span className="pulse-dot" />{networkStatus === 'online' ? `${onlineCount || 1} IN WORLD` : networkStatus === 'connecting' ? 'CONNECTING' : 'LOCAL MODE'}</div><button className="wallet-chip" onClick={() => showToast('In-game funds only · no real money or withdrawals')} title="In-game funds only"><Wallet size={15} /><span>₦{money(profile.cash)}</span></button><button className={`account-status-chip ${authSession ? 'connected' : ''}`} onClick={() => setModal({ type: 'account' })} title={authSession ? 'Manage your account' : 'Guest save · open account options'}>{authSession ? 'ACCOUNT' : 'GUEST'}</button><button className="top-avatar" onClick={() => setModal({ type: 'account' })} title="Account settings">{initials(profile.alias)}</button></div>
+      <div className="topbar-middle"><div className="season-pill"><span className="season-dot" /> STORY MODE <span className="season-divider" /> {isInstitutional ? 'INSTITUTIONAL ROLEPLAY' : 'POLITICAL LADDER'}</div><div className="election-clock"><CalendarDays size={14} /><span>FEDERAL <b>16 JAN 2027</b></span><i /> <span>STATE <b>06 FEB 2027</b></span></div></div>
+      <div className="topbar-actions">
+        <div className="world-topbar-tools" aria-label="Game controls">
+          <button type="button" onClick={() => { setNavigationOpen((open) => !open); setPhoneOpen(false); }} aria-expanded={navigationOpen} aria-label="Open game menu" title="Game menu"><Menu size={16} /></button>
+          {page === 'world' && <>
+            <button type="button" onClick={() => { setPhoneOpen((open) => !open); setNavigationOpen(false); }} aria-expanded={phoneOpen} aria-label="Open social phone" title="World chat, DMs and meetings"><Smartphone size={15} /></button>
+            <button type="button" className="immersion-toggle" onClick={() => { setImmersiveMode((active) => !active); closeWorldPanels(); }} aria-label={immersiveMode ? 'Exit immersive view' : 'Enter immersive view'} title={immersiveMode ? 'Exit immersive view' : 'Enter immersive view'}>{immersiveMode ? <Minimize2 size={15} /> : <Maximize2 size={15} />}</button>
+          </>}
+        </div>
+        <div className={`network-chip ${networkStatus}`}><span className="pulse-dot" />{networkStatus === 'online' ? `${onlineCount || 1} IN WORLD` : networkStatus === 'connecting' ? 'CONNECTING' : 'LOCAL MODE'}</div>
+        <button className="wallet-chip" onClick={() => showToast('In-game funds only · no real money or withdrawals')} title="In-game funds only"><Wallet size={15} /><span className="wallet-full">₦{money(profile.cash)}</span><span className="wallet-compact">₦{profile.cash >= 1_000_000 ? `${(profile.cash / 1_000_000).toFixed(1)}m` : money(profile.cash)}</span></button>
+        <button className="avatar-customize-shortcut" onClick={() => setModal({ type: 'avatar-customize' })} title="Customize your avatar" aria-label="Customize your avatar"><Shirt size={15} /></button>
+        <button className="top-avatar" onClick={() => setModal({ type: 'account' })} title={authSession?.access_token ? `Signed in${authSession.user?.email ? ` as ${authSession.user.email}` : ''}` : 'Account sign-in and cloud-save settings'} aria-label="Account and cloud-save settings">{initials(profile.alias)}</button>
+      </div>
     </header>
+    {(navigationOpen || phoneOpen) && <button className="world-drawer-backdrop" onClick={closeWorldPanels} aria-label="Close game panel" />}
     <div className="app-layout">
       <aside className="left-sidebar">
-        <div className="candidate-summary"><div className="candidate-kicker">YOUR CAMPAIGN <span>{authSession ? 'ACCOUNT' : 'LOCAL'}</span></div><div className="candidate-id-row"><div className="candidate-avatar" style={{ '--party-color': profile.color || currentParty.color }}>{initials(profile.alias)}</div><div className="candidate-name-wrap"><strong>{profile.alias || 'New Candidate'}</strong><span>{currentParty.tag} · {currentParty.name}</span></div></div><div className="candidate-meta"><span><MapPin size={12} />{stateInfo.capital}, {stateInfo.name}</span><span><Flag size={12} />{String(stageIndex + 1).padStart(2, '0')} / {activeCareerStages.length}</span></div><div className="career-mini-progress"><span style={{ width: `${((stageIndex + 1) / activeCareerStages.length) * 100}%` }} /></div><div className="mini-progress-caption"><span>POLITICAL LADDER</span><b>{Math.round(((stageIndex + 1) / activeCareerStages.length) * 100)}%</b></div></div>
-        <div className="sidebar-section-title">COMMAND DECK</div><nav className="side-nav" aria-label="Game navigation">{NAV_ITEMS.map((item) => { const Icon = item.icon; return <button key={item.id} className={`nav-item ${page === item.id ? 'active' : ''}`} onClick={() => setPage(item.id)}><Icon size={17} strokeWidth={1.8} /><span>{item.label}</span>{item.id === 'world' && <span className="nav-online" />}</button>; })}</nav>
-        <div className="sidebar-nation-card"><div className="nation-card-top"><span><Globe2 size={13} /> NIGERIA MAP</span><span>36 + FCT</span></div><strong>37 capital visits</strong><p>Travel the atlas. Hear a different set of local priorities in every stop.</p><button onClick={() => setPage('atlas')}>OPEN STATE ATLAS <ArrowRight size={13} /></button></div>
-        <div className="sidebar-bottom"><div className="live-server-card"><div className="server-card-head"><span>REALTIME PROTOTYPE</span><span className={`server-led ${networkStatus}`} /></div><div className="server-card-status"><Radio size={14} /><b>{networkStatus === 'online' ? 'World link active' : networkStatus === 'connecting' ? 'Connecting to world' : 'Offline · local play'}</b></div><small>{authConfig.persistenceEnabled ? 'Account-backed profiles, DMs & meeting records' : 'Guest preview · meetings and DMs are session-only'}</small></div><button className="sidebar-reset" onClick={() => setModal({ type: 'reset' })}><Sparkles size={15} />Start a new candidate</button></div>
+        <div className={`candidate-summary ${isInstitutional ? 'institutional-summary' : ''}`}>
+          <div className="candidate-kicker">{isInstitutional ? 'YOUR INSTITUTIONAL STORY' : 'YOUR POLITICAL STORY'} <span>{authSession?.access_token ? 'ACCOUNT' : 'GUEST'}</span></div>
+          <div className="candidate-id-row"><div className="candidate-avatar" style={{ '--party-color': playerColor }}>{initials(profile.alias)}</div><div className="candidate-name-wrap"><strong>{profile.alias || 'New Candidate'}</strong><span>{isInstitutional ? `${institutionRole.personnelLabel} · FICTIONAL` : `${currentParty.tag} · ${currentParty.name}`}</span></div></div>
+          <div className="candidate-meta"><span><MapPin size={12} />{stateInfo.capital}, {stateInfo.name}</span>{isInstitutional ? <span><Shield size={12} />NON-PARTISAN ROLEPLAY</span> : <span><Flag size={12} />{String(stageIndex + 1).padStart(2, '0')} / 12</span>}</div>
+          {isInstitutional ? <><div className="institutional-mini-note">No separate office or promotion ladder. Join the single political ladder later only if you choose.</div><button className="candidate-switch-button" onClick={requestPoliticalSwitch}>OPTIONALLY JOIN PARTY LADDER <ArrowRight size={12} /></button></> : <>{profile.currentOffice && <div className="current-position-chip"><small>ONE CURRENT POSITION · WON IN A PAID CONTEST</small><strong>{profile.currentOffice.title}</strong><span>Released before your next office contest.</span></div>}<div className="career-mini-progress"><span style={{ width: `${((stageIndex + 1) / CHAPTERS.length) * 100}%` }} /></div><div className="mini-progress-caption"><span>POLITICAL LADDER</span><b>{Math.round(((stageIndex + 1) / CHAPTERS.length) * 100)}%</b></div></>}
+        </div>
+        <div className="sidebar-section-title">COMMAND DECK</div><nav className="side-nav" aria-label="Game navigation">{NAV_ITEMS.map((item) => { const Icon = item.icon; return <button key={item.id} className={`nav-item ${page === item.id ? 'active' : ''}`} onClick={() => { setPage(item.id); closeWorldPanels(); }}><Icon size={17} strokeWidth={1.8} /><span>{item.id === 'career' && isInstitutional ? 'Story record' : item.label}</span>{item.id === 'world' && <span className="nav-online" />}</button>; })}</nav>
+        <div className="sidebar-nation-card"><div className="nation-card-top"><span><Globe2 size={13} /> NIGERIA MAP</span><span>36 + FCT</span></div><strong>37 capital visits</strong><p>Travel the atlas. Hear a different set of local priorities in every stop.</p><button onClick={() => { setPage('atlas'); closeWorldPanels(); }}>OPEN STATE ATLAS <ArrowRight size={13} /></button></div>
+        <div className="sidebar-bottom"><div className="live-server-card"><div className="server-card-head"><span>REALTIME PROTOTYPE</span><span className={`server-led ${networkStatus}`} /></div><div className="server-card-status"><Radio size={14} /><b>{networkStatus === 'online' ? 'World link active' : networkStatus === 'connecting' ? 'Connecting to world' : 'Offline · local play'}</b></div><small>{authConfig.persistenceEnabled ? 'Account identity · persistent story records enabled' : 'Guest preview · rooms/messages are temporary until database setup'}</small></div><button className="sidebar-reset" onClick={() => setModal({ type: 'reset' })}><Sparkles size={15} />Start a new story</button></div>
       </aside>
       <main className="main-content">
-        <div className="main-heading-row"><div><div className="eyebrow"><span className="eyebrow-line" />{page === 'world' ? 'LIVE SIMULATION' : page === 'career' ? 'CAMPAIGN JOURNAL' : page === 'offices' ? 'CIVIC STRUCTURE' : page === 'civic' ? 'RESEARCH & CONTEXT' : 'NATIONAL ATLAS'} <span className="heading-season">/ STORY 2027</span></div><h1>{page === 'world' ? 'The Republic is in motion.' : page === 'career' ? 'One ladder. The wider republic.' : page === 'offices' ? 'Know the titles. Know the route.' : page === 'civic' ? 'Politics, with the context intact.' : 'One federation. 37 capital stops.'}</h1><p>{page === 'world' ? 'Build a public life through meetings, decisions and a political mandate.' : page === 'career' ? 'Your political career stays continuous; courts, election administrators and the Central Bank shape the world around it.' : page === 'offices' ? 'Elected, internal party, appointed, judicial, electoral-administration and central-bank roles stay distinct.' : page === 'civic' ? 'A researched, non-partisan desk for the realities behind this fictional campaign.' : 'Select a state to travel into its capital district and continue your campaign.'}</p></div><div className="heading-location"><span className="heading-location-icon"><MapPin size={17} /></span><div><small>CURRENT STOP</small><strong>{stateInfo.capital}, {stateInfo.name}</strong><span>{stateInfo.zone.toUpperCase()}</span></div><button onClick={() => setPage('atlas')} aria-label="Choose a state"><ChevronDown size={15} /></button></div></div>
+        <div className="main-heading-row"><div><div className="eyebrow"><span className="eyebrow-line" />{page === 'world' ? 'LIVE SIMULATION' : page === 'career' ? isInstitutional ? 'INSTITUTIONAL STORY RECORD' : 'CAMPAIGN JOURNAL' : page === 'offices' ? 'CIVIC STRUCTURE' : page === 'civic' ? 'RESEARCH & CONTEXT' : 'NATIONAL ATLAS'} <span className="heading-season">/ STORY 2027</span></div><h1>{page === 'world' ? 'The Republic is in motion.' : page === 'career' ? isInstitutional ? 'A story role, not another ladder.' : 'Every office has a route.' : page === 'offices' ? 'Know the titles. Know the route.' : page === 'civic' ? 'Politics, with the context intact.' : 'One federation. 37 capital stops.'}</h1><p>{page === 'world' ? isInstitutional ? 'Explore a fictional non-partisan institution story; switch into the political ladder only if you choose.' : 'Build a public life one conversation, one decision, one mandate at a time.' : page === 'career' ? isInstitutional ? 'Your institutional role has no promotions or office contests. Explore its story encounters or voluntarily join the existing political ladder.' : 'From ward work to the national ticket, your next move is earned in public.' : page === 'offices' ? 'Elected, internal party, appointed, and legislative leadership roles—kept distinct.' : page === 'civic' ? 'A researched, non-partisan desk for the realities behind this fictional public-life story.' : 'Select a state to travel into its capital district and continue your story.'}</p></div><div className="heading-location"><span className="heading-location-icon"><MapPin size={17} /></span><div><small>CURRENT STOP</small><strong>{stateInfo.capital}, {stateInfo.name}</strong><span>{stateInfo.zone.toUpperCase()}</span></div><button onClick={() => setPage('atlas')} aria-label="Choose a state"><ChevronDown size={15} /></button></div></div>
         {renderMainPage()}
       </main>
       <aside className="right-rail">
-        <div className="rail-title-row"><div><div className="rail-eyebrow"><span className="pulse-dot" />CURRENT OBJECTIVE</div><h2>CHAPTER {currentChapter.number}</h2></div><button className="rail-more" onClick={() => setPage('career')} aria-label="Open career path"><ChevronRight size={17} /></button></div>
-        <div className="mission-card"><div className="mission-card-top"><span>{currentChapter.phase}</span><span>{currentChapter.number} / {activeCareerStages.length}</span></div><h3>{currentChapter.title}</h3><p>{currentChapter.goal}</p><div className="mission-description">{currentChapter.description}</div><div className="mission-objectives">{currentChapter.objectives.map((item, index) => <div className={missionProgress > index ? 'done' : ''} key={item}><span>{missionProgress > index ? <Check size={10} /> : String(index + 1).padStart(2, '0')}</span>{item}</div>)}</div><div className="mission-fact"><span>FIELD NOTE</span>{currentChapter.fact}</div><div className="objective-office"><div className="office-glyph"><Landmark size={18} /></div><div><small>ROUTE TO OFFICE</small><strong>{currentChapter.office}</strong></div></div><div className="objective-meter"><div><span>STORY PREP</span><b>{missionProgress} / 3</b></div><div className="objective-meter-track"><span style={{ width: `${progressPercent}%` }} /></div></div><div className="mission-actions-row">{currentChapter.kind === 'story' ? <button className="primary-action" onClick={continueCareer} disabled={missionProgress < 3}>ADVANCE CHAPTER <ArrowRight size={14} /></button> : <button className="primary-action" onClick={runContest} disabled={missionProgress < 3}>{currentChapter.kind === 'appointment' ? 'ATTEND APPOINTMENT REVIEW' : currentChapter.kind === 'primary' ? 'CALL THE INTERNAL VOTE' : 'SIMULATE PUBLIC ELECTION'} <ArrowRight size={14} /></button>}<button className="icon-action" onClick={() => setPage('career')} title="View the full career path"><BookOpen size={16} /></button></div></div>
-        <div className="stats-panel"><div className="stats-panel-title"><span>CAMPAIGN HEALTH</span><span className="stats-live"><Activity size={12} /> LIVE</span></div><StatBar label="PUBLIC TRUST" value={profile.trust} color="mint" icon={Users} /><StatBar label="INFLUENCE" value={profile.influence} color="blue" icon={TrendingUp} /><StatBar label="INTEGRITY" value={profile.integrity} color="lime" icon={Shield} /><div className="resource-row"><div className="resource-box"><div><Zap size={13} /><span>ENERGY</span></div><strong>{profile.energy}<small>/100</small></strong><div className="micro-track"><span style={{ width: `${profile.energy}%` }} /></div></div><div className="resource-box"><div><Users size={13} /><span>COALITION</span></div><strong>{profile.coalition}<small>/12</small></strong><div className="micro-track coalition"><span style={{ width: `${(profile.coalition / 12) * 100}%` }} /></div></div></div><div className="cash-line"><span><Banknote size={13} /> CAMPAIGN PURSE</span><strong>₦{money(profile.cash)}</strong></div>{profile.scandals > 0 && <div className="risk-line"><ShieldAlert size={13} /> INTEGRITY RISK · {profile.scandals} OPEN FLAG{profile.scandals === 1 ? '' : 'S'}</div>}</div>
-        <div className="quick-actions-panel"><div className="quick-actions-heading"><div><span className="rail-eyebrow">YOUR NEXT MOVE</span><h3>Story interactions</h3></div><button className="rest-button" onClick={rest} title="Rest to restore energy"><Clock3 size={13} />REST</button></div><div className="action-list">{ACTIONS.map((action) => { const Icon = action.icon; return <button key={action.id} className={`action-row ${action.color}`} onClick={() => startCampaignAction(action.id)} disabled={profile.cash < action.cost || profile.energy < action.energy}><span className="action-icon"><Icon size={16} /></span><span className="action-copy"><strong>{action.label}</strong><small>{action.detail}</small></span><ChevronRight size={15} className="action-chevron" /></button>; })}<button className="action-row consult-action" onClick={openConsultation}><span className="action-icon"><Briefcase size={16} /></span><span className="action-copy"><strong>Consult a senior</strong><small>Listen to what they ask of you</small></span><ChevronRight size={15} className="action-chevron" /></button></div><div className="risk-actions"><button onClick={() => setModal({ type: 'illegal-confirm' })}><Banknote size={13} />Try illicit inducement <span>HIGH RISK</span></button><button onClick={() => setModal({ type: 'legal' })}><Scale size={13} />Open court desk <span>{profile.evidence} FILES</span></button></div></div>
-        <ChatPanel messages={chatMessages} draft={chatDraft} setDraft={setChatDraft} onSend={sendChat} onlineCount={onlineCount} status={networkStatus} stateName={selectedStateName} people={remotePlayers} meetings={availableMeetings} activeMeeting={activeMeeting} dmMessages={dmMessages} dmDraft={dmDraft} setDmDraft={setDmDraft} selectedDmPeer={selectedDmPeer} onSelectDmPeer={selectDmPeer} onSendDm={sendDirectMessage} onJoinMeeting={joinMeeting} onInvite={inviteToMeeting} />
-        <div className="rail-disclaimer"><LockKeyhole size={12} /><span>Fictional campaign · no real money, voting or party affiliation.</span></div>
+        <div className="rail-title-row"><div><div className="rail-eyebrow"><span className="pulse-dot" />{isInstitutional ? 'CURRENT STORY ROLE' : 'CURRENT OBJECTIVE'}</div><h2>{isInstitutional ? 'NON-PARTISAN' : `CHAPTER ${currentChapter.number}`}</h2></div>{immersiveActive ? <button className="rail-more" onClick={() => setPhoneOpen(false)} aria-label="Close world phone"><X size={16} /></button> : <button className="rail-more" onClick={() => setPage('career')} aria-label="Open career or story record"><ChevronRight size={17} /></button>}</div>
+        {isInstitutional ? <InstitutionalRolePanel role={institutionRole} /> : <div className="mission-card"><div className="mission-card-top"><span>{currentChapter.phase}</span><span>{currentChapter.number} / 12</span></div><h3>{currentChapter.title}</h3><p>{currentChapter.goal}</p><div className="mission-description">{currentChapter.description}</div><div className="mission-objectives">{currentChapter.objectives.map((item, index) => <div className={missionProgress > index ? 'done' : ''} key={item}><span>{missionProgress > index ? <Check size={10} /> : String(index + 1).padStart(2, '0')}</span>{item}</div>)}</div><div className="mission-fact"><span>FIELD NOTE</span>{currentChapter.fact}</div><div className="objective-office"><div className="office-glyph"><Landmark size={18} /></div><div><small>{currentChapter.kind === 'story' ? 'NO OFFICE AWARDED' : `PAID CONTEST · ₦${money(currentChapter.contestFee)}`}</small><strong>{currentChapter.office}</strong></div></div><div className="objective-meter"><div><span>MANDATE PREP</span><b>{missionProgress} / 3</b></div><div className="objective-meter-track"><span style={{ width: `${progressPercent}%` }} /></div></div><div className="mission-actions-row">{currentChapter.kind === 'story' ? <button className="primary-action" onClick={continueCareer} disabled={missionProgress < 3}>ADVANCE CHAPTER <ArrowRight size={14} /></button> : <button className="primary-action" onClick={() => runContest()} disabled={missionProgress < 3}>{currentChapter.kind === 'appointment' ? 'ENTER PAID MERIT REVIEW' : currentChapter.kind === 'primary' ? 'ENTER PAID INTERNAL CONTEST' : 'ENTER PAID ELECTION CONTEST'} · ₦{money(currentChapter.contestFee)} <ArrowRight size={14} /></button>}<button className="icon-action" onClick={() => setPage('career')} title="View the full career path"><BookOpen size={16} /></button></div></div>}
+        <div className={`stats-panel ${isInstitutional ? 'institutional-stats-panel' : ''}`}><div className="stats-panel-title"><span>{isInstitutional ? 'INSTITUTIONAL STORY RECORD' : 'CAMPAIGN HEALTH'}</span><span className="stats-live"><Activity size={12} /> LIVE</span></div><StatBar label={isInstitutional ? 'COMMUNITY TRUST' : 'PUBLIC TRUST'} value={profile.trust} color="mint" icon={Users} /><StatBar label={isInstitutional ? 'REPUTATION' : 'INFLUENCE'} value={profile.influence} color="blue" icon={TrendingUp} /><StatBar label="INTEGRITY" value={profile.integrity} color="lime" icon={Shield} /><div className={`resource-row ${isInstitutional ? 'single-resource' : ''}`}><div className="resource-box"><div><Zap size={13} /><span>ENERGY</span></div><strong>{profile.energy}<small>/100</small></strong><div className="micro-track"><span style={{ width: `${profile.energy}%` }} /></div></div>{!isInstitutional && <div className="resource-box"><div><Users size={13} /><span>COALITION</span></div><strong>{profile.coalition}<small>/12</small></strong><div className="micro-track coalition"><span style={{ width: `${(profile.coalition / 12) * 100}%` }} /></div></div>}</div><div className="cash-line"><span><Banknote size={13} /> {isInstitutional ? 'STORY FUNDS · FICTIONAL' : 'CAMPAIGN PURSE'}</span><strong>₦{money(profile.cash)}</strong></div>{!isInstitutional && profile.scandals > 0 && <div className="risk-line"><ShieldAlert size={13} /> INTEGRITY RISK · {profile.scandals} OPEN FLAG{profile.scandals === 1 ? '' : 'S'}</div>}</div>
+        {isInstitutional ? <InstitutionalStoryActionPanel role={institutionRole} stateName={stateInfo.name} onExplore={openSideStory} onJoinPolitical={requestPoliticalSwitch} /> : <div className="quick-actions-panel"><div className="quick-actions-heading"><div><span className="rail-eyebrow">YOUR NEXT MOVE</span><h3>Story interactions</h3></div><button className="rest-button" onClick={rest} title="Rest to restore energy"><Clock3 size={13} />REST</button></div><div className="action-list">{ACTIONS.map((action) => { const Icon = action.icon; return <button key={action.id} className={`action-row ${action.color}`} onClick={() => startCampaignAction(action.id)} disabled={profile.cash < action.cost || profile.energy < action.energy}><span className="action-icon"><Icon size={16} /></span><span className="action-copy"><strong>{action.label}</strong><small>{action.detail}</small></span><ChevronRight size={15} className="action-chevron" /></button>; })}<button className="action-row consult-action" onClick={openConsultation}><span className="action-icon"><Briefcase size={16} /></span><span className="action-copy"><strong>Consult a senior</strong><small>Listen to what they ask of you</small></span><ChevronRight size={15} className="action-chevron" /></button></div><div className="risk-actions"><button onClick={() => setModal({ type: 'illegal-confirm' })}><Banknote size={13} />Try illicit inducement <span>HIGH RISK</span></button><button onClick={() => setModal({ type: 'legal' })}><Scale size={13} />Open court desk <span>{profile.evidence} FILES</span></button></div></div>}
+        <ChatPanel messages={chatMessages} draft={chatDraft} setDraft={setChatDraft} onSend={sendChat} onlineCount={onlineCount} status={networkStatus} stateName={selectedStateName} players={remotePlayers} meetings={availableMeetings} selectedPeer={selectedDmPeer} onSelectPeer={setSelectedDmPeer} dmMessages={dmMessages} dmDraft={dmDraft} setDmDraft={setDmDraft} onSendDm={sendDirectMessage} onInvite={inviteToMeeting} activeMeeting={activeMeeting} meetingPhase={meetingPhase} onEnterMeeting={enterMeetingDiscussion} onFocusMeeting={focusMeetingWorld} onJoinMeeting={joinMeeting} persistenceEnabled={authConfig.persistenceEnabled} accountBacked={Boolean(authSession?.access_token)} />
+        <div className="rail-disclaimer"><LockKeyhole size={12} /><span>{isInstitutional ? 'Fictional personnel roleplay · no real employment, appointment, statutory authority or real-money.' : 'Fictional candidate · no real money, electoral registration or real-party affiliation.'}</span></div>
       </aside>
     </div>
+    <nav className="mobile-bottom-nav" aria-label="Mobile game navigation">
+      <button className={page === 'world' ? 'active' : ''} onClick={openMobileWorld} aria-current={page === 'world' ? 'page' : undefined}><Globe2 size={18} /><span>Home</span></button>
+      <button className={page === 'career' ? 'active' : ''} onClick={() => navigateMobile('career')} aria-current={page === 'career' ? 'page' : undefined}><TrendingUp size={18} /><span>Story</span></button>
+      <button className={page === 'atlas' ? 'active' : ''} onClick={() => navigateMobile('atlas')} aria-current={page === 'atlas' ? 'page' : undefined}><Map size={18} /><span>Atlas</span></button>
+      <button className={phoneOpen ? 'active' : ''} onClick={() => { if (phoneOpen) closeWorldPanels(); else openPhonePanel(); }} aria-pressed={phoneOpen}><Smartphone size={18} /><span>Phone</span></button>
+    </nav>
     {toast && <div className="toast-pop"><span className="toast-symbol"><Check size={14} /></span>{toast}</div>}
-    {activeMeeting && <MeetingRoom meeting={activeMeeting} messages={meetingMessages} participants={meetingParticipants} votes={meetingVotes} draft={meetingDraft} setDraft={setMeetingDraft} replyTo={meetingReplyTo} setReplyTo={setMeetingReplyTo} onSend={submitMeetingMessage} onVote={castMeetingVote} onCloseMeeting={closeMeeting} onLeave={leaveMeeting} people={remotePlayers} onInvite={inviteToMeeting} />}
-    {onboardingOpen && <WelcomeModal alias={draftAlias} setAlias={setDraftAlias} party={draftParty} setParty={setDraftParty} state={draftState} setState={setDraftState} onStart={startCandidate} onClose={() => setOnboardingOpen(false)} hasSave={Boolean(boot?.profile?.started)} authEnabled={authConfig.authEnabled} persistenceEnabled={authConfig.persistenceEnabled} authBusy={authBusy} authSession={authSession} onAuth={submitAccount} onAuthSuccess={(result) => { if (result.save) restoreCloudSave(result.save); else startCandidate(); }} onSignOut={signOut} />}
-    {modal?.type === 'account' && <AccountModal authEnabled={authConfig.authEnabled} persistenceEnabled={authConfig.persistenceEnabled} authBusy={authBusy} authSession={authSession} onAuth={submitAccount} onSignOut={signOut} onClose={() => setModal(null)} onSuccess={(result) => { if (result.save) restoreCloudSave(result.save); else { setModal(null); setToast('Account connected · this career will sync when database persistence is enabled'); } }} />}
-    {modal?.type === 'story-action' && <StoryActionModal key={modal.actionId} actionId={modal.actionId} scene={CAMPAIGN_SCENES[modal.actionId]} npc={modal.npc} onComplete={finishStoryAction} onClose={() => setModal(null)} />}
-    {modal?.type === 'institution-story' && <InstitutionStoryModal key={modal.arcId} arc={INSTITUTIONAL_STORY_ARCS.find((item) => item.id === modal.arcId)} completed={(profile.completedSideStories || []).includes(modal.arcId)} onComplete={finishInstitutionStory} onClose={() => setModal(null)} />}
-    {modal && !['account', 'story-action', 'institution-story'].includes(modal.type) && <GameModal modal={modal} onClose={() => setModal(null)} onAcceptMeetingInvite={acceptMeetingInvite} onIllegalConfirm={attemptVoteBuying} onPrepareEvidence={prepareEvidence} onFilePetition={filePetition} onReset={resetGame} profile={profile} />}
+    {activeMeeting && meetingPhase === 'discussion' && <MeetingRoom meeting={activeMeeting} messages={meetingMessages} participants={meetingParticipants} votes={meetingVotes} draft={meetingDraft} setDraft={setMeetingDraft} replyTo={meetingReplyTo} setReplyTo={setMeetingReplyTo} onSend={submitMeetingMessage} onVote={castMeetingVote} onCloseMeeting={closeMeeting} onLeave={dismissMeeting} onMinimize={minimizeMeetingDiscussion} />}
+    {onboardingOpen && <WelcomeModal alias={draftAlias} setAlias={setDraftAlias} party={draftParty} setParty={setDraftParty} mode={draftMode} setMode={setDraftMode} institution={draftInstitution} setInstitution={setDraftInstitution} state={draftState} setState={setDraftState} onStart={startCandidate} onClose={() => setOnboardingOpen(false)} hasSave={Boolean(boot?.profile?.started)} authReady={authReady} authConfig={authConfig} authSession={authSession} authBusy={authBusy} onAuth={submitAccount} onSignOut={signOut} onAccountSuccess={(result) => { if (result.save?.profile?.started) restoreCloudSave(result.save); else { startCandidate(); if (result.profileChecked === false) { setAccountProfileReady(false); showToast('Account linked · checking cloud profile before saving; guest fallback remains local.'); } } }} />}
+    {modal?.type === 'story-action' && <StoryActionModal scene={CAMPAIGN_SCENES[modal.actionId]} npc={modal.npc} actionLabel={modal.actionId === 'rally' ? 'PUBLISH ADDRESS' : modal.actionId === 'policy' ? 'RECORD POLICY BRIEF' : 'RECORD RESPONSE'} onClose={() => setModal(null)} onComplete={(text, choiceId) => finishStoryAction(modal.actionId, text, choiceId)} />}
+    {modal?.type === 'side-story' && <StoryActionModal scene={isInstitutional ? getStorySceneForRole(modal.storyId, institutionRole) : OTHER_SIDE_STORIES.find((story) => story.id === modal.storyId)} title={isInstitutional ? getStorySceneForRole(modal.storyId, institutionRole)?.title : OTHER_SIDE_STORIES.find((story) => story.id === modal.storyId)?.title} classification={isInstitutional ? getStorySceneForRole(modal.storyId, institutionRole)?.classification : OTHER_SIDE_STORIES.find((story) => story.id === modal.storyId)?.classification} isSideStory institutionalRole={isInstitutional ? institutionRole : null} onClose={() => setModal(null)} onComplete={(text, choiceId) => finishSideStory(modal.storyId, text, choiceId)} />}
+    {modal?.type === 'account' && <AccountModal authReady={authReady} authConfig={authConfig} authSession={authSession} authBusy={authBusy} alias={profile.alias} onSubmit={submitAccount} onSignOut={signOut} onClose={() => setModal(null)} onSuccess={(result) => { if (result.save?.profile?.started) restoreCloudSave(result.save); else { setAccountProfileReady(result.profileChecked !== false); setModal(null); showToast(result.profileChecked === false ? 'Account connected · cloud profile check is retrying; local progress remains available.' : authConfig.persistenceEnabled ? `Account connected · the current ${isInstitutional ? 'institutional story' : 'political story'} will autosave.` : 'Signed in · database setup is still needed for cloud saves and persistent messages.'); } }} />}
+    {modal?.type === 'avatar-customize' && <AvatarCustomizer appearance={playerAppearance} playerColor={playerColor} onClose={() => setModal(null)} onSave={saveAvatarAppearance} />}
+    {modal && !['story-action', 'side-story', 'account', 'avatar-customize'].includes(modal.type) && <GameModal modal={modal} onClose={() => setModal(null)} onAcceptMeetingInvite={acceptMeetingInvite} onIllegalConfirm={attemptVoteBuying} onPrepareEvidence={prepareEvidence} onFilePetition={filePetition} onReset={resetGame} onContestConfirm={() => runContest(true)} onJoinPolitical={joinPoliticalLadder} profile={profile} />}
   </div>;
+}
+
+function InstitutionalRolePanel({ role }) {
+  return <section className="institution-role-card">
+    <div className="mission-card-top"><span>FICTIONAL PERSONNEL STORY</span><span>NO OFFICE LADDER</span></div>
+    <div className="institution-role-card-title"><span>{role.id === 'judiciary' ? <Scale size={19} /> : role.id === 'cbn' ? <Banknote size={19} /> : <Landmark size={19} />}</span><div><h3>{role.personnelLabel}</h3><small>{role.agency}</small></div></div>
+    <p>{role.description}</p>
+    <div className="institution-role-boundary"><Shield size={13} /><span>Fictional story perspective only—not real employment, appointment, agency powers, judicial authority or an elected position.</span></div>
+  </section>;
+}
+
+function InstitutionalStoryActionPanel({ role, stateName, onExplore, onJoinPolitical }) {
+  const stories = getInstitutionStoryIds(role.id, stateName).map((id) => OTHER_SIDE_STORIES.find((story) => story.id === id)).filter(Boolean);
+  return <div className="quick-actions-panel institution-quick-actions"><div className="quick-actions-heading"><div><span className="rail-eyebrow">YOUR NEXT MOVE</span><h3>Institutional story scenes</h3></div></div><div className="institution-story-link-list">{stories.map((story) => <button key={story.id} className="institution-story-link" onClick={() => onExplore(story.id)}><span><small>{story.classification}</small><strong>{story.title}</strong></span><ChevronRight size={15} /></button>)}</div><button className="institution-switch-button" onClick={onJoinPolitical}>OPTIONALLY JOIN ONE REGISTERED PARTY <ArrowRight size={13} /></button><div className="institution-switch-note">Switching starts chapter 1 of the existing political ladder. It grants no office; all political positions remain paid contests.</div></div>;
 }
 
 function StatBar({ label, value, color, icon: Icon }) {
@@ -825,7 +1216,7 @@ function LocalityExplorer({ stateInfo, stateWorldProfile, data, loading, error, 
   const filteredWards = wards.filter((item) => !wardQuery.trim() || item.name.toLowerCase().includes(wardQuery.trim().toLowerCase()));
   useEffect(() => setWardQuery(''), [lgaName]);
 
-  return <section className="locality-explorer" aria-label="State, local government and ward explorer">
+  return <section id="locality-explorer" className="locality-explorer" aria-label="State, local government and ward explorer">
     <div className="locality-explorer-head">
       <div><div className="eyebrow"><span className="eyebrow-line" />STATE → LGA → WARD</div><h2>Choose a local ground</h2><p>{stateInfo.name} · {stateWorldProfile.biome}. Select a local government and a named electoral ward to regenerate the 3D neighbourhood.</p></div>
       <div className="locality-national-counts"><span><b>37</b> STATES / FCT</span><span><b>774</b> LGAs</span><span><b>8,809</b> WARD RECORDS</span></div>
@@ -842,7 +1233,7 @@ function LocalityExplorer({ stateInfo, stateWorldProfile, data, loading, error, 
         </select><small>{wards.length} named ward records in this LGA</small></label>
       </div>
       <div className="locality-active-card">
-        <div className="locality-active-pin"><MapPin size={16} /></div><div className="locality-active-copy"><small>ACTIVE PROCEDURAL 3D LOCATION</small><strong>{selectedWard ? selectedWard.name : 'Select a ward'}<span> · </span>{lga?.name || 'LGA'}</strong><span>{stateInfo.name} · {selectedWard ? `approx. ${selectedWard.lat.toFixed(4)}° N, ${selectedWard.lon.toFixed(4)}° E` : 'Representative point not available'}</span></div>
+        <div className="locality-active-pin"><MapPin size={16} /></div><div className="locality-active-copy"><small>SELECTED WARD · APPROXIMATE MAP CENTER</small><strong>{selectedWard ? selectedWard.name : 'Select a ward'}<span> · </span>{lga?.name || 'LGA'}</strong><span>{stateInfo.name} · {selectedWard ? `approx. ${selectedWard.lat.toFixed(4)}° N, ${selectedWard.lon.toFixed(4)}° E` : 'Representative point not available'}</span></div>
         <button disabled={!selectedWard} onClick={() => selectedWard && onSelectWard(wardKey(selectedWard))}><MapPin size={13} />REVISIT IN 3D</button>
       </div>
       <div className="ward-directory-heading"><div><span className="eyebrow-line" />WARD DIRECTORY <b>{filteredWards.length}</b></div><label className="ward-search"><Search size={13} /><input value={wardQuery} onChange={(event) => setWardQuery(event.target.value)} placeholder="Filter wards in this LGA" /></label></div>
@@ -851,31 +1242,150 @@ function LocalityExplorer({ stateInfo, stateWorldProfile, data, loading, error, 
         const active = key === selectedWardKey;
         return <button key={key} className={`ward-chip ${active ? 'active' : ''}`} onClick={() => onSelectWard(key)} aria-label={`Travel to ${ward.name} ward, ${lga.name}`} title={`Open ${ward.name} in the 3D world`}><span className="ward-chip-index">{String(index + 1).padStart(2, '0')}</span><strong>{ward.name}</strong><small>{active ? 'CURRENT 3D LOCATION' : 'VISIT THIS WARD'}</small><ArrowRight size={13} /></button>;
       })}</div> : <div className="locality-empty">No wards match that filter.</div>}
-      <div className="locality-data-note"><span>DATA NOTE</span><p>Directory entries are electoral wards / registration areas with approximate representative points—not an exhaustive gazetteer of villages, streets, homes or polling units. This neighbourhood is procedural art seeded by the selected locality; its layout is not a surveyed map.</p></div>
+      <div className="locality-data-note"><span>GEOGRAPHIC DATA NOTE</span><p>Ward coordinates are approximate representative points, not ward boundaries or surveyed addresses. LIVE MAP uses OpenFreeMap vector tiles based on OpenStreetMap; road, building-height and landmark coverage varies by locality. The separate 3D Story World is procedural art, not a surveyed model.</p></div>
     </>}
   </section>;
 }
 
-function WorldPage({ stateInfo, stateWorldProfile, venue, venueName, focusRequest, locationKey, locality, localityData, localityLoading, localityError, selectedLgaName, selectedWardKey, onSelectLga, onSelectWard, onSelectVenue, remotePlayers, onMove, playerColor, onlineCount, networkStatus, onTravel, daysToFederal, daysToState, storyDay }) {
+function PartyDirectory({ parties, branches, activeParty, stateInfo, locality, onEnter }) {
+  const [query, setQuery] = useState('');
+  const [expandedParty, setExpandedParty] = useState(activeParty?.id || '');
+  const search = query.trim().toLowerCase();
+  const visibleParties = parties.filter((item) => `${item.tag} ${item.name}`.toLowerCase().includes(search));
+  const locationLabel = locality ? `${locality.ward} · ${locality.lga} LGA · ${stateInfo.name}` : `Capital district · ${stateInfo.name}`;
+  const checked = PARTY_REGISTER_CHECKED_AT.split('-').reverse().join(' ');
+  return <section className="party-directory" aria-label="INEC registered party and branch directory">
+    <div className="party-directory-head"><div><div className="eyebrow"><span className="eyebrow-line" />INEC REGISTER · {checked}</div><h2>One branded ward office for every party.</h2><p>The 22 registered-party records, acronyms, logos and published national chair/secretary fields below are copied from INEC’s register. The visible local office row and local executives are fictional game constructs—not claims about real-world premises or village officers.</p></div><div className="party-directory-count"><b>{visibleParties.length}</b><span>PARTIES<br />IN VIEW</span></div></div>
+    <div className="party-directory-tools"><label className="party-directory-search"><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find party by acronym or name" aria-label="Search INEC-registered parties" /></label><a href={PARTY_REGISTER_SOURCE} target="_blank" rel="noreferrer">OPEN OFFICIAL INEC REGISTER <ArrowRight size={12} /></a></div>
+    <div className="party-directory-grid">{visibleParties.map((item) => {
+      const branch = branches[item.id] || [];
+      const expanded = expandedParty === item.id;
+      const chosen = activeParty?.id === item.id;
+      return <article className={`party-directory-card ${chosen ? 'player-party' : ''} ${expanded ? 'expanded' : ''}`} key={item.id} style={{ '--party-color': item.color }}>
+        <div className="party-directory-card-head"><img src={item.logo} alt={`${item.tag} official party logo`} loading="lazy" /><div className="party-directory-party-name"><span>{item.tag} · INEC REGISTERED</span><strong>{item.name}</strong></div>{chosen && <span className="player-party-tag">YOUR PARTY</span>}</div>
+        <div className="national-officer-list"><div><span>NATIONAL CHAIRPERSON · INEC SNAPSHOT</span><b>{item.chair || 'Not listed in this snapshot'}</b></div><div><span>NATIONAL SECRETARY · INEC SNAPSHOT</span><b>{item.secretary || 'Not listed in this snapshot'}</b></div></div>
+        <div className="party-locality-row"><MapPin size={12} /><span>SIMULATED BRANCH · {locationLabel}</span></div>
+        <div className="party-directory-actions"><button type="button" className="party-executive-toggle" onClick={() => setExpandedParty(expanded ? '' : item.id)} aria-expanded={expanded}>{expanded ? 'HIDE' : 'VIEW'} LOCAL EXECUTIVES <ChevronDown size={13} /></button><button type="button" className="party-office-enter" onClick={() => onEnter(item.id)}>ENTER 3D OFFICE <ArrowRight size={13} /></button></div>
+        {expanded && <div className="party-local-roster"><div className="party-roster-warning"><Shield size={13} /><span>FICTIONAL DISPLAY-ONLY ROSTER · generated for gameplay · not verified by INEC or a contest result</span></div>{branch.map((person) => <div className="party-local-executive" key={person.id}><span>{person.position}</span><b>{person.name}</b></div>)}</div>}
+        <a className="party-inec-profile" href={item.inecUrl || PARTY_REGISTER_SOURCE} target="_blank" rel="noreferrer">INEC PARTY PROFILE <ArrowRight size={11} /></a>
+      </article>;
+    })}</div>
+    {!visibleParties.length && <div className="party-directory-empty">No INEC register entry matches that search.</div>}
+    <div className="party-directory-source-note"><InfoDot /><span>Register data snapshot checked {checked}. INEC registration/recognition is not a guarantee that a party or candidate will appear on the final 2027 ballot; candidate eligibility and filings are separate processes. The local branches here are simulated only.</span></div>
+  </section>;
+}
+
+function WorldPage({ stateInfo, profile, playerId, meetingSlot, meetingParticipants, meetingPhase, onMeetingArrival, onEnterMeeting, stateWorldProfile, venue, venueName, focusRequest, locationKey, locality, localityData, localityLoading, localityError, selectedLgaName, selectedWardKey, onSelectLga, onSelectWard, onSelectVenue, remotePlayers, onMove, playerColor, playerAppearance, onlineCount, networkStatus, onTravel, daysToFederal, daysToState, storyDay, worldMinute, activeMeeting, meetingMessages, currentParty, institutionRole, isInstitutional, chapter, missionProgress, onOpenCareer, onOpenPhone, onNavigate, onOpenAvatar, onExploreSideStory, onJoinPolitical }) {
   const [venueFilter, setVenueFilter] = useState('ALL');
+  const [worldView, setWorldView] = useState('story');
+  const [interiorInfo, setInteriorInfo] = useState(null);
+  const partyOfficeActionRef = useRef(null);
+  const exitInteriorActionRef = useRef(null);
+  const minimapMarkerRef = useRef(null);
+  const minimapUpdateAtRef = useRef(0);
+  const localPartyBranches = createLocalPartyBranches(PARTY_OPTIONS, { state: stateInfo.name, lga: locality?.lga || stateInfo.capital, ward: locality?.ward || 'Capital District', reservedNames: NPCS.map((person) => person.name) });
+  const localityVisual = createLocalityVisualProfile(stateInfo, stateWorldProfile, locality);
+  const enterPartyOffice = (partyId) => {
+    if (worldView === 'story') partyOfficeActionRef.current?.(partyId);
+    else {
+      setWorldView('story');
+      window.setTimeout(() => partyOfficeActionRef.current?.(partyId), 220);
+    }
+  };
   const venueTypes = ['ALL', 'PUBLIC', 'POLITICS', 'TRAVEL'];
+  const safeMinute = ((Number(worldMinute) || 0) % 1440 + 1440) % 1440;
+  const clockHour = Math.floor(safeMinute / 60);
+  const clockMinute = safeMinute % 60;
+  const worldClock = `${String(clockHour).padStart(2, '0')}:${String(clockMinute).padStart(2, '0')}`;
+  const timePhase = clockHour >= 5 && clockHour < 7 ? 'DAWN' : clockHour >= 7 && clockHour < 16 ? 'DAYLIGHT' : clockHour >= 16 && clockHour < 19 ? 'GOLDEN HOUR' : 'NIGHT';
+  const handlePlayerMove = (position) => {
+    onMove(position);
+    const now = Date.now();
+    if (!minimapMarkerRef.current || now - minimapUpdateAtRef.current < 220) return;
+    minimapUpdateAtRef.current = now;
+    const x = 75 + clamp((Number(position.x) || 0) / 24, -1, 1) * 48;
+    const y = 51 + clamp((Number(position.z) || 0) / 33, -1, 1) * 36;
+    const heading = ((Number(position.heading) || 0) * (180 / Math.PI)) + 180;
+    minimapMarkerRef.current.setAttribute('transform', `translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${heading.toFixed(1)})`);
+  };
   const visibleVenues = WORLD_VENUES.filter((item) => venueFilter === 'ALL' || (venueFilter === 'PUBLIC' && ['square', 'market', 'stadium'].includes(item.type)) || (venueFilter === 'POLITICS' && ['office', 'court', 'assembly', 'caucus'].includes(item.type)) || (venueFilter === 'TRAVEL' && item.type === 'airport'));
+  const arrivedMeetingPlayers = (meetingParticipants || []).filter((person) => ['at-venue', 'in-session'].includes(person.meetingStatus)).length;
+  const travellingMeetingPlayers = (meetingParticipants || []).filter((person) => person.meetingStatus === 'en-route').length;
+  const interestedMeetingPlayers = Math.max((meetingParticipants || []).length, Number(activeMeeting?.interested || activeMeeting?.participants) || 0);
+  useEffect(() => { if (activeMeeting?.id && ['en-route', 'at-venue', 'discussion'].includes(meetingPhase)) setWorldView('story'); }, [activeMeeting?.id, meetingPhase]);
   return <div className="world-page">
-    <div className="world-topline"><div className="world-live"><span className="pulse-dot" />LOCAL WORLD <b>{(locality?.ward || stateInfo.capital).toUpperCase()}</b><span className="line-sep" />{stateInfo.zone.toUpperCase()}</div><div className="world-date"><Clock3 size={13} />{dateLabel(storyDay)} <span>·</span> 15:42 WAT <span className="weather-dot" /> OVERCAST</div><div className="world-connect"><span className={`network-led ${networkStatus}`} />{networkStatus === 'online' ? `${onlineCount || 1} PLAYERS` : 'LOCAL INSTANCE'}</div></div>
-    <div className="world-view-frame"><World state={stateInfo.name} locality={locality} locationKey={locationKey} selectedVenueId={venue.id} focusRequest={focusRequest} onVenueSelect={onSelectVenue} onMove={onMove} remotePlayers={remotePlayers} playerColor={playerColor} /><div className="scene-vignette" />
-      <div className="scene-location-card"><div className="scene-card-kicker"><span className="scene-pin" />{locality ? 'YOUR WARD' : 'STATE CAPITAL'} <span>·</span> {stateInfo.zone.toUpperCase()}</div><h2>{locality?.lga || stateInfo.capital}<span>,</span> {stateInfo.name}</h2><p>{locality ? `${locality.ward} · ${stateWorldProfile.biome}` : `${stateWorldProfile.biome} · ${stateInfo.capital}`} · fictional procedural scene</p><div className="scene-local-landmark"><MapPin size={13} /><span>STATE SIGNATURE</span><b>{stateInfo.landmark}</b></div></div>
+    <div className="mobile-world-status" aria-label="Live story and player status">
+      <div className="mobile-status-item mobile-status-clock"><Clock3 size={14} /><span><b>{worldClock} WAT</b><small>{dateLabel(storyDay)} · {timePhase}</small></span></div>
+      <div className="mobile-status-item mobile-status-trust"><Activity size={14} /><span><b>{isInstitutional ? 'REPUTATION' : 'PUBLIC TRUST'}</b><small>{profile?.trust ?? 0}% · {profile?.integrity ?? 0}% integrity</small></span></div>
+      <div className="mobile-status-item mobile-status-election"><Radio size={14} /><span><b>{Number.isFinite(daysToFederal) ? Math.max(0, daysToFederal) : '—'}d FED · {Number.isFinite(daysToState) ? Math.max(0, daysToState) : '—'}d STATE</b><small>16 JAN / 06 FEB 2027 · ELECTIONS</small></span></div>
+      <div className="mobile-status-item mobile-status-network"><Users size={14} /><span><b>{networkStatus === 'online' ? `${onlineCount || 1} PLAYERS` : 'LOCAL PLAY'}</b><small>{networkStatus === 'online' ? 'WORLD LINK ACTIVE' : 'GUEST PREVIEW'}</small></span></div>
+    </div>
+    <div className="mobile-world-shortcuts" aria-label="Quick world actions">
+      <button type="button" className={worldView === 'story' ? 'active' : ''} onClick={() => setWorldView('story')}><Move size={14} /><span>WALK</span></button>
+      <button type="button" className={worldView === 'map' ? 'active' : ''} onClick={() => setWorldView('map')}><Map size={14} /><span>LIVE MAP</span></button>
+      <button type="button" onClick={() => document.getElementById('mobile-world-places')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}><Landmark size={14} /><span>PLACES</span></button>
+      <button type="button" onClick={() => onNavigate('civic')}><Scale size={14} /><span>CIVIC</span></button>
+      <button type="button" onClick={onOpenPhone}><Smartphone size={14} /><span>PHONE</span></button>
+    </div>
+    <div className="mobile-location-strip">
+      <div className="mobile-location-name"><MapPin size={16} /><span><b>{locality?.ward || stateInfo.capital}</b><small>{locality ? `${locality.lga} LGA · ` : ''}{stateInfo.name}</small></span></div>
+      <button type="button" onClick={() => onNavigate('atlas')}><Map size={13} /><span>ATLAS</span></button>
+      <button type="button" onClick={() => document.querySelector('.locality-explorer')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}><Users size={13} /><span>WARD LIST</span></button>
+    </div>
+    <div className="mobile-world-ticker">
+      <span className={activeMeeting ? 'ticker-live meeting-live' : 'ticker-live'}><i />{activeMeeting ? activeMeeting.status === 'closed' ? 'MEETING RECORD' : ['at-venue', 'discussion'].includes(meetingPhase) ? 'AT VENUE' : 'MEETING · EN ROUTE' : isInstitutional ? 'STORY UPDATE' : 'MISSION'}</span>
+      <strong>{activeMeeting?.title || chapter?.title || 'Continue your public-life story'}</strong>
+      {activeMeeting && <small className="mobile-meeting-count">{arrivedMeetingPlayers}/{interestedMeetingPlayers} HERE</small>}
+      <button type="button" onClick={activeMeeting ? onEnterMeeting : onOpenCareer} disabled={Boolean(activeMeeting?.status === 'open' && !['at-venue', 'discussion'].includes(meetingPhase))}>{activeMeeting ? activeMeeting.status === 'closed' ? 'RECORD' : ['at-venue', 'discussion'].includes(meetingPhase) ? 'DISCUSS' : 'WALKING' : 'OPEN'} <ArrowRight size={12} /></button>
+    </div>
+    <div className="world-topline"><div className="world-live"><span className="pulse-dot" />LOCAL WORLD <b>{(locality?.ward || stateInfo.capital).toUpperCase()}</b><span className="line-sep" />{stateInfo.zone.toUpperCase()}</div><div className={`world-date world-time-${timePhase.toLowerCase().replace(' ', '-')}`}><Clock3 size={13} />{dateLabel(storyDay)} <span>·</span> {worldClock} WAT <span className="weather-dot" /> {timePhase}</div><div className="world-connect"><span className={`network-led ${networkStatus}`} />{networkStatus === 'online' ? `${onlineCount || 1} PLAYERS` : 'LOCAL INSTANCE'}</div><div className="world-mode-tabs" role="tablist" aria-label="Choose map view"><button type="button" role="tab" aria-selected={worldView === 'story'} className={worldView === 'story' ? 'active' : ''} onClick={() => setWorldView('story')}><Move size={12} />3D STORY</button><button type="button" role="tab" aria-selected={worldView === 'map'} className={worldView === 'map' ? 'active' : ''} onClick={() => setWorldView('map')}><Map size={12} />LIVE MAP</button></div></div>
+    <div className={`world-view-frame ${worldView === 'map' ? 'map-mode' : ''} ${interiorInfo ? 'inside-interior' : ''}`}>
+      {worldView === 'map' ? <Suspense fallback={<div className="maplibre-load-shell"><span className="maplibre-spinner" />Loading MapLibre…</div>}><MapLibreWorld stateInfo={stateInfo} locality={locality} locationKey={locationKey} /></Suspense> : <>
+      <World state={stateInfo.name} locality={locality} locationKey={locationKey} selectedVenueId={venue.id} focusRequest={focusRequest} onVenueSelect={onSelectVenue} onMove={handlePlayerMove} remotePlayers={remotePlayers} playerColor={playerColor} playerAppearance={playerAppearance} worldMinute={safeMinute} meeting={activeMeeting} meetingMessages={meetingMessages} meetingParticipants={meetingParticipants} meetingPhase={meetingPhase} meetingSlot={meetingSlot} playerId={playerId} onMeetingArrival={onMeetingArrival} partyOfficeActionRef={partyOfficeActionRef} exitInteriorActionRef={exitInteriorActionRef} onInteriorChange={setInteriorInfo} /><div className="scene-vignette" />
+      <div className={`scene-mission-card ${isInstitutional ? 'institutional-mission-hud' : ''}`}>
+        <div className="scene-mission-head"><span><i />{activeMeeting ? activeMeeting.status === 'closed' ? 'MEETING RECORD' : ['at-venue', 'discussion'].includes(meetingPhase) ? 'GATHERED AT VENUE' : 'PLAYERS ON THE WAY' : isInstitutional ? 'FICTIONAL ROLEPLAY' : 'ACTIVE MISSION'}</span><b>{activeMeeting ? `${arrivedMeetingPlayers}/${interestedMeetingPlayers} HERE` : isInstitutional ? 'STORY' : `${missionProgress}/3`}</b></div>
+        <strong>{activeMeeting?.title || (isInstitutional ? institutionRole?.personnelLabel || 'Institutional story' : chapter?.title || 'Continue your story')}</strong>
+        <p>{activeMeeting?.topic || (isInstitutional ? 'Explore a fictional institution story. No employment, appointment or separate office ladder.' : missionProgress >= 3 ? 'Preparations complete. Review the chapter and continue when you are ready.' : chapter?.objectives?.[missionProgress] || chapter?.goal || 'Move through the district and meet your next contact.')}</p>
+        {!isInstitutional && <div className="scene-mission-meter"><span style={{ width: `${Math.min(100, (missionProgress / 3) * 100)}%` }} /></div>}
+        <button type="button" onClick={activeMeeting ? onEnterMeeting : onOpenCareer} disabled={Boolean(activeMeeting?.status === 'open' && !['at-venue', 'discussion'].includes(meetingPhase))}>{activeMeeting ? activeMeeting.status === 'closed' ? 'VIEW MEETING RECORD' : ['at-venue', 'discussion'].includes(meetingPhase) ? 'OPEN DISCUSSION' : 'GATHERING IN WORLD' : isInstitutional ? 'OPEN STORY RECORD' : 'OPEN MISSION FILE'} <ArrowRight size={12} /></button>
+      </div>{interiorInfo && <div className="interior-overlay"><div className="interior-overlay-top"><div><div className="interior-kicker"><i />{interiorInfo.type === 'party-office' ? 'SIMULATED PARTY BRANCH' : `${interiorInfo.type || 'COMMUNITY'} INTERIOR`}</div><h3>{interiorInfo.title}</h3><p className="interior-locality">{locality ? `${locality.ward} ward · ${locality.lga} LGA · ${stateInfo.name}` : `${stateInfo.capital} · ${stateInfo.name}`}</p></div><button type="button" onClick={() => exitInteriorActionRef.current?.()} aria-label="Exit interior"><X size={13} /></button></div>{interiorInfo.party && <><div className="interior-party-brand"><img src={interiorInfo.party.logo} alt="" /><span><b>{interiorInfo.party.name} ({interiorInfo.party.tag})</b><small>REGISTERED PARTY · NATIONAL DATA FROM INEC</small></span></div><div className="interior-register-note"><strong>INEC REGISTER SNAPSHOT · {interiorInfo.nationalOfficers?.checkedAt}</strong><span>National officers are shown separately from the fictional ward branch below.</span><a href={interiorInfo.nationalOfficers?.source} target="_blank" rel="noreferrer">Open official INEC party register</a></div><div className="interior-national-roster"><span>NATIONAL CHAIR<b>{interiorInfo.nationalOfficers?.chair || 'Not listed in snapshot'}</b></span><span>NATIONAL SECRETARY<b>{interiorInfo.nationalOfficers?.secretary || 'Not listed in snapshot'}</b></span></div><div className="interior-fiction-heading"><span>WARD EXECUTIVE TEAM</span><b>SIMULATED · FICTIONAL</b></div><div className="interior-executive-list">{(interiorInfo.branch || []).map((person) => <div key={person.id}><span>{person.position}</span><b>{person.name}</b></div>)}</div></>}<div className="interior-description">{interiorInfo.type === 'party-office' ? 'This ward office and its local officers are generated for gameplay; they are not verified real premises or real officials.' : interiorInfo.type === 'vehicle' ? 'A stylised vehicle interior for the fictional procedural city. Vehicle availability and placement are game simulation.' : 'A fictional procedural interior built for exploration and story scenes, not a surveyed or official facility.'}</div><button className="interior-exit-button" type="button" onClick={() => exitInteriorActionRef.current?.()}>EXIT TO STREET <span>TAP</span></button></div>}
+      <div className="scene-location-card"><div className="scene-card-kicker"><span className="scene-pin" />{locality ? 'YOUR WARD' : 'STATE CAPITAL'} <span>·</span> {stateInfo.zone.toUpperCase()}</div><h2>{locality?.lga || stateInfo.capital}<span>,</span> {stateInfo.name}</h2><p>{locality ? `${locality.ward} · ${stateWorldProfile.biome}` : `${stateWorldProfile.biome} · ${stateInfo.capital}`} · fictional procedural scene</p><div className="scene-time-chip"><span><Clock3 size={11} />{worldClock} WAT</span><b>{timePhase}</b></div><div className="scene-local-style"><span>LOCAL STREET STYLE</span><b>{localityVisual.label}</b><small>{localityVisual.trafficMix.slice(0, 3).join(' · ')}</small></div><div className="scene-local-landmark"><MapPin size={13} /><span>STATE SIGNATURE</span><b>{stateInfo.landmark}</b></div></div>
       <div className="scene-brief-card"><div className="brief-head"><span className="brief-live"><Radio size={12} /> ELECTION CLOCK</span><span>INEC CALENDAR</span></div><div className="brief-countdown"><div><strong>{Number.isFinite(daysToFederal) ? Math.max(0, daysToFederal) : '—'}</strong><span>DAYS TO FEDERAL</span></div><i /><div><strong>{Number.isFinite(daysToState) ? Math.max(0, daysToState) : '—'}</strong><span>DAYS TO STATE</span></div></div><div className="brief-dates"><span>16 JAN 2027</span><span>06 FEB 2027</span></div></div>
-      <div className="mini-map-card"><div className="mini-map-top"><span>{locality ? `${locality.lga.toUpperCase()} GRID` : 'CAPITAL GRID'}</span><span className="map-north">N ↑</span></div><svg viewBox="0 0 150 102" role="img" aria-label="Stylised local street grid"><path d="M8 26H138M8 50H138M8 75H138M31 10V92M67 10V92M103 10V92M128 10V92" stroke="rgba(241,240,215,.42)" strokeWidth="3" /><path d="M8 50H138M67 10V92" stroke="#d6f176" strokeWidth="6" /><circle cx="83" cy="40" r="5" fill="#fff5db" /><circle cx="83" cy="40" r="12" fill="none" stroke="#d6f176" strokeWidth="1.5" /><path d="M83 27l-5 8h10z" fill="#d6f176" /></svg><div className="mini-map-foot"><span><i /> YOU</span><span>NOT TO SCALE</span></div></div>
+      <div className="mini-map-card"><div className="mini-map-top"><span>{locality ? `${locality.lga.toUpperCase()} GRID` : 'CAPITAL GRID'}</span><span className="map-north">N ↑</span></div><svg viewBox="0 0 150 102" role="img" aria-label="Stylised local street grid with a player marker that tracks your 3D position"><path d="M8 26H138M8 50H138M8 75H138M31 10V92M67 10V92M103 10V92M128 10V92" stroke="rgba(241,240,215,.42)" strokeWidth="3" /><path d="M8 50H138M67 10V92" stroke="#d6f176" strokeWidth="6" /><g ref={minimapMarkerRef} className="minimap-player-marker" transform="translate(63.4 54.8) rotate(180)"><circle r="10" fill="rgba(214,241,118,.18)" stroke="#d6f176" strokeWidth="1.5" /><circle r="4.4" fill="#fff8da" stroke="#152016" strokeWidth="1.4" /><path d="M0 -14 L-4 -5 L0 -7 L4 -5Z" fill="#d6f176" /></g></svg><div className="mini-map-foot"><span><i /> YOU</span><span>NOT TO SCALE</span></div></div>
       <div className="scene-current-site"><span className="site-icon"><MapPin size={14} /></span><div><small>SELECTED LOCATION</small><strong>{venueName}</strong><span>{venue.desc}</span><span>{locality ? `${locality.ward} ward · ${locality.lga} LGA` : `Capital district · ${stateInfo.name}`}</span></div></div>
-      <div className="scene-controls"><span><Move size={13} /> CLICK TO WALK</span><i /> <span>WASD / ARROWS MOVE</span><i /> <span>DRAG TO ORBIT</span><i /> <span>SCROLL TO ZOOM</span></div>
-      <div className="mobile-gesture-hint"><span>SWIPE TO ORBIT</span><i /> <span>PINCH TO ZOOM</span></div>
-      <div className="scene-cinematic-label"><span>REALTIME CITY</span><b>3D</b></div><div className="scene-asset-note">STYLISED PROCEDURAL DISTRICT · NOT A SURVEY MAP</div>
+      <div className="scene-controls"><span><Move size={13} /> CLICK TO WALK</span><i /> <span>WASD / ARROWS MOVE</span><i /> <span>CLICK DOOR TO ENTER</span><i /> <span>DRAG TO ORBIT</span><i /> <span>SCROLL TO ZOOM</span></div>
+      <div className="mobile-gesture-hint" aria-label="Touch controls: tap to walk or enter doors, drag to orbit, pinch to zoom"><span>TAP TO WALK</span><i /> <span>DRAG TO ORBIT</span><i /> <span>PINCH TO ZOOM</span><i /> <span>TAP DOOR TO ENTER</span></div>
+      <div className="scene-cinematic-label"><span>REALTIME CITY</span><b>3D</b></div><div className="scene-asset-note">STYLISED PROCEDURAL STORY WORLD · NOT A SURVEY MAP</div>
+      <div className="mobile-player-dock" aria-label="Player status and shortcuts">
+        <button className="mobile-player-avatar" type="button" onClick={onOpenAvatar} style={{ '--party-color': playerColor }} aria-label="Customize player avatar">{initials(profile?.alias || 'New Candidate')}</button>
+        <div className="mobile-player-identity"><strong>{profile?.alias || 'New Candidate'}</strong><small>{isInstitutional ? institutionRole?.personnelLabel || 'Institutional story' : currentParty?.tag || 'GUEST PLAYER'}</small></div>
+        <div className="mobile-player-meter"><div><span>{isInstitutional ? 'REPUTATION' : 'TRUST'}</span><b>{profile?.trust ?? 0}</b></div><i><em style={{ width: `${clamp(Number(profile?.trust) || 0)}%` }} /></i></div>
+        <div className="mobile-player-meter energy-meter"><div><span>ENERGY</span><b>{profile?.energy ?? 0}</b></div><i><em style={{ width: `${clamp(Number(profile?.energy) || 0)}%` }} /></i></div>
+        <button className="mobile-phone-shortcut" type="button" onClick={onOpenPhone} aria-label="Open chat and meetings"><MessageCircle size={17} /></button>
+      </div>
+      </>}
     </div>
     <div className="mobile-scroll-note"><span>SCROLL FOR PLACES, MISSIONS & WARD DIRECTORY</span><ChevronDown size={12} /></div>
-    <div className="world-lower-row"><div className="location-card-grid"><div className="location-filter-row"><div><span className="eyebrow-line" />PLACES TO VISIT <b>{visibleVenues.length}</b></div><div className="location-filter">{venueTypes.map((type) => <button key={type} className={venueFilter === type ? 'active' : ''} onClick={() => setVenueFilter(type)}>{type}</button>)}</div></div><div className="venue-cards">{visibleVenues.map((place) => <button key={place.id} className={`venue-chip ${venue.id === place.id ? 'selected' : ''}`} onClick={() => onSelectVenue(place.id)} aria-label={`Travel to ${place.label} in the 3D city`} title={`Travel to ${place.label}`}><span className={`venue-icon venue-${place.type}`}>{venueIcon(place.type)}</span><span><strong>{place.label}</strong><small>{place.short} · VISIT IN 3D</small></span><ArrowRight size={13} /></button>)}</div></div>
+    <div className="world-lower-row"><div id="mobile-world-places" className="location-card-grid"><div className="location-filter-row"><div><span className="eyebrow-line" />PLACES TO VISIT <b>{visibleVenues.length}</b></div><div className="location-filter">{venueTypes.map((type) => <button key={type} className={venueFilter === type ? 'active' : ''} onClick={() => setVenueFilter(type)}>{type}</button>)}</div></div><div className="venue-cards">{visibleVenues.map((place) => <button key={place.id} className={`venue-chip ${venue.id === place.id ? 'selected' : ''}`} onClick={() => onSelectVenue(place.id)} aria-label={`Travel to ${place.label} in the 3D city`} title={`Travel to ${place.label}`}><span className={`venue-icon venue-${place.type}`}>{venueIcon(place.type)}</span><span><strong>{place.label}</strong><small>{place.short} · VISIT IN 3D</small></span><ArrowRight size={13} /></button>)}</div></div>
       <div className="world-feed-card"><div className="feed-card-head"><span><Activity size={14} />DISTRICT PULSE</span><button onClick={() => onTravel('Lagos')}>RETURN TO START <ArrowRight size={12} /></button></div><div className="district-pulse-grid"><div><strong>37</strong><small>CAPITALS</small></div><div><strong>06</strong><small>GEO-ZONES</small></div><div><strong>{onlineCount || 1}</strong><small>PLAYERS</small></div></div><p>Regional biomes, roadside compounds, market stalls, civic landmarks and familiar Nigerian vehicles vary by state and locality. Multiplayer presence is a small-room prototype.</p></div></div>
+    {institutionRole
+      ? <InstitutionalWorldPanel role={institutionRole} stateName={stateInfo.name} onExploreSideStory={onExploreSideStory} onJoinPolitical={onJoinPolitical} />
+      : <PartyDirectory parties={PARTY_OPTIONS} branches={localPartyBranches} activeParty={currentParty} stateInfo={stateInfo} locality={locality} onEnter={enterPartyOffice} />}
     <LocalityExplorer stateInfo={stateInfo} stateWorldProfile={stateWorldProfile} data={localityData} loading={localityLoading} error={localityError} lgaName={selectedLgaName} selectedWardKey={selectedWardKey} onSelectLga={onSelectLga} onSelectWard={onSelectWard} />
   </div>;
+}
+
+function InstitutionalWorldPanel({ role, stateName, onExploreSideStory, onJoinPolitical }) {
+  const stories = getInstitutionStoryIds(role.id, stateName)
+    .map((id) => OTHER_SIDE_STORIES.find((story) => story.id === id))
+    .filter(Boolean);
+  return <section className="institution-world-panel">
+    <div className="institution-world-head"><span className="institution-world-icon">{role.id === 'judiciary' ? <Scale size={20} /> : role.id === 'cbn' ? <Banknote size={20} /> : <Landmark size={20} />}</span><div><div className="institution-world-kicker">FICTIONAL PERSONNEL STORY · NON-PARTISAN</div><h2>{role.personnelLabel}</h2></div><span className="institution-role-stamp">NO<br />OFFICE</span></div>
+    <p>{role.description}</p>
+    <div className="institution-world-boundary"><Shield size={13} /><span>Roleplay only: no real employment, appointment, statutory authority or political office is implied. This character is not enrolled in a second career ladder.</span></div>
+    <div className="institution-world-actions">{stories.map((story) => <button key={story.id} onClick={() => onExploreSideStory(story.id)}><span><small>OPEN STORY SCENE</small><strong>{story.title}</strong></span><ArrowRight size={14} /></button>)}</div>
+    <button className="institution-switch-link" onClick={onJoinPolitical}>OPTIONALLY JOIN THE SINGLE POLITICAL LADDER <ArrowRight size={13} /></button>
+  </section>;
 }
 
 function venueIcon(type) {
@@ -887,13 +1397,22 @@ function venueIcon(type) {
   return <Users size={15} />;
 }
 
-function CareerPage({ stageIndex, progress, profile, onJump, onContinue, stages, onOpenInstitution }) {
+function CareerPage({ stageIndex, progress, profile, onJump, onContinue, onExploreSideStory, sideStoriesSeen, onJoinPolitical }) {
+  const institutionRole = profile.roleMode === 'institutional' ? getInstitutionRole(profile.institution) : null;
+  if (institutionRole) return <div className="career-page institutional-career-page">
+    <section className="institution-career-hero">
+      <div className="institution-career-icon">{institutionRole.id === 'judiciary' ? <Scale size={25} /> : institutionRole.id === 'cbn' ? <Banknote size={25} /> : <Landmark size={25} />}</div>
+      <div className="institution-career-copy"><div className="career-label"><Shield size={13} /> FICTIONAL INSTITUTION ROLE <span>NO PROMOTION LADDER</span></div><h2>Public service,<br /><em>without an office race.</em></h2><p>{institutionRole.description} Your story character can explore short institutional encounters; no real appointment or official power is granted.</p><div className="institution-career-tags"><span><Check size={12} /> NON-PARTISAN ROLEPLAY</span><span><Check size={12} /> NO PARALLEL LADDER</span><span><Check size={12} /> PARTY SWITCH IS OPTIONAL</span></div><div className="institution-career-actions"><button className="secondary-button" onClick={() => onJump('world')}>RETURN TO THE WORLD <ArrowRight size={13} /></button><button className="primary-action" onClick={onJoinPolitical}>OPTIONALLY JOIN A REGISTERED PARTY <ArrowRight size={13} /></button></div></div>
+    </section>
+    <section className="side-story-section"><div className="side-story-heading"><div><div className="eyebrow"><span className="eyebrow-line" />INSTITUTIONAL STORY ENCOUNTERS</div><h2>Explore the other sides of public life</h2><p>These are short, fictional roleplay encounters with judiciary, INEC, state SIEC and CBN perspectives—not ranks, appointments, agency authority or a second career ladder.</p></div><span className="side-story-seal"><Users size={16} /> CIVIC WORLD</span></div><div className="side-story-grid">{OTHER_SIDE_STORIES.map((story) => <article className="side-story-card" key={story.id}><div className="side-story-card-top"><span>{story.classification}</span><b>{sideStoriesSeen.includes(story.id) ? 'VISITED' : 'STORY'}</b></div><h3>{story.title}</h3><p>{story.fact}</p><button onClick={() => onExploreSideStory(story.id)}>{sideStoriesSeen.includes(story.id) ? 'REVISIT SCENE' : 'ENTER STORY'} <ArrowRight size={13} /></button></article>)}</div></section>
+    <div className="career-footer-note"><Shield size={17} /><div><strong>The political ladder remains one optional route.</strong><span>Switching only adds a registered-party political story at chapter 1. It awards no office. Every later political position still requires its paid, contested process; you may also remain in the institutional story role.</span></div></div>
+  </div>;
   return <div className="career-page">
-    <div className="career-hero-card"><div className="career-hero-copy"><div className="career-label"><Sparkles size={14} /> ONE POLITICAL LADDER <span>{stages.length} STAGES</span></div><h2>From one ward<br /><em>to the whole country.</em></h2><p>{CAREER_TRACKS[0].description}</p><button className="primary-action" onClick={() => onJump('world')}>RETURN TO THE WORLD <ArrowRight size={14} /></button></div><div className="career-ring"><div className="career-ring-inner"><strong>{String(stageIndex + 1).padStart(2, '0')}</strong><span>OF {stages.length}</span></div><span className="ring-orbit" /><span className="ring-dot" /></div><div className="career-hero-stats"><div><small>SIMULATED MILESTONES</small><strong>{profile.wins}</strong></div><div><small>PUBLIC TRUST</small><strong>{profile.trust}<i>%</i></strong></div><div><small>LADDER PROGRESS</small><strong>{Math.round(((stageIndex + 1) / stages.length) * 100)}<i>%</i></strong></div></div></div>
-    <div className="timeline-heading"><div><div className="eyebrow"><span className="eyebrow-line" />POLITICAL CAREER LADDER</div><h2>{stages.length} stages · one continuous route</h2></div><div className="timeline-legend"><span><i className="legend-done" />COMPLETED</span><span><i className="legend-current" />CURRENT</span><span><i className="legend-locked" />LOCKED</span></div></div>
-    <div className="career-timeline">{stages.map((chapter, index) => { const completed = index < stageIndex; const current = index === stageIndex; return <div key={chapter.id} className={`timeline-item ${completed ? 'done' : ''} ${current ? 'current' : ''}`}><div className="timeline-track"><div className="timeline-node">{completed ? <Check size={13} /> : chapter.number}</div>{index < stages.length - 1 && <span className="timeline-line" />}</div><div className="timeline-content"><div className="timeline-meta"><span>{chapter.phase}</span><span>STAGE {chapter.number}</span></div><h3>{chapter.title}</h3><p>{chapter.office} · {chapter.goal}</p>{current && <div className="timeline-current-state"><span>IN PROGRESS</span><span>{progress} / 3 story interactions</span><button onClick={chapter.kind === 'story' ? onContinue : () => onJump('world')} disabled={chapter.kind === 'story' && progress < 3}>{chapter.kind === 'story' ? 'ADVANCE' : chapter.kind === 'appointment' ? 'PREPARE REVIEW' : 'PREPARE IN WORLD'}<ArrowRight size={12} /></button></div>}{completed && <div className="timeline-complete"><BadgeCheck size={13} />CHAPTER COMPLETE · {profile.alias}</div>}</div></div>; })}</div>
-    <section className="institution-story-section"><div className="institution-story-heading"><div><div className="eyebrow"><span className="eyebrow-line" />THE OTHER SIDE OF THE STORY</div><h2>Institutions beyond the campaign.</h2><p>You remain on the political ladder. Meet fictional judges, election officials and central-bank professionals; their independent work shapes the world around your campaign.</p></div><span className="institution-story-stamp"><Shield size={15} />SEPARATE POWERS</span></div><div className="institution-story-grid">{INSTITUTIONAL_STORY_ARCS.map((arc) => { const complete = (profile.completedSideStories || []).includes(arc.id); return <article className={`institution-story-card ${complete ? 'complete' : ''}`} key={arc.id}><div className="institution-story-card-top"><span>{arc.shortLabel}</span><span>{complete ? 'FILED' : 'SIDE STORY'}</span></div><h3>{arc.label}</h3><p className="institution-role-path">{arc.rolePath}</p><p>{arc.pathwayNote}</p><button onClick={() => onOpenInstitution(arc.id)}>{complete ? 'REVISIT STORY' : `OPEN ${arc.shortLabel} STORY`} <ArrowRight size={12} /></button></article>; })}</div></section>
-    <div className="career-footer-note"><Shield size={17} /><div><strong>Elected, internal and appointed roles stay distinct.</strong><span>Political contests advance the player. Courts, election administrators and the Central Bank are separate institutions; side stories do not make the player a judge, INEC/SIEC official, or CBN appointee.</span></div></div>
+    <div className="career-hero-card"><div className="career-hero-copy"><div className="career-label"><Sparkles size={14} /> ONE POLITICAL LADDER <span>12 CHAPTERS</span></div><h2>From youth leadership<br /><em>to the presidency.</em></h2><p>The main progression stays political: ward leadership, councillor, legislator, Senate and the fictional presidential contest. Elected, internal-party and appointed roles remain clearly distinct.</p><button className="primary-action" onClick={() => onJump('world')}>RETURN TO THE WORLD <ArrowRight size={14} /></button></div><div className="career-ring"><div className="career-ring-inner"><strong>{String(stageIndex + 1).padStart(2, '0')}</strong><span>OF {CHAPTERS.length}</span></div><span className="ring-orbit" /><span className="ring-dot" /></div><div className="career-hero-stats"><div><small>SIMULATED MILESTONES</small><strong>{profile.wins}</strong></div><div><small>PUBLIC TRUST</small><strong>{profile.trust}<i>%</i></strong></div><div><small>CAREER PROGRESS</small><strong>{Math.round(((stageIndex + 1) / CHAPTERS.length) * 100)}<i>%</i></strong></div></div></div>
+    <div className="timeline-heading"><div><div className="eyebrow"><span className="eyebrow-line" />THE POLITICAL LADDER</div><h2>One continuous route · {CHAPTERS.length} stages</h2></div><div className="timeline-legend"><span><i className="legend-done" />COMPLETED</span><span><i className="legend-current" />CURRENT</span><span><i className="legend-locked" />LOCKED</span></div></div>
+    <div className="career-timeline">{CHAPTERS.map((chapter, index) => { const completed = index < stageIndex; const current = index === stageIndex; return <div key={chapter.id} className={`timeline-item ${completed ? 'done' : ''} ${current ? 'current' : ''}`}><div className="timeline-track"><div className="timeline-node">{completed ? <Check size={13} /> : chapter.number}</div>{index < CHAPTERS.length - 1 && <span className="timeline-line" />}</div><div className="timeline-content"><div className="timeline-meta"><span>{chapter.phase}</span><span>STAGE {chapter.number}</span></div><h3>{chapter.title}</h3><p>{chapter.office} · {chapter.goal}</p><small className="timeline-process">{chapter.kind === 'race' ? 'PUBLIC ELECTION · FICTIONAL' : chapter.kind === 'primary' ? 'INTERNAL PARTY / CHAMBER SELECTION' : chapter.kind === 'appointment' ? 'APPOINTMENT · NOT A PUBLIC BALLOT' : 'SHARED CIVIC STORY'}</small>{current && <div className="timeline-current-state"><span>IN PROGRESS</span><span>{progress} / 3 preparations complete</span><button onClick={chapter.kind === 'story' ? onContinue : () => onJump('world')} disabled={chapter.kind === 'story' && progress < 3}>{chapter.kind === 'story' ? 'ADVANCE' : 'PREPARE IN WORLD'}<ArrowRight size={12} /></button></div>}{completed && <div className="timeline-complete"><BadgeCheck size={13} />CHAPTER COMPLETE · {profile.alias}</div>}</div></div>; })}</div>
+    <section className="side-story-section"><div className="side-story-heading"><div><div className="eyebrow"><span className="eyebrow-line" />THE OTHER SIDE OF PUBLIC LIFE</div><h2>Institutions beyond the campaign trail</h2><p>Meet fictional professionals and experience the judiciary, election administration and central banking from the inside. These are side-story encounters—not alternate ladders, appointments, or changes to your political office.</p></div><span className="side-story-seal"><Users size={16} /> CIVIC WORLD</span></div><div className="side-story-grid">{OTHER_SIDE_STORIES.map((story) => <article className="side-story-card" key={story.id}><div className="side-story-card-top"><span>{story.classification}</span><b>{sideStoriesSeen.includes(story.id) ? 'VISITED' : 'SIDE STORY'}</b></div><h3>{story.title}</h3><p>{story.fact}</p><button onClick={() => onExploreSideStory(story.id)}>{sideStoriesSeen.includes(story.id) ? 'REVISIT SCENE' : 'ENTER STORY'} <ArrowRight size={13} /></button></article>)}</div></section>
+    <div className="career-footer-note"><Shield size={17} /><div><strong>The political ladder remains the main career.</strong><span>Side stories show the distinct roles of independent courts, INEC, state election commissions and the CBN. Judges, election officials and CBN leaders are not elected campaign offices; real appointment rules apply outside this fictional, accelerated game.</span></div></div>
   </div>;
 }
 
@@ -901,7 +1420,7 @@ function OfficesPage() {
   const [filter, setFilter] = useState('ALL ROLES');
   const filters = ['ALL ROLES', 'ELECTED', 'INTERNAL', 'APPOINTED'];
   const groups = OFFICE_CATALOG.filter((group) => filter === 'ALL ROLES' || group.group.includes(filter));
-  return <div className="offices-page"><div className="offices-intro"><div className="offices-intro-icon"><Landmark size={25} /></div><div><div className="eyebrow"><span className="eyebrow-line" />OFFICE DIRECTORY</div><h2>Who holds what—and how they get there.</h2><p>Election titles, party positions, legislative leadership, and appointed offices are different routes. This directory maps the core political sphere represented in the prototype.</p></div></div><div className="office-filter-row">{filters.map((item) => <button key={item} onClick={() => setFilter(item)} className={filter === item ? 'active' : ''}>{item}</button>)}<span><CircleHelp size={13} /> Titles can vary by law, party constitution, and chamber rules.</span></div><div className="office-groups">{groups.map((group) => <section className="office-group" key={group.group}><div className="office-group-head"><span className={`office-group-icon ${group.icon === '◆' ? 'elected' : group.icon === '◇' ? 'internal' : 'appointed'}`}>{group.icon}</span><h3>{group.group}</h3><span>{group.roles.length} TITLES</span></div><div className="office-role-grid">{group.roles.map(([title, description]) => <article className="office-role-card" key={title}><div className="office-role-top"><span>{group.icon}</span><span className="role-category">{group.group.split(' — ')[0]}</span></div><h4>{title}</h4><p>{description}</p><div className="role-divider" /><small><ArrowRight size={12} />{group.group.includes('ELECTED') ? 'PUBLIC BALLOT' : group.group.includes('INTERNAL') ? 'INTERNAL SELECTION' : group.group.includes('PUBLIC INSTITUTIONS') ? 'INDEPENDENT OFFICE' : 'APPOINTMENT / SERVICE'}</small></article>)}</div></section>)}</div><div className="office-footnote"><InfoDot /><span>This is a broad game-facing directory, not an exhaustive legal register of every public-service or party title. Constitutional and state-specific rules take precedence.</span></div></div>;
+  return <div className="offices-page"><div className="offices-intro"><div className="offices-intro-icon"><Landmark size={25} /></div><div><div className="eyebrow"><span className="eyebrow-line" />OFFICE DIRECTORY</div><h2>Who holds what—and how they get there.</h2><p>Election titles, party positions, legislative leadership, and appointed offices are different routes. This is a reference catalogue only—it never grants a position. Every playable career office requires a paid contest/review with a rival, and your prior active position is vacated before the next contest.</p></div></div><div className="office-filter-row">{filters.map((item) => <button key={item} onClick={() => setFilter(item)} className={filter === item ? 'active' : ''}>{item}</button>)}<span><CircleHelp size={13} /> Titles can vary by law, party constitution, and chamber rules.</span></div><div className="office-groups">{groups.map((group) => <section className="office-group" key={group.group}><div className="office-group-head"><span className={`office-group-icon ${group.icon === '◆' ? 'elected' : group.icon === '◇' ? 'internal' : 'appointed'}`}>{group.icon}</span><h3>{group.group}</h3><span>{group.roles.length} TITLES</span></div><div className="office-role-grid">{group.roles.map(([title, description]) => <article className="office-role-card" key={title}><div className="office-role-top"><span>{group.icon}</span><span className="role-category">{group.group.split(' — ')[0]}</span></div><h4>{title}</h4><p>{description}</p><div className="role-divider" /><small><ArrowRight size={12} />{group.group.includes('ELECTED') ? 'PUBLIC BALLOT' : group.group.includes('INTERNAL') ? 'INTERNAL SELECTION' : group.group.includes('PUBLIC INSTITUTIONS') ? 'INDEPENDENT OFFICE' : 'APPOINTMENT / SERVICE'}</small></article>)}</div></section>)}</div><div className="office-footnote"><InfoDot /><span>This is a broad game-facing directory, not an exhaustive legal register of every public-service or party title. Constitutional and state-specific rules take precedence.</span></div></div>;
 }
 
 function InfoDot() { return <span className="info-dot">i</span>; }
@@ -909,7 +1428,7 @@ function ShieldCheckIcon() { return <Shield size={26} />; }
 
 function CivicPage() {
   const [expanded, setExpanded] = useState(0);
-  return <div className="civic-page"><div className="civic-banner"><div className="civic-banner-icon"><BookOpen size={23} /></div><div><div className="eyebrow"><span className="eyebrow-line" />THE CIVIC DESK</div><h2>Documented pressure points. Not a stereotype.</h2><p>“Dirty politics” is treated as institutional pressures and reported practices—not as a Nigerian cultural trait. The game rewards accountable choices and makes abuse costly.</p></div><div className="civic-stamp"><ShieldCheckIcon /><span>NON-PARTISAN<br />GAME RESEARCH</span></div></div><div className="civic-note-strip"><span className="note-strip-icon"><Eye size={15} /></span><p><strong>How this world handles culture:</strong> Nigerian communities are diverse. The sim includes traditional institutions, faith communities, unions, market associations, youth networks, and civic groups as voluntary voices—not as uniform vote banks.</p></div><div className="research-grid">{RESEARCH_NOTES.map((note, index) => <article className={`research-card ${expanded === index ? 'expanded' : ''}`} key={note.tag}><button className="research-card-button" onClick={() => setExpanded(expanded === index ? -1 : index)}><div className="research-card-top"><span>{note.tag}</span><span className="research-index">0{index + 1}</span></div><h3>{note.title}</h3><p>{note.body}</p><div className="research-source"><BookOpen size={13} /><span>{note.source}</span><ChevronDown size={14} /></div></button>{expanded === index && <a className="source-link" href={note.url} target="_blank" rel="noreferrer">OPEN SOURCE <ArrowRight size={12} /></a>}</article>)}</div><div className="history-panel"><div className="history-panel-heading"><div><div className="eyebrow"><span className="eyebrow-line" />HISTORICAL STARTING POINT</div><h3>From 2023 lessons to a fictional 2027 run.</h3></div><span className="history-date">REFERENCE · 10 OCT 2026</span></div><div className="history-track"><div className="history-point"><span>2023</span><strong>General election</strong><p>Observer findings inform game mechanics: trust, results transparency, campaign finance, participation, and dispute resolution.</p></div><div className="history-point"><span>2024</span><strong>Off-cycle contests</strong><p>State-by-state contests and controversies show why one national campaign template cannot explain every local race.</p></div><div className="history-point future"><span>2027</span><strong>Player-authored scenario</strong><p>INEC’s calendar lists 16 January and 6 February 2027 polls. The real outcome is unknown; your fictional run is not a prediction.</p></div></div></div><div className="civic-footer"><span><Scale size={15} /> Elections, petitions, and official titles use civic references; game characters, parties, and results are invented.</span><button onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>BACK TO TOP <ArrowRight size={12} /></button></div></div>;
+  return <div className="civic-page"><div className="civic-banner"><div className="civic-banner-icon"><BookOpen size={23} /></div><div><div className="eyebrow"><span className="eyebrow-line" />THE CIVIC DESK</div><h2>Documented pressure points. Not a stereotype.</h2><p>“Dirty politics” is treated as institutional pressures and reported practices—not as a Nigerian cultural trait. The game rewards accountable choices and makes abuse costly.</p></div><div className="civic-stamp"><ShieldCheckIcon /><span>NON-PARTISAN<br />GAME RESEARCH</span></div></div><div className="civic-note-strip"><span className="note-strip-icon"><Eye size={15} /></span><p><strong>How this world handles culture:</strong> Nigerian communities are diverse. The sim includes traditional institutions, faith communities, unions, market associations, youth networks, and civic groups as voluntary voices—not as uniform vote banks.</p></div><div className="research-grid">{RESEARCH_NOTES.map((note, index) => <article className={`research-card ${expanded === index ? 'expanded' : ''}`} key={note.tag}><button className="research-card-button" onClick={() => setExpanded(expanded === index ? -1 : index)}><div className="research-card-top"><span>{note.tag}</span><span className="research-index">0{index + 1}</span></div><h3>{note.title}</h3><p>{note.body}</p><div className="research-source"><BookOpen size={13} /><span>{note.source}</span><ChevronDown size={14} /></div></button>{expanded === index && <a className="source-link" href={note.url} target="_blank" rel="noreferrer">OPEN SOURCE <ArrowRight size={12} /></a>}</article>)}</div><div className="history-panel"><div className="history-panel-heading"><div><div className="eyebrow"><span className="eyebrow-line" />HISTORICAL STARTING POINT</div><h3>From 2023 lessons to a fictional 2027 run.</h3></div><span className="history-date">REFERENCE · 10 OCT 2026</span></div><div className="history-track"><div className="history-point"><span>2023</span><strong>General election</strong><p>Observer findings inform game mechanics: trust, results transparency, campaign finance, participation, and dispute resolution.</p></div><div className="history-point"><span>2024</span><strong>Off-cycle contests</strong><p>State-by-state contests and controversies show why one national campaign template cannot explain every local race.</p></div><div className="history-point future"><span>2027</span><strong>Player-authored scenario</strong><p>INEC’s calendar lists 16 January and 6 February 2027 polls. The real outcome is unknown; your fictional run is not a prediction.</p></div></div></div><div className="civic-footer"><span><Scale size={15} /> Elections, petitions, and official titles use civic references. Party names, logos and dated national-officer fields follow INEC’s register; player characters, local branches and story results are fictional.</span><button onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>BACK TO TOP <ArrowRight size={12} /></button></div></div>;
 }
 
 function AtlasPage({ query, setQuery, zone, setZone, selected, onTravel }) {
@@ -926,22 +1445,39 @@ function AtlasPage({ query, setQuery, zone, setZone, selected, onTravel }) {
     <div className="state-tile-grid">{filteredStates.map((item) => <button className={`state-tile ${selected === item.name ? 'selected' : ''}`} key={item.name} onClick={() => onTravel(item.name)} style={{ '--zone-color': zoneColor(item.zone) }}><span className="state-index">{String(STATES.indexOf(item) + 1).padStart(2, '0')}</span><span className="state-zone-dot" /><span className="state-name">{item.name}</span><span className="state-capital">{item.capital.toUpperCase()}</span><span className="state-landmark">{item.landmark}</span><ArrowRight className="state-arrow" size={13} /></button>)}</div><div className="atlas-footer-note"><MapPin size={14} /><span>Capital names and zones are factual reference data; the 3D routes and street layouts are fictional, procedural art—not exact state maps.</span></div></div>;
 }
 
-function ChatPanel({ messages, draft, setDraft, onSend, onlineCount, status, stateName, people = [], meetings = [], activeMeeting, dmMessages = [], dmDraft, setDmDraft, selectedDmPeer, onSelectDmPeer, onSendDm, onJoinMeeting, onInvite }) {
+function ChatPanel({ messages, draft, setDraft, onSend, onlineCount, status, stateName, players, meetings, selectedPeer, onSelectPeer, dmMessages, dmDraft, setDmDraft, onSendDm, onInvite, activeMeeting, meetingPhase, onFocusMeeting, onJoinMeeting, persistenceEnabled, accountBacked }) {
   const [tab, setTab] = useState('world');
-  const peerMessages = selectedDmPeer ? dmMessages.filter((item) => item.peerId === selectedDmPeer.id || (selectedDmPeer.accountId && item.peerAccountId === selectedDmPeer.accountId)) : [];
+  const peerMessages = selectedPeer ? dmMessages.filter((item) => item.peerId === selectedPeer.id || (selectedPeer.accountId && item.peerAccountId === selectedPeer.accountId)) : [];
   return <div className="chat-panel social-panel">
-    <div className="chat-head"><div><span className="chat-head-icon"><MessageCircle size={14} /></span><div><strong>Civic connections</strong><small>{status === 'online' ? `${onlineCount || 1} IN THIS INSTANCE` : 'LOCAL PREVIEW'}</small></div></div><span className={`chat-online-dot ${status}`} /></div>
-    <div className="social-tabs"><button className={tab === 'world' ? 'active' : ''} onClick={() => setTab('world')}>WORLD</button><button className={tab === 'dms' ? 'active' : ''} onClick={() => setTab('dms')}>DMS <i>{dmMessages.length || ''}</i></button><button className={tab === 'meetings' ? 'active' : ''} onClick={() => setTab('meetings')}>MEETINGS <i>{meetings.length || ''}</i></button></div>
-    {tab === 'world' && <><div className="chat-messages">{messages.slice(0, 4).map((item) => <div key={item.id} className={`chat-message ${item.system ? 'system' : ''} ${item.local ? 'mine' : ''}`}><div className="chat-message-meta"><b>{item.system ? 'WORLD DESK' : item.name}</b><span>{item.state || stateName}</span></div><p>{item.message}</p></div>)}</div><form className="chat-compose" onSubmit={onSend}><input value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={180} placeholder="Message this world…" aria-label="World chat message" /><button type="submit" disabled={!draft.trim()} aria-label="Send message"><Send size={14} /></button></form><div className="chat-safety">Keep it kind; do not post private data or real-world vote requests.</div></>}
-    {tab === 'dms' && <div className="social-tab-content"><div className="social-subhead"><span>ONLINE IN YOUR WORLD</span><span>{people.length} PLAYER{people.length === 1 ? '' : 'S'}</span></div>{selectedDmPeer && <div className="dm-selected-peer"><button className="dm-back" onClick={() => onSelectDmPeer(null)}>‹ PLAYERS</button><strong>{selectedDmPeer.name}</strong><small>{selectedDmPeer.ward || selectedDmPeer.state || 'Nigeria'} · {selectedDmPeer.accountBacked ? 'ACCOUNT' : 'GUEST'}</small>{activeMeeting?.status === 'open' && <button className="dm-invite-button" onClick={() => onInvite(selectedDmPeer)}>INVITE TO MEETING <ArrowRight size={11} /></button>}</div>}
-      {!selectedDmPeer && <div className="social-player-list">{people.length ? people.slice(0, 8).map((person) => <div className="social-player" key={person.id}><span className="player-presence" /><div><strong>{person.name}</strong><small>{person.ward || person.state || 'In the world'}</small></div><button onClick={() => onSelectDmPeer(person)}>MESSAGE</button></div>) : <div className="social-empty">No other players are in this locality yet. Open a second game session to test DMs and meeting invitations.</div>}</div>}
-      {selectedDmPeer && <><div className="dm-thread">{peerMessages.length ? peerMessages.slice(-5).map((item) => <div key={item.id} className={`dm-bubble ${item.incoming ? 'incoming' : 'outgoing'}`}><small>{item.fromName || (item.incoming ? selectedDmPeer.name : 'YOU')}</small><p>{item.body}</p></div>) : <div className="social-empty">Start a direct conversation. Only the two players in this thread can see it.</div>}</div><form className="chat-compose" onSubmit={onSendDm}><input value={dmDraft} onChange={(event) => setDmDraft(event.target.value)} maxLength={300} placeholder="Write a private message…" aria-label="Direct message" /><button type="submit" disabled={!dmDraft.trim()} aria-label="Send direct message"><Send size={14} /></button></form><div className="chat-safety">{selectedDmPeer.accountBacked ? 'Cloud history saves when both people have signed in.' : 'Guest messages last only while this server session is running.'}</div></>}
-    </div>}
-    {tab === 'meetings' && <div className="social-tab-content"><div className="social-subhead"><span>OPEN PUBLIC MEETINGS</span><span>{meetings.length}</span></div>{activeMeeting?.status === 'open' && <div className="active-meeting-mini"><div><strong>{activeMeeting.title}</strong><small>{activeMeeting.participants || 1} attending · {activeMeeting.location?.state || stateName}</small></div><span>ROOM OPEN</span></div>}{meetings.length ? <div className="social-meeting-list">{meetings.slice(0, 5).map((meeting) => <div className="social-meeting" key={meeting.id}><span className="meeting-live-dot" /><div><strong>{meeting.title}</strong><small>{meeting.location?.venueName || 'Public venue'} · {meeting.location?.state || 'Nigeria'} · {meeting.participants || 0} here</small></div><button onClick={() => onJoinMeeting(meeting)}>JOIN</button></div>)}</div> : !activeMeeting && <div className="social-empty">No open meetings. Start a Town Hall from Campaign actions; its venue and topic will be shared with the world.</div>}<div className="chat-safety">{status === 'online' ? 'Public meeting messages and votes shape the closing record.' : 'Offline meetings are local to this browser session.'}</div></div>}
+    <div className="social-tabs" role="tablist" aria-label="Social features">
+      {[['world', 'WORLD'], ['dm', 'DIRECT'], ['meetings', `MEETINGS${meetings.length ? ` · ${meetings.length}` : ''}`]].map(([id, label]) => <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}>{label}</button>)}
+    </div>
+    {tab === 'world' && <>
+      <div className="chat-head"><div><span className="chat-head-icon"><MessageCircle size={14} /></span><div><strong>World chat</strong><small>{status === 'online' ? `${onlineCount || 1} IN THIS INSTANCE` : 'LOCAL PREVIEW'}</small></div></div><span className={`chat-online-dot ${status}`} /></div>
+      <div className="chat-messages">{messages.slice(0, 4).map((item) => <div key={item.id} className={`chat-message ${item.system ? 'system' : ''} ${item.local ? 'mine' : ''}`}><div className="chat-message-meta"><b>{item.system ? 'WORLD DESK' : item.name}</b><span>{item.state || stateName}</span></div><p>{item.message}</p></div>)}</div>
+      <form className="chat-compose" onSubmit={onSend}><input value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={180} placeholder="Message this world…" aria-label="World chat message" /><button type="submit" disabled={!draft.trim()} aria-label="Send message"><Send size={14} /></button></form>
+      <div className="chat-safety">Keep it respectful; no private data or real-world vote requests.</div>
+    </>}
+    {tab === 'dm' && <>
+      <div className="social-pane-heading"><div><strong>Players in this district</strong><small>{players.length} online · location scoped</small></div><Users size={15} /></div>
+      {players.length ? <div className="dm-player-list">{players.slice(0, 6).map((player) => <button key={player.id} className={`dm-player ${selectedPeer?.id === player.id ? 'selected' : ''}`} onClick={() => onSelectPeer(player)}><i style={{ background: player.color || 'var(--mint)' }} /><span><b>{player.name}</b><small>{player.state}{player.accountBacked ? ' · ACCOUNT' : ' · GUEST'}</small></span><MessageCircle size={13} /></button>)}</div> : <div className="social-empty">No other players are in this locality. Invite someone to the same state/LGA/ward or use a meeting link.</div>}
+      {selectedPeer && <>
+        <div className="dm-conversation-head"><span>DIRECT WITH <b>{selectedPeer.name}</b></span>{activeMeeting?.status === 'open' && activeMeeting.isHost && <button onClick={() => onInvite(selectedPeer)}>INVITE TO MEETING</button>}</div>
+        <div className="dm-conversation">{peerMessages.length ? peerMessages.slice(-5).map((item) => <div key={item.id} className={`dm-message ${item.incoming ? 'incoming' : 'outgoing'} ${item.type === 'meeting_invite' ? 'invite' : ''}`}><small>{item.incoming ? (item.fromName || selectedPeer.name) : 'YOU'}</small><p>{item.body}</p>{item.type === 'meeting_invite' && item.meetingId && <span>MEETING INVITE · CHECK MEETINGS TAB</span>}</div>) : <div className="social-empty">Start a private in-game conversation. Keep contact details and real-world political requests out of chat.</div>}</div>
+        <form className="chat-compose dm-compose" onSubmit={onSendDm}><input value={dmDraft} onChange={(event) => setDmDraft(event.target.value)} maxLength={300} placeholder={`Message ${selectedPeer.name}…`} aria-label="Direct message" /><button type="submit" disabled={!dmDraft.trim() || status !== 'online'} aria-label="Send direct message"><Send size={14} /></button></form>
+        <div className="chat-safety">{persistenceEnabled && accountBacked ? 'Account DMs are saved when both participants have signed in.' : 'Guest DMs are session-only; account history needs deployment setup.'}</div>
+      </>}
+    </>}
+    {tab === 'meetings' && <>
+      <div className="social-pane-heading"><div><strong>Open civic meetings</strong><small>Town halls · speeches · replies</small></div><Radio size={15} /></div>
+      {activeMeeting?.status === 'open' && <button className="active-meeting-link" onClick={onFocusMeeting}><span className="live-dot" />CURRENT GATHERING · {activeMeeting.title}<small>{['at-venue', 'discussion'].includes(meetingPhase) ? 'AT VENUE · OPEN DISCUSSION' : 'YOUR AVATAR IS WALKING TO THE VENUE'}</small></button>}
+      {meetings.length ? <div className="meeting-list-small">{meetings.slice(0, 4).map((meeting) => <article className="meeting-list-card" key={meeting.id}><div><b>{meeting.title}</b><small>{meeting.location?.venueName || 'Civic venue'} · {meeting.location?.state || stateName} · {meeting.atVenue || 0} at venue · {meeting.enRoute || 0} on way</small><p>{meeting.topic}</p></div><button onClick={() => onJoinMeeting(meeting)}>{activeMeeting?.id === meeting.id ? 'RETURN' : 'JOIN & WALK'} <ArrowRight size={12} /></button></article>)}</div> : <div className="social-empty">No meetings are open. Start a Town Hall story from Campaign actions; nearby players can join or receive a DM invitation.</div>}
+      <div className="chat-safety">{persistenceEnabled ? 'Meetings and messages can persist for signed-in players.' : 'Preview meetings are in-memory until account/database setup is enabled.'}</div>
+    </>}
   </div>;
 }
 
-function AccountForm({ authEnabled, persistenceEnabled, authBusy, authSession, alias, onAuth, onSignOut, onSuccess }) {
+function AccountAccessForm({ authReady, authEnabled, persistenceConfigured, persistenceEnabled, authSession, busy, alias, onSubmit, onSignOut, onSuccess }) {
   const [mode, setMode] = useState('signup');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -949,104 +1485,155 @@ function AccountForm({ authEnabled, persistenceEnabled, authBusy, authSession, a
   const submit = async (event) => {
     event.preventDefault();
     setFeedback('');
-    const result = await onAuth(mode, email, password, alias);
+    const result = await onSubmit(mode, email, password, alias);
     if (!result?.ok) { setFeedback(result?.error || 'Account access failed.'); return; }
     setPassword('');
     onSuccess?.(result);
   };
-  if (!authEnabled) return <div className="account-setup-note"><LockKeyhole size={16} /><div><strong>ACCOUNT SERVICE NOT CONFIGURED</strong><p>Real sign-up, cloud profile saves and persistent messages need the Supabase settings and database schema documented in ACCOUNT_SETUP.md. Guest play remains available; its save is local to this browser.</p></div></div>;
-  if (authSession?.access_token) return <div className="account-connected"><span className="account-connected-icon"><Check size={16} /></span><div><strong>ACCOUNT CONNECTED</strong><span>{authSession.user?.email || 'Signed-in player'}</span><small>{persistenceEnabled ? 'Cloud profile, meetings and messages enabled' : 'Auth enabled · database persistence key still required'}</small></div><button className="secondary-button" onClick={onSignOut}>SIGN OUT</button></div>;
-  return <form className="account-access-form" onSubmit={submit}>
-    <div className="account-mode-switch"><button type="button" className={mode === 'signup' ? 'active' : ''} onClick={() => { setMode('signup'); setFeedback(''); }}>CREATE ACCOUNT</button><button type="button" className={mode === 'login' ? 'active' : ''} onClick={() => { setMode('login'); setFeedback(''); }}>SIGN IN</button></div>
-    <label className="form-label">EMAIL ADDRESS<input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required maxLength={254} placeholder="you@example.com" /></label>
-    <label className="form-label">PASSWORD <span>10+ CHARACTERS</span><input type="password" autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} value={password} onChange={(event) => setPassword(event.target.value)} required minLength={10} maxLength={128} placeholder="Use a unique password" /></label>
-    {feedback && <div className="account-feedback" role="status">{feedback}</div>}
-    <button className="account-submit" type="submit" disabled={authBusy}>{authBusy ? 'CONTACTING ACCOUNT SERVICE…' : mode === 'signup' ? 'CREATE SECURE ACCOUNT' : 'SIGN IN & LOAD CAREER'} <ArrowRight size={13} /></button>
-    <small className="account-security-note">Passwords are handled by Supabase Auth; this game server does not store them.</small>
-  </form>;
+  if (!authReady) return <div className="account-config-note"><span className="locality-loader" />Checking account service…</div>;
+  if (authSession?.access_token) return <div className="account-connected"><span className="account-check"><Check size={15} /></span><div><strong>ACCOUNT CONNECTED</strong><small>{authSession.user?.email || 'Signed-in player'}</small><p>{persistenceEnabled ? 'Profile, eligible DMs and meeting records can be cloud-saved.' : persistenceConfigured ? 'Database keys are present, but the schema is not reachable. Apply supabase/schema.sql and recheck the service.' : 'Auth is connected, but cloud saves and persistent messages need the server-only database key.'}</p></div><button onClick={onSignOut}>SIGN OUT</button></div>;
+  if (!authEnabled) return <div className="account-config-note"><strong>Account service not connected</strong><span>Guest play works now. Real sign-up, login and cloud history need the Supabase environment keys and database schema listed in ACCOUNT_SETUP.md.</span></div>;
+  return <div className="account-access-form">
+    <div className="account-form-tabs"><button type="button" className={mode === 'signup' ? 'active' : ''} onClick={() => { setMode('signup'); setFeedback(''); }}>CREATE ACCOUNT</button><button type="button" className={mode === 'login' ? 'active' : ''} onClick={() => { setMode('login'); setFeedback(''); }}>SIGN IN</button></div>
+    <form onSubmit={submit}>
+      <label className="form-label">EMAIL ADDRESS<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" maxLength={254} required placeholder="you@example.com" /></label>
+      <label className="form-label">PASSWORD <span>10+ CHARACTERS</span><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} minLength={10} maxLength={128} required placeholder="Use a strong, unique password" /></label>
+      {!persistenceEnabled && <small className="account-inline-note">{persistenceConfigured ? 'Database keys are present; apply supabase/schema.sql to enable cloud saves and message history.' : 'Sign-in is available; cloud saves and persistent messages need the server database key.'}</small>}
+      {feedback && <div className="account-feedback" role="status">{feedback}</div>}
+      <button className="account-submit" type="submit" disabled={busy}>{busy ? 'WORKING…' : mode === 'signup' ? 'CREATE SECURE ACCOUNT' : 'SIGN IN'} <ArrowRight size={13} /></button>
+    </form>
+    <small className="account-privacy-note"><LockKeyhole size={11} />Passwords are handled by the configured account provider, not stored in the game database.</small>
+  </div>;
 }
 
-function AccountModal({ authEnabled, persistenceEnabled, authBusy, authSession, onAuth, onSignOut, onClose, onSuccess }) {
-  return <div className="modal-backdrop" onMouseDown={onClose}><div className="account-modal modal-card" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={onClose}><X size={18} /></button><div className="dialog-topline"><span className="dialog-icon"><LockKeyhole size={19} /></span><span className="modal-eyebrow">PLAYER ACCOUNT · PRIVATE PROFILE</span></div><h2>Keep your public life.</h2><p>Sign in to link this candidate to an account. The party, cash and story are fictional game data.</p><AccountForm authEnabled={authEnabled} persistenceEnabled={persistenceEnabled} authBusy={authBusy} authSession={authSession} onAuth={onAuth} onSignOut={onSignOut} onSuccess={onSuccess} /><div className="account-modal-foot"><button className="secondary-button" onClick={onClose}>CLOSE</button><span>{persistenceEnabled ? 'ACCOUNT-BACKED' : 'LOCAL / SESSION-ONLY'}</span></div></div></div>;
+function AvatarCustomizer({ appearance, playerColor, onClose, onSave }) {
+  const [draft, setDraft] = useState(() => normalizeAvatarAppearance(appearance));
+  const previewShirt = draft.outfitColor || playerColor;
+  const headShape = draft.headStyle === 'wrap'
+    ? <path d="M52 59 Q80 22 108 59 L104 71 Q80 60 56 71Z" fill="#dbb978" />
+    : draft.headStyle === 'cap'
+      ? <><path d="M54 52 Q80 26 106 53 L104 61 Q80 54 55 63Z" fill="#273b35" /><path d="M80 58 Q104 56 112 64 Q94 68 78 64Z" fill="#273b35" /></>
+      : <path d={draft.headStyle === 'natural' ? 'M54 65 Q49 36 78 33 Q111 34 107 65 Q102 54 95 51 Q77 62 61 53Z' : 'M55 64 Q55 39 80 38 Q104 40 105 64 Q95 52 80 53 Q66 52 55 64Z'} fill="#202522" />;
+  return <div className="modal-backdrop avatar-customizer-backdrop" onMouseDown={onClose}>
+    <section className="avatar-customizer modal-card" role="dialog" aria-modal="true" aria-label="Customize your avatar" onMouseDown={(event) => event.stopPropagation()}>
+      <button className="modal-close" onClick={onClose} aria-label="Close avatar customizer"><X size={18} /></button>
+      <div className="dialog-topline"><span className="dialog-icon"><Shirt size={19} /></span><span className="modal-eyebrow">PLAYER IDENTITY · STORY SAVE</span></div>
+      <h2>Make this character yours.</h2>
+      <p>The original NIGERIA 2027 avatar can be edited at any time. Changes apply to the 3D character and save with this local story.</p>
+      <div className="avatar-customizer-layout">
+        <div className="avatar-preview-card">
+          <div className="avatar-preview-skyline"><i /><i /><i /><i /><span>FIELD PROFILE</span></div>
+          <svg className="avatar-preview-figure" viewBox="0 0 160 250" role="img" aria-label="Live preview of the player character">
+            <ellipse cx="80" cy="229" rx="42" ry="9" fill="rgba(0,0,0,.34)" />
+            <path d="M61 143 L99 143 L107 211 L89 211 L80 166 L70 211 L52 211Z" fill="#343c36" />
+            <path d="M57 204 L73 204 L70 224 L47 224 Q46 216 57 204M87 204 L103 204 Q112 215 112 224 L83 224Z" fill="#252d28" />
+            <path d="M57 83 Q80 72 103 83 L111 142 Q80 154 49 142Z" fill={previewShirt} />
+            <path d="M57 91 L42 101 L31 137 L43 141 L62 116M103 91 L119 101 L130 137 L118 141 L98 116" fill={previewShirt} />
+            <path d="M31 132 L43 136 L42 147 L33 149Z M118 136 L130 132 L128 149 L119 147Z" fill={draft.skinTone} />
+            <rect x="70" y="70" width="20" height="20" rx="7" fill={draft.skinTone} />
+            <ellipse cx="80" cy="54" rx="25" ry="30" fill={draft.skinTone} />
+            {headShape}
+            <circle cx="71" cy="59" r="2" fill="#211b19" /><circle cx="89" cy="59" r="2" fill="#211b19" />
+            <path d="M74 72 Q80 75 86 72" fill="none" stroke="#512f28" strokeWidth="2" strokeLinecap="round" />
+            <path d="M62 96 L80 106 L98 96" fill="none" stroke="rgba(255,255,255,.27)" strokeWidth="2" />
+          </svg>
+          <div className="avatar-preview-name"><span><i /> ACTIVE PLAYER</span><b>FIELD LOOK · {draft.headStyle.toUpperCase()}</b></div>
+        </div>
+        <div className="avatar-controls">
+          <fieldset className="avatar-choice-group"><legend>SKIN TONE</legend><div className="avatar-skin-options">{AVATAR_SKIN_OPTIONS.map((option) => <button key={option.value} type="button" className={draft.skinTone === option.value ? 'selected' : ''} style={{ '--swatch': option.value }} onClick={() => setDraft((current) => ({ ...current, skinTone: option.value }))} aria-label={option.label} title={option.label}><i /></button>)}</div><small>{AVATAR_SKIN_OPTIONS.find((option) => option.value === draft.skinTone)?.label}</small></fieldset>
+          <fieldset className="avatar-choice-group"><legend>HEAD STYLE</legend><div className="avatar-head-options">{AVATAR_HEAD_OPTIONS.map((option) => <button key={option.id} type="button" className={draft.headStyle === option.id ? 'selected' : ''} onClick={() => setDraft((current) => ({ ...current, headStyle: option.id }))}>{option.label}</button>)}</div></fieldset>
+          <fieldset className="avatar-choice-group"><legend>OUTFIT COLOUR</legend><div className="avatar-outfit-options">{AVATAR_OUTFIT_OPTIONS.map((option) => <button key={option.id} type="button" className={draft.outfitColor === option.value ? 'selected' : ''} style={{ '--swatch': option.value || playerColor }} onClick={() => setDraft((current) => ({ ...current, outfitColor: option.value }))} title={option.label} aria-label={option.label}><i />{option.id === 'accent' && <span>ROLE</span>}</button>)}</div><small>ROLE ACCENT {draft.outfitColor ? 'OVERRIDDEN' : 'ACTIVE'}</small></fieldset>
+          <div className="avatar-customizer-note"><Shield size={13} /><span>Appearance only. It does not change your political alignment, institutional role, character stats or in-game funds.</span></div>
+        </div>
+      </div>
+      <div className="avatar-customizer-actions"><button type="button" className="secondary-button" onClick={onClose}>CANCEL</button><button type="button" className="primary-action" onClick={() => onSave(draft)}>SAVE PLAYER LOOK <ArrowRight size={14} /></button></div>
+    </section>
+  </div>;
 }
 
-function WelcomeModal({ alias, setAlias, party, setParty, state, setState, onStart, onClose, hasSave, authEnabled, persistenceEnabled, authBusy, authSession, onAuth, onAuthSuccess, onSignOut }) {
-  return <div className="modal-backdrop welcome-backdrop"><div className="welcome-modal modal-card"><div className="welcome-visual"><div className="welcome-orbit orbit-a" /><div className="welcome-orbit orbit-b" /><div className="welcome-silhouette"><div className="silhouette-stars">✦ &nbsp; ✦ &nbsp; ✦</div><div className="silhouette-sun" /><div className="silhouette-skyline"><i /><i /><i /><i /><i /></div><div className="silhouette-road" /><div className="silhouette-figure"><span /><i /></div></div><div className="welcome-visual-caption"><span>THE JOURNEY STARTS HERE</span><b>ONE POLITICAL LADDER. A WIDER REPUBLIC.</b></div></div><div className="welcome-content"><button className="modal-close" onClick={onClose} aria-label="Close onboarding"><X size={18} /></button><div className="welcome-mark"><span className="brand-mark"><span /><i /></span><small>CAMPAIGN PROTOCOL · 2027</small></div><div className="welcome-kicker"><Sparkles size={13} /> YOUR POLITICAL LIFE BEGINS</div><h2>Make a name<br /><em>worth remembering.</em></h2><p>Follow one political ladder from youth and community organising to the presidency. Courts, election administrators and the Central Bank form the other side of the story—not alternate political ladders.</p>
-    <label className="form-label">YOUR CANDIDATE NAME <span>OPTIONAL</span><input autoFocus maxLength={26} value={alias} onChange={(event) => setAlias(event.target.value)} placeholder="e.g. Ayo Ajala" /></label><label className="form-label">STARTING STATE <span>37 CAPITAL STOPS</span><div className="select-wrap"><select value={state} onChange={(event) => setState(event.target.value)}>{STATES.map((item) => <option key={item.name} value={item.name}>{item.name} — {item.capital}</option>)}</select><ChevronDown size={15} /></div></label>
-    <div className="party-pick-label">CHOOSE YOUR FICTIONAL PARTY</div><div className="party-picks">{PARTY_OPTIONS.map((item) => <button type="button" key={item.name} className={`party-pick ${party === item.name ? 'selected' : ''}`} onClick={() => setParty(item.name)} style={{ '--party-color': item.color }}><span className="party-radio">{party === item.name && <i />}</span><span><b>{item.tag}</b><small>{item.name}</small></span><span className="party-color-mark" /></button>)}</div>
-    <div className="starter-bonus"><span className="bonus-icon"><Banknote size={17} /></span><div><small>NEW CANDIDATE SEED FUND</small><strong>₦1,000,000 <i>IN-GAME</i></strong></div><BadgeCheck size={16} /></div><div className="starter-disclaimer"><LockKeyhole size={12} />Fictional, non-transferable game funds; no real-money payments.</div>
-    <AccountForm authEnabled={authEnabled} persistenceEnabled={persistenceEnabled} authBusy={authBusy} authSession={authSession} alias={alias} onAuth={onAuth} onSignOut={onSignOut} onSuccess={onAuthSuccess} />
-    <button className="welcome-cta" onClick={onStart}>{authSession ? 'CONTINUE WITH ACCOUNT' : hasSave ? 'START A NEW GUEST CANDIDATE' : 'CONTINUE AS GUEST'} <ArrowRight size={16} /></button><div className="welcome-bottom"><span><Shield size={12} /> ORIGINAL FICTIONAL GAME WORLD</span><span>PRE-ALPHA</span></div></div></div></div>;
+function AccountModal({ authReady, authConfig, authSession, authBusy, alias, onSubmit, onSignOut, onSuccess, onClose }) {
+  return <div className="modal-backdrop"><section className="account-modal modal-card"><button className="modal-close" onClick={onClose}><X size={17} /></button><div className="dialog-topline"><span className="dialog-icon"><LockKeyhole size={19} /></span><span className="modal-eyebrow">PLAYER ACCOUNT · NIGERIA 2027</span></div><h2>Account and cloud save</h2><p>Sign in to save your political ladder and, when persistence is enabled, keep eligible meetings and DMs across sessions. A guest profile remains local to this browser.</p><AccountAccessForm authReady={authReady} authEnabled={authConfig.authEnabled} persistenceConfigured={authConfig.persistenceConfigured} persistenceEnabled={authConfig.persistenceEnabled} authSession={authSession} busy={authBusy} alias={alias} onSubmit={onSubmit} onSignOut={onSignOut} onSuccess={onSuccess} /><button className="secondary-button account-close-button" onClick={onClose}>BACK TO THE GAME</button></section></div>;
 }
 
-function StoryActionModal({ actionId, scene, npc, onComplete, onClose }) {
-  const [draft, setDraft] = useState('');
+function StoryActionModal({ scene, npc, title, classification, actionLabel, onClose, onComplete, isSideStory = false, institutionalRole = null }) {
+  const [text, setText] = useState('');
   const [choiceId, setChoiceId] = useState(scene?.choices?.[0]?.id || '');
   if (!scene) return null;
-  const action = ACTIONS.find((item) => item.id === actionId) || { label: 'Senior consultation', cost: 25_000 };
-  const selected = scene.choices.find((item) => item.id === choiceId);
-  const submit = (event) => {
-    event.preventDefault();
-    if (draft.trim().length < 6) return;
-    onComplete(actionId, draft.trim(), choiceId);
-  };
-  return <div className="modal-backdrop story-action-backdrop" onMouseDown={onClose}><form className="story-action-modal modal-card" onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}><button type="button" className="modal-close" onClick={onClose}><X size={18} /></button><div className="dialog-topline"><span className="dialog-icon"><MessageCircle size={19} /></span><span className="modal-eyebrow">{scene.format} · STORY INTERACTION</span></div><h2>{scene.title}</h2>{npc && <p className="story-npc-line">{npc.name} <span>· {npc.title}</span></p>}<p>{npc ? `“${npc.ask}”` : scene.prompt}</p><label className="story-write-label">YOUR RESPONSE <span>TYPE BEFORE YOU CHOOSE</span><textarea value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={320} minLength={6} required placeholder={npc ? 'What will you say, and what public follow-up will you make?' : 'Write the opening line or public response…'} /></label><div className="story-choice-list">{scene.choices.map((choice) => <label key={choice.id} className={`story-choice ${choiceId === choice.id ? 'selected' : ''}`}><input type="radio" name="story-choice" value={choice.id} checked={choiceId === choice.id} onChange={() => setChoiceId(choice.id)} /><span><strong>{choice.label}</strong><small>{choice.outcome}</small></span></label>)}</div>{selected && <div className="story-action-cost"><span>{selected.effects.integrity >= 3 ? 'PUBLIC-RECORD CHOICE' : 'STORY CONSEQUENCE'}</span><b>{action.cost ? `₦${money(action.cost)} IN-GAME` : 'NO REAL-MONEY COST'}</b></div>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>LEAVE SCENE</button><button className="primary-action" type="submit" disabled={draft.trim().length < 6}>RECORD MY RESPONSE <ArrowRight size={14} /></button></div></form></div>;
+  const speaker = npc?.name || scene.speaker;
+  const scenePrompt = npc ? `${npc.ask} ${scene.prompt}` : scene.prompt;
+  const submit = (event) => { event.preventDefault(); if (text.trim().length >= 8 && choiceId) onComplete(text.trim(), choiceId); };
+  return <div className="modal-backdrop"><section className="story-action-modal modal-card"><button className="modal-close" onClick={onClose} aria-label="Close scene"><X size={17} /></button><div className="dialog-topline"><span className="dialog-icon"><MessageCircle size={19} /></span><span className="modal-eyebrow">{classification || scene.format || 'STORY INTERACTION'}</span></div><h2>{title || scene.title}</h2><div className="story-speaker"><span className="speaker-avatar">{initials(speaker || 'Civic desk')}</span><div><small>{institutionalRole ? 'FICTIONAL PERSONNEL ROLEPLAY' : isSideStory ? 'FICTIONAL STORY ROLE' : 'SCENE PARTNER'}</small><strong>{speaker}</strong></div></div><p className="story-scene-prompt">{scenePrompt}</p><form onSubmit={submit}><label className="story-response-label">YOUR TYPED RESPONSE <textarea value={text} onChange={(event) => setText(event.target.value)} maxLength={500} minLength={8} rows={4} placeholder="Write what you would say. Keep it respectful and specific…" required /></label><div className="story-choice-list"><small>{isSideStory ? 'HOW YOU HANDLE THE ENCOUNTER' : 'CHOOSE YOUR APPROACH'}</small>{scene.choices.map((choice) => <button type="button" key={choice.id} className={choice.id === choiceId ? 'selected' : ''} onClick={() => setChoiceId(choice.id)}><span className="story-choice-radio">{choice.id === choiceId && <i />}</span><span><b>{choice.label}</b><small>{choice.outcome}</small></span></button>)}</div><div className="story-scene-footnote"><Shield size={13} /><span>{institutionalRole ? 'Fictional personnel-story record only. This does not grant employment, appointment, statutory powers, judicial authority or political office; no separate ladder advances.' : isSideStory ? 'Side story only. It adds context and a small civic record; it does not change your political office or advance the ladder.' : npc ? 'Fictional consultation. No endorsement is guaranteed; your written response and choice are logged.' : 'Your response and choice shape this scene before any in-game effect is applied.'}</span></div><div className="story-modal-actions"><button type="button" className="secondary-button" onClick={onClose}>LEAVE SCENE</button><button className="primary-action" type="submit" disabled={text.trim().length < 8}>{institutionalRole ? 'RECORD ROLEPLAY RESPONSE' : isSideStory ? 'RECORD SIDE STORY' : actionLabel || 'RECORD RESPONSE'} <ArrowRight size={13} /></button></div></form></section></div>;
 }
 
-function InstitutionStoryModal({ arc, completed, onComplete, onClose }) {
-  const [draft, setDraft] = useState('');
-  const [choiceId, setChoiceId] = useState(arc?.choices?.[0]?.id || '');
-  if (!arc) return null;
-  const selected = arc.choices.find((item) => item.id === choiceId);
-  const submit = (event) => {
-    event.preventDefault();
-    if (draft.trim().length < 6) return;
-    onComplete(arc.id, draft.trim(), choiceId);
-  };
-  return <div className="modal-backdrop story-action-backdrop" onMouseDown={onClose}><form className="institution-modal modal-card" onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}><button type="button" className="modal-close" onClick={onClose}><X size={18} /></button><div className="dialog-topline"><span className="dialog-icon legal"><Scale size={19} /></span><span className="modal-eyebrow">OTHER SIDE OF THE STORY · {arc.shortLabel}</span></div><h2>{arc.episodeTitle}</h2><div className="institution-lead">{arc.lead}</div><p>{arc.scenario}</p><div className="institution-pathway"><small>REAL-WORLD ROLE ROUTE · DISTINCT FROM YOUR POLITICAL LADDER</small><strong>{arc.rolePath}</strong><span>{arc.pathwayNote}</span></div><a className="institution-source-link" href={arc.sourceUrl} target="_blank" rel="noreferrer"><BookOpen size={12} />{arc.source} <ArrowRight size={11} /></a><small className="institution-source-caveat">Fictional civic education—not legal advice. Check current law and later amendments for real decisions.</small><label className="story-write-label">YOUR RESPONSE <span>TYPE A PUBLIC, CHECKABLE REPLY</span><textarea value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={320} minLength={6} required placeholder={arc.prompt} /></label><div className="story-choice-list">{arc.choices.map((choice) => <label key={choice.id} className={`story-choice ${choiceId === choice.id ? 'selected' : ''}`}><input type="radio" name={`side-${arc.id}`} value={choice.id} checked={choiceId === choice.id} onChange={() => setChoiceId(choice.id)} /><span><strong>{choice.label}</strong><small>{choice.outcome}</small></span></label>)}</div>{selected && <div className="dialog-note"><Shield size={14} /><span>{completed ? 'You have already recorded this side story; revisiting it will not repeat the career-health reward.' : 'This side story informs your political record but does not make you a judge, election official, or CBN office-holder.'}</span></div>}<div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>RETURN TO THE LADDER</button><button className="primary-action" type="submit" disabled={draft.trim().length < 6}>RECORD SIDE STORY <ArrowRight size={14} /></button></div></form></div>;
-}
-
-function MeetingRoom({ meeting, messages, participants, votes, draft, setDraft, replyTo, setReplyTo, onSend, onVote, onCloseMeeting, onLeave, people, onInvite }) {
-  const endRef = useRef(null);
-  useEffect(() => { endRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, [messages.length]);
-  const support = Number(votes.support) || 0;
-  const mixed = Number(votes.mixed) || 0;
-  const concern = Number(votes.concern) || 0;
+function MeetingRoom({ meeting, messages, participants, votes, draft, setDraft, replyTo, setReplyTo, onSend, onVote, onCloseMeeting, onLeave, onMinimize }) {
+  if (!meeting) return null;
+  const voteItems = [['support', 'SUPPORT'], ['mixed', 'MIXED'], ['concern', 'NEEDS WORK']];
   const location = meeting.location || {};
-  return <div className="meeting-backdrop"><section className="meeting-room" aria-label="Public meeting room"><header className="meeting-room-head"><div className="meeting-room-mark"><MessageCircle size={18} /></div><div className="meeting-room-title"><span>{meeting.status === 'open' ? 'LIVE PUBLIC MEETING' : 'MEETING RECORD PUBLISHED'} <i className={meeting.local ? 'local' : ''}>{meeting.local ? 'LOCAL' : 'OPEN'}</i></span><h2>{meeting.title}</h2><small>{location.venueName || 'Civic venue'} · {location.ward ? `${location.ward}, ` : ''}{location.lga ? `${location.lga}, ` : ''}{location.state || 'Nigeria'}</small></div><button className="meeting-room-close" onClick={onLeave} aria-label="Close meeting room"><X size={18} /></button></header>
-    <div className="meeting-topic"><span>MEETING QUESTION</span><p>{meeting.topic}</p><small>Type a short speech, reply to another player, then vote. Responses and votes shape the host’s closing record. {meeting.local ? 'Local-only session.' : meeting.cloudBacked ? 'Meeting record is cloud-backed; individual messages persist for signed-in speakers.' : 'Guest-hosted meeting is session-only.'}</small></div>
-    <div className="meeting-room-layout"><div className="meeting-discussion"><div className="meeting-messages">{messages.length ? messages.map((item) => { const parent = item.replyTo ? messages.find((message) => message.id === item.replyTo) : null; return <article className={`meeting-message ${item.kind || 'speech'}`} key={item.id}><div className="meeting-message-head"><strong>{item.senderName || item.name || 'Player'}</strong><span>{item.kind === 'reply' ? 'REPLY' : item.kind === 'summary' ? 'HOST SUMMARY' : 'SPEECH'}</span></div>{parent && <div className="meeting-reply-reference">↳ replying to {parent.senderName}</div>}<p>{item.body || item.message}</p>{meeting.status === 'open' && item.kind !== 'summary' && <button className="meeting-reply-button" onClick={() => setReplyTo(item)}>REPLY</button>}</article>; }) : <div className="meeting-empty"><Users size={22} /><strong>THE FLOOR IS OPEN</strong><span>Deliver the first typed opening. Other players can join this meeting, speak, reply, and vote.</span></div>}<div ref={endRef} /></div>
-      {replyTo && meeting.status === 'open' && <div className="meeting-replying">Replying to <b>{replyTo.senderName}</b><span>{replyTo.body}</span><button onClick={() => setReplyTo(null)}>CANCEL</button></div>}
-      {meeting.status === 'open' && <form className="meeting-compose" onSubmit={onSend}><textarea value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={500} minLength={2} placeholder={replyTo ? 'Write a respectful reply…' : 'Deliver your typed speech or opening statement…'} /><div><small>{draft.length}/500 · no private contact details</small><button className="primary-action" type="submit" disabled={draft.trim().length < 2}>{replyTo ? 'SEND REPLY' : 'TAKE THE FLOOR'} <Send size={13} /></button></div></form>}
-      </div><aside className="meeting-aside"><div className="meeting-attendees"><div className="meeting-aside-title"><span>IN THE ROOM</span><b>{participants.length || meeting.participants || 1}</b></div>{participants.slice(0, 6).map((participant) => <div className="meeting-attendee" key={participant.id}><span>{initials(participant.name)}</span><div><strong>{participant.name}</strong><small>{participant.id === participant.userId ? 'ACCOUNT PLAYER' : participant.state || 'CONNECTED'}</small></div></div>)}{!participants.length && <div className="meeting-attendee"><span>{initials(meeting.hostName)}</span><div><strong>{meeting.hostName}</strong><small>HOST</small></div></div>}</div>
-      <div className="meeting-vote-card"><div className="meeting-aside-title"><span>MEETING PULSE</span><b>{support + mixed + concern} VOTES</b></div><div className="meeting-vote-bars"><div><span>SUPPORT</span><b>{support}</b><i style={{ width: `${Math.min(100, support * 20)}%` }} /></div><div><span>MIXED</span><b>{mixed}</b><i style={{ width: `${Math.min(100, mixed * 20)}%` }} /></div><div><span>CONCERN</span><b>{concern}</b><i style={{ width: `${Math.min(100, concern * 20)}%` }} /></div></div>{meeting.status === 'open' && <div className="meeting-vote-buttons"><button onClick={() => onVote('support')}>SUPPORT</button><button onClick={() => onVote('mixed')}>MIXED</button><button onClick={() => onVote('concern')}>CONCERN</button></div>}</div>
-      {meeting.status === 'open' && people.length > 0 && <div className="meeting-invite-card"><div className="meeting-aside-title"><span>INVITE PLAYERS</span><b>{people.length} ONLINE</b></div>{people.slice(0, 3).map((person) => <button className="meeting-invite-row" key={person.id} onClick={() => onInvite(person)}><span>{person.name}</span><b>INVITE</b></button>)}</div>}
-      {meeting.status === 'open' && meeting.isHost ? <button className="meeting-publish-button" onClick={onCloseMeeting}><Check size={14} />PUBLISH OUTCOME & CLOSE</button> : meeting.status === 'open' ? <div className="meeting-host-note">Only the host publishes the meeting outcome.</div> : <div className="meeting-outcome-card"><span>RECORDED OUTCOME</span><strong>{meeting.outcome?.outcome === 'supported' ? 'SUPPORTED' : meeting.outcome?.outcome === 'rework' ? 'REWORK REQUESTED' : 'CONTESTED'}</strong><small>{meeting.outcome?.summary || 'The meeting result is now part of the public story.'}</small></div>}
-      {meeting.local && <div className="meeting-host-note">Guest/local preview: this room is not shared or saved to an account.</div>}</aside></div>
-    <footer className="meeting-room-footer"><span><Shield size={12} />Fictional civic role-play · respectful speech only</span><button onClick={onLeave}>{meeting.status === 'open' ? 'LEAVE MEETING' : 'CLOSE RECORD'}</button></footer></section></div>;
+  const closed = meeting.status === 'closed';
+  return <div className="meeting-backdrop"><section className="meeting-room" role="dialog" aria-modal="false" aria-label={meeting.title}>
+    <header className="meeting-room-head"><div><div className="meeting-kicker"><span className={closed ? 'meeting-status-dot closed' : 'meeting-status-dot'} />{closed ? 'MEETING RECORD PUBLISHED' : meeting.local ? 'LOCAL GUEST PREVIEW' : 'LIVE CIVIC MEETING'}</div><h2>{meeting.title}</h2><small>{location.venueName || 'Civic venue'} · {location.ward ? `${location.ward}, ` : ''}{location.lga ? `${location.lga}, ` : ''}{location.state || 'Nigeria'}</small></div><button className="meeting-room-close" onClick={onMinimize} aria-label="Minimize discussion and return to the 3D gathering"><X size={18} /></button></header>
+    <div className="meeting-topic"><span>MEETING QUESTION</span><p>{meeting.topic || 'Share a public-interest view and listen to the responses.'}</p></div>
+    <div className="meeting-participants"><div><Users size={14} /><span>IN THE ROOM</span><b>{participants.length || meeting.participants || 1}</b></div><div className="participant-pills">{participants.slice(0, 5).map((person) => <span key={person.id || person.name}>{person.name || 'Player'}</span>)}{participants.length > 5 && <span>+{participants.length - 5}</span>}</div></div>
+    <div className="meeting-conversation">{messages.length ? messages.map((message) => <article className={`meeting-message ${message.kind || 'speech'}`} key={message.id}><div className="meeting-message-meta"><b>{message.senderName || message.name || 'Player'}</b><span>{message.kind === 'reply' ? 'REPLY' : message.kind === 'summary' ? 'MINUTES' : 'SPEECH'}</span></div>{message.replyTo && <small className="reply-mark">↳ responding to a speaker</small>}<p>{message.body || message.message}</p>{!closed && message.kind !== 'summary' && <button className="reply-button" onClick={() => setReplyTo(message)}>REPLY</button>}</article>) : <div className="meeting-empty"><MessageCircle size={23} /><strong>THE FLOOR IS OPEN</strong><span>Give the opening speech, then answer another speaker. Your replies and the room’s vote shape the published meeting outcome.</span></div>}</div>
+    {!closed && <form className="meeting-composer" onSubmit={onSend}>{replyTo && <div className="reply-context"><span>REPLYING TO {replyTo.senderName || 'SPEAKER'}: “{(replyTo.body || '').slice(0, 95)}”</span><button type="button" onClick={() => setReplyTo(null)}>CANCEL</button></div>}<textarea value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={500} rows={3} placeholder={replyTo ? 'Type a considered reply…' : 'Deliver a short typed speech to open the discussion…'} /><div className="meeting-compose-foot"><small>{draft.length}/500 · Respectful public dialogue only</small><button className="primary-action" type="submit" disabled={draft.trim().length < 2}>{replyTo ? 'SEND REPLY' : 'DELIVER SPEECH'} <Send size={13} /></button></div></form>}
+    <section className="meeting-vote"><div className="meeting-vote-head"><div><strong>MEETING DIRECTION</strong><small>One vote each sets the record. Plans, budgets, evidence, listening and accountability in typed speeches/replies can improve trust; dismissive wording can lower it.</small></div><div className="vote-tally">{votes.support || 0} FOR · {votes.mixed || 0} MIXED · {votes.concern || 0} REWORK</div></div>{!closed && <div className="meeting-vote-buttons">{voteItems.map(([value, label]) => <button key={value} className={votes[value] ? 'selected' : ''} onClick={() => onVote(value)}>{label}<b>{votes[value] || 0}</b></button>)}</div>}{closed && <div className={`meeting-outcome outcome-${meeting.outcome?.outcome || 'contested'}`}><b>{String(meeting.outcome?.outcome || 'contested').replace('-', ' ').toUpperCase()}</b><span>{meeting.outcome?.summary || 'The meeting closed with a published tally; no response is treated as unanimous.'}</span></div>}</section>
+    <footer className="meeting-room-footer"><span><LockKeyhole size={12} />{meeting.local ? 'Guest meeting is temporary.' : 'Account-backed records persist only when server storage is configured.'}</span>{!closed && meeting.isHost ? <button className="primary-action" onClick={onCloseMeeting}>PUBLISH RECORD & CLOSE <ArrowRight size={13} /></button> : closed ? <button className="secondary-button" onClick={onLeave}>RETURN TO STORY</button> : <button className="secondary-button" onClick={onLeave}>LEAVE MEETING</button>}</footer>
+  </section></div>;
 }
 
-function GameModal({ modal, onClose, onAcceptMeetingInvite, onIllegalConfirm, onPrepareEvidence, onFilePetition, onReset, profile }) {
+function WelcomeModal({ alias, setAlias, party, setParty, mode, setMode, institution, setInstitution, state, setState, onStart, onClose, hasSave, authReady, authConfig, authSession, authBusy, onAuth, onSignOut, onAccountSuccess }) {
+  const [partyQuery, setPartyQuery] = useState('');
+  const visibleParties = PARTY_OPTIONS.filter((item) => `${item.tag} ${item.name}`.toLowerCase().includes(partyQuery.trim().toLowerCase()));
+  const startLabel = mode === 'institutional'
+    ? hasSave ? 'START A NEW PERSONNEL STORY' : authSession ? 'START PERSONNEL STORY' : 'CONTINUE AS GUEST · FICTIONAL ROLE'
+    : hasSave ? 'START A NEW CANDIDATE' : authSession ? 'START A NEW CANDIDATE' : 'CONTINUE AS GUEST · LOCAL ONLY';
+  return <div className="modal-backdrop welcome-backdrop"><div className="welcome-modal modal-card"><div className="welcome-visual"><div className="welcome-orbit orbit-a" /><div className="welcome-orbit orbit-b" /><div className="welcome-silhouette"><div className="silhouette-stars">✦ &nbsp; ✦ &nbsp; ✦</div><div className="silhouette-sun" /><div className="silhouette-skyline"><i /><i /><i /><i /><i /></div><div className="silhouette-road" /><div className="silhouette-figure"><span /><i /></div></div><div className="welcome-visual-caption"><span>THE JOURNEY STARTS HERE</span><b>ONE WARD. ONE COUNTRY.</b></div></div><div className="welcome-content"><button className="modal-close" onClick={onClose} aria-label="Close onboarding"><X size={18} /></button><div className="welcome-mark"><span className="brand-mark"><span /><i /></span><small>CAMPAIGN PROTOCOL · 2027</small></div><div className="welcome-kicker"><Sparkles size={13} /> YOUR PUBLIC LIFE BEGINS</div><h2>Choose your<br /><em>starting role.</em></h2><p>Start as a registered-party political participant or as fictional personnel in election administration, the judiciary or CBN. Institutional roleplay has no separate office ladder; you may optionally join the one political ladder later.</p>
+    <div className="start-mode-picks" role="group" aria-label="Choose your starting role"><button type="button" className={`start-mode-pick ${mode === 'political' ? 'selected' : ''}`} onClick={() => setMode('political')}><Flag size={17} /><span><b>REGISTERED PARTY</b><small>Start the single political ladder</small></span><i>{mode === 'political' ? '●' : '○'}</i></button><button type="button" className={`start-mode-pick ${mode === 'institutional' ? 'selected' : ''}`} onClick={() => setMode('institutional')}><Landmark size={17} /><span><b>INSTITUTION PERSONNEL</b><small>Fictional, non-partisan story role</small></span><i>{mode === 'institutional' ? '●' : '○'}</i></button></div>
+    <label className="form-label">YOUR CHARACTER NAME <span>OPTIONAL</span><input autoFocus maxLength={26} value={alias} onChange={(event) => setAlias(event.target.value)} placeholder="e.g. Ayo Ajala" /></label><label className="form-label">STARTING STATE <span>37 CAPITAL STOPS</span><div className="select-wrap"><select value={state} onChange={(event) => setState(event.target.value)}>{STATES.map((item) => <option key={item.name} value={item.name}>{item.name} — {item.capital}</option>)}</select><ChevronDown size={15} /></div></label>
+    {mode === 'political' ? <><div className="party-select-head"><div className="party-pick-label">CHOOSE AN INEC-REGISTERED PARTY <small>22 INEC RECORDS · {partyRegisterDateLabel}</small></div><label className="party-search"><Search size={13} /><input value={partyQuery} onChange={(event) => setPartyQuery(event.target.value)} placeholder="Search acronym or name" aria-label="Search registered parties" /></label></div><div className="party-picks">{visibleParties.map((item) => <button type="button" key={item.id} className={`party-pick ${party === item.name ? 'selected' : ''}`} onClick={() => setParty(item.name)} style={{ '--party-color': item.color }}><img src={item.logo} alt="" loading="lazy" /><span className="party-radio">{party === item.name && <i />}</span><span className="party-pick-copy"><b>{item.tag}</b><small>{item.name}</small></span><span className="party-color-mark" /></button>)}</div>{visibleParties.length === 0 && <div className="party-no-results">No registered party matches that search.</div>}<div className="party-register-note">INEC register snapshot checked {partyRegisterDateLabel} · registration is not a final 2027 candidate/ballot list. Local offices and ward executives are fictional. <a href={PARTY_REGISTER_SOURCE} target="_blank" rel="noreferrer">VIEW INEC REGISTER</a></div></> : <><div className="institution-role-heading"><span>CHOOSE A FICTIONAL PERSONNEL PERSPECTIVE</span><small>ROLEPLAY ONLY · NO REAL APPOINTMENT</small></div><div className="institution-role-picks">{INSTITUTION_ROLES.map((role) => <button type="button" key={role.id} className={`institution-role-pick ${institution === role.id ? 'selected' : ''}`} onClick={() => setInstitution(role.id)} style={{ '--role-color': role.color }}><span className="institution-role-pick-icon">{role.id === 'judiciary' ? <Scale size={17} /> : role.id === 'cbn' ? <Banknote size={17} /> : <Landmark size={17} />}</span><span className="institution-role-pick-copy"><b>{role.personnelLabel}</b><small>{role.description}</small></span><span className="party-radio">{institution === role.id && <i />}</span></button>)}</div><div className="institution-role-note"><Shield size={12} /> Fictional staff-perspective only: no real employment, appointment, powers or official affiliation. Election administration uses INEC for federal/FCT responsibilities and SIEC for state local-government elections.</div></>}
+    <div className="starter-bonus"><span className="bonus-icon"><Banknote size={17} /></span><div><small>FICTIONAL STORY FUNDS · NO REAL MONEY</small><strong>₦1,000,000 <i>IN-GAME</i></strong></div><BadgeCheck size={16} /></div><div className="starter-disclaimer"><LockKeyhole size={12} />Fictional, non-transferable funds; no real-money transfer or withdrawal exists.</div>
+    <div className="account-start-panel"><div className="account-section-label"><LockKeyhole size={12} /> ACCOUNT-BACKED FOUNDATION</div><AccountAccessForm authReady={authReady} authEnabled={authConfig.authEnabled} persistenceConfigured={authConfig.persistenceConfigured} persistenceEnabled={authConfig.persistenceEnabled} authSession={authSession} busy={authBusy} alias={alias} onSubmit={onAuth} onSignOut={onSignOut} onSuccess={onAccountSuccess} /></div>
+    <button className="welcome-cta" onClick={onStart}>{startLabel} <ArrowRight size={16} /></button><div className="welcome-bottom"><span><Shield size={12} /> FICTIONAL WORLD · ONE POLITICAL LADDER · INSTITUTIONS ARE ROLEPLAY</span><span>PRE-ALPHA</span></div></div></div></div>;
+}
+
+function GameModal({ modal, onClose, onAcceptMeetingInvite, onIllegalConfirm, onPrepareEvidence, onFilePetition, onReset, onContestConfirm, onJoinPolitical, profile }) {
+  const [partyQuery, setPartyQuery] = useState('');
+  const [selectedPartyId, setSelectedPartyId] = useState(PARTY_OPTIONS[0].id);
   if (!modal) return null;
   const close = () => onClose();
+  if (modal.type === 'join-party') {
+    const visibleParties = PARTY_OPTIONS.filter((item) => `${item.tag} ${item.name}`.toLowerCase().includes(partyQuery.trim().toLowerCase()));
+    const selectedParty = PARTY_OPTIONS.find((item) => item.id === selectedPartyId) || PARTY_OPTIONS[0];
+    return <div className="modal-backdrop"><section className="join-party-modal modal-card"><button className="modal-close" onClick={close} aria-label="Close party selection"><X size={18} /></button><div className="dialog-topline"><span className="dialog-icon"><Flag size={20} /></span><span className="modal-eyebrow">VOLUNTARY STORY SWITCH · ONE POLITICAL LADDER</span></div><h2>Join a registered party?</h2><p>This switches your character from institutional roleplay into the existing political ladder at chapter 1. It does <strong>not</strong> appoint you or award an office. Your fictional funds and civic-story record stay; all later political positions still require paid contests.</p><div className="party-select-head"><div className="party-pick-label">CHOOSE AN INEC-REGISTERED PARTY<small>SNAPSHOT CHECKED {partyRegisterDateLabel}</small></div><label className="party-search"><Search size={13} /><input value={partyQuery} onChange={(event) => setPartyQuery(event.target.value)} placeholder="Search acronym or name" aria-label="Search registered parties" /></label></div><div className="party-picks join-party-picks">{visibleParties.map((item) => <button type="button" key={item.id} className={`party-pick ${selectedPartyId === item.id ? 'selected' : ''}`} onClick={() => setSelectedPartyId(item.id)} style={{ '--party-color': item.color }}><img src={item.logo} alt="" loading="lazy" /><span className="party-radio">{selectedPartyId === item.id && <i />}</span><span className="party-pick-copy"><b>{item.tag}</b><small>{item.name}</small></span><span className="party-color-mark" /></button>)}</div>{visibleParties.length === 0 && <div className="party-no-results">No registered party matches that search.</div>}<div className="party-register-note">Registered status is not a final 2027 candidate/ballot list. <a href={PARTY_REGISTER_SOURCE} target="_blank" rel="noreferrer">VIEW INEC REGISTER</a></div><div className="join-party-selected"><span>SELECTED PARTY</span><strong>{selectedParty.tag} · {selectedParty.name}</strong></div><div className="modal-actions"><button className="secondary-button" onClick={close}>NOT NOW</button><button className="primary-action" onClick={() => onJoinPolitical(selectedParty.id)}>JOIN LADDER · CHAPTER 1 <ArrowRight size={14} /></button></div></section></div>;
+  }
+  if (modal.type === 'contest-confirm') return <div className="modal-backdrop" onMouseDown={close}><div className="dialog-modal contest-confirm-modal modal-card" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={close}><X size={18} /></button><div className="dialog-topline"><span className="dialog-icon"><Flag size={20} /></span><span className="modal-eyebrow">ONE CURRENT POSITION · PAID CONTEST</span></div><h2>Release your current office?</h2><p>You currently hold <strong>{modal.office?.title}</strong>. To enter the contest for <strong>{modal.chapter?.office}</strong>, you must vacate the existing role first. Your character will never have two active positions.</p><div className="contest-cost-box"><span>ENTRY COST · IN-GAME ONLY</span><b>₦{money(modal.fee)}</b></div><div className="dialog-note"><Shield size={14} /><span>The fee is charged whether you win or lose. At least one rival is included; no office is awarded unopposed or for free. If you lose, you leave with no current office.</span></div><div className="modal-actions"><button className="secondary-button" onClick={close}>KEEP CURRENT OFFICE</button><button className="primary-action" onClick={onContestConfirm}>VACATE & ENTER · ₦{money(modal.fee)} <ArrowRight size={14} /></button></div></div></div>;
   if (modal.type === 'meeting-invite') {
     const invite = modal.invite || {};
     const meeting = invite.meeting || {};
-    return <div className="modal-backdrop" onMouseDown={close}><div className="dialog-modal meeting-invite-modal modal-card" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={close}><X size={18} /></button><div className="dialog-topline"><span className="dialog-icon"><MessageCircle size={19} /></span><span className="modal-eyebrow">MEETING INVITATION · {invite.fromName || 'A player'}</span></div><h2>{meeting.title || 'Join a public meeting?'}</h2><p>{meeting.topic || 'A player invited you into a civic story meeting.'}</p><div className="dialog-note"><MapPin size={14} /><span>{meeting.location?.venueName || 'Public venue'} · {meeting.location?.state || invite.state || 'Nigeria'} · {meeting.participants || 1} attending</span></div><div className="modal-actions"><button className="secondary-button" onClick={close}>NOT NOW</button><button className="primary-action" onClick={onAcceptMeetingInvite}>TRAVEL TO MEETING <ArrowRight size={14} /></button></div></div></div>;
+    const location = meeting.location || {};
+    return <div className="modal-backdrop" onMouseDown={close}><div className="dialog-modal modal-card" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={close}><X size={18} /></button><div className="dialog-topline"><span className="dialog-icon"><Users size={20} /></span><span className="modal-eyebrow">CIVIC MEETING INVITATION</span></div><h2>{meeting.title || 'Join a civic meeting?'}</h2><p><strong>{invite.fromName || meeting.hostName || 'A player'}</strong> invited you to a typed, in-game meeting at <strong>{location.venueName || 'a civic venue'}</strong> in {location.state || 'Nigeria'}.</p><div className="dialog-note"><LockKeyhole size={14} /><span>Keep the conversation in-game. No personal contact details or real-world voter requests.</span></div><div className="modal-actions"><button className="secondary-button" onClick={close}>NOT NOW</button><button className="primary-action" onClick={onAcceptMeetingInvite}>TRAVEL & JOIN <ArrowRight size={14} /></button></div></div></div>;
   }
   if (modal.type === 'illegal-confirm') return <div className="modal-backdrop" onMouseDown={close}><div className="dialog-modal danger-modal modal-card" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={close}><X size={18} /></button><div className="dialog-topline"><span className="dialog-icon danger"><ShieldAlert size={20} /></span><span className="modal-eyebrow">HIGH-RISK EVENT · FICTIONAL MECHANIC</span></div><h2>Attempt illicit inducement?</h2><p>This abstract choice spends <strong>₦250,000</strong> and may give a short-term influence bump. It sharply damages trust and integrity, adds an investigation flag, and can undermine later legal challenges.</p><div className="danger-list"><span><Check size={12} />No tactics, scripts, or real-world voter targeting are shown.</span><span><Check size={12} />Bribery is addressed in the Electoral Act; this is a critical simulation.</span></div><div className="modal-actions"><button className="secondary-button" onClick={close}>KEEP IT CLEAN</button><button className="danger-button" onClick={onIllegalConfirm}>TAKE THE RISK <ArrowRight size={14} /></button></div></div></div>;
   if (modal.type === 'legal') {
     const contest = profile.lastContest;
-    const eligible = contest && contest.eligibleForPetition && !contest.won && !contest.petitioned;
+    const eligible = contest && contest.petitionEligible && !contest.won && !contest.petitioned;
     return <div className="modal-backdrop" onMouseDown={close}><div className="dialog-modal legal-modal modal-card" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={close}><X size={18} /></button><div className="dialog-topline"><span className="dialog-icon legal"><Scale size={20} /></span><span className="modal-eyebrow">EVIDENCE & DUE PROCESS</span></div><h2>Election petition desk</h2>{eligible ? <><p>Your last result was in <strong>{contest.chapterTitle}</strong>. You may prepare an evidence file and, if standing and statutory timelines allow in this fictional scenario, file a petition.</p><div className="legal-case-box"><div><small>OPEN CASE</small><strong>{contest.office}</strong></div><span className="case-result">LOSS · SIMULATED</span></div><div className="evidence-meter"><span>CASE FILES</span><b>{profile.evidence} READY</b><div className="evidence-track"><i style={{ width: `${Math.min(100, profile.evidence * 35)}%` }} /></div></div><div className="dialog-note"><InfoDot /><span>A petition can fail. Courts are not a shortcut to office; remedies follow evidence and due process.</span></div><div className="modal-actions"><button className="secondary-button" onClick={onPrepareEvidence} disabled={profile.cash < 65_000}>REVIEW EVIDENCE · ₦65K</button><button className="primary-action" onClick={onFilePetition} disabled={profile.evidence < 1 || profile.cash < 180_000 || contest.petitioned}>FILE PETITION · ₦180K <ArrowRight size={14} /></button></div></> : <><p>No unresolved lost contest is currently available. You can still learn how the process works, but real petitions require a lawful basis, standing, evidence, and strict time limits.</p><div className="legal-empty-state"><Scale size={22} /><strong>NO ACTIVE CASE</strong><span>{profile.evidence} evidence review{profile.evidence === 1 ? '' : 's'} in your local file</span></div><div className="dialog-note"><InfoDot /><span>Fictional case mechanics are simplified. Consult a qualified Nigerian lawyer for real legal matters.</span></div><div className="modal-actions"><button className="secondary-button" onClick={close}>CLOSE DESK</button><button className="primary-action" onClick={onPrepareEvidence} disabled={profile.cash < 65_000}>PREPARE A PRACTICE FILE · ₦65K <ArrowRight size={14} /></button></div></>}</div></div>;
   }
   if (modal.type === 'result') {
     const result = modal.contest;
-    return <div className="modal-backdrop" onMouseDown={close}><div className={`result-modal modal-card ${result.won ? 'won' : 'lost'}`} onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={close}><X size={18} /></button><div className="result-emblem">{result.won ? <Crown size={27} /> : <Activity size={27} />}</div><div className="modal-eyebrow">{result.typeLabel || (result.won ? 'SIMULATED MILESTONE' : 'THE RESULT IS IN')}</div><h2>{result.appointment ? (result.won ? 'The review advances the story.' : 'The review does not advance.') : result.won ? 'The next door opens.' : 'A hard result. A new choice.'}</h2><p>{result.appointment ? (result.won ? `The fictional appointment review score was ${result.support}, above the scenario threshold of ${result.opponent}. This is not an actual nomination or appointment.` : `The fictional review score was ${result.support}, below the scenario threshold of ${result.opponent}. The public career remains a political story; real appointments follow separate lawful processes.`) : result.won ? `Your ${result.office.toLowerCase()} stage advanced in the simulation, ${result.support} to ${result.opponent}. This is a fictional result—not a real poll or prediction.` : `Your campaign scored ${result.support}; the rival score was ${result.opponent}. Rebuild support or accept the result. A petition is only relevant to a genuine public-election dispute.`}</p><div className="result-scoreboard"><div><small>{result.supportLabel || 'YOUR SIMULATED SUPPORT'}</small><strong>{result.support}<i>{result.appointment ? 'pts' : 'pts'}</i></strong></div><span>VS</span><div><small>{result.opponentLabel || 'RIVAL CAMPAIGN'}</small><strong>{result.opponent}<i>{result.appointment ? 'pts' : 'pts'}</i></strong></div></div>{result.won && modal.nextChapter && <div className="unlock-box"><span><Check size={13} /></span><div><small>NEXT POLITICAL STAGE</small><strong>{modal.nextChapter.title} · {modal.nextChapter.office}</strong></div></div>}{!result.won && result.eligibleForPetition && <div className="dialog-note"><Scale size={14} /><span>Only consider litigation where there is a genuine dispute, evidence, standing and a lawful basis. A petition is not guaranteed.</span></div>}<button className="primary-action result-continue" onClick={close}>{result.won ? 'CONTINUE THE POLITICAL STORY' : 'RETURN TO CAMPAIGN'} <ArrowRight size={14} /></button></div></div>;
+    const appointment = result.typeLabel?.includes('APPOINTMENT');
+    const internal = result.typeLabel?.includes('INTERNAL');
+    const finalStage = Boolean(modal.finalStage);
+    const eyebrow = result.won ? appointment ? 'SIMULATED APPOINTMENT REVIEW' : internal ? 'INTERNAL SELECTION ADVANCED' : 'FICTIONAL MANDATE SECURED' : 'THE PROCESS DID NOT ADVANCE';
+    const headline = result.won ? finalStage ? 'The political ladder is complete.' : appointment ? 'A public-service review advances.' : 'The next political door opens.' : appointment ? 'The appointment review did not advance.' : 'A hard result. A new choice.';
+    const paragraph = result.won
+      ? appointment ? `Your public record reached the next fictional appointment-review milestone for ${result.office}. No real nomination or appointment has occurred.` : internal ? `Your campaign passed a fictional internal selection stage for ${result.office}. This is separate from the public ballot.` : `Your ${result.office.toLowerCase()} campaign carried the fictional simulation, ${result.support} to ${result.opponent}. This is not a real poll or prediction.`
+      : appointment ? `The competitive merit-review score was ${result.support}; the rival nominee scored ${result.opponent}. Rebuild your record; no appointment occurred.` : `Your campaign scored ${result.support}; the rival scored ${result.opponent}. Rebuild support or accept the simulated result.`;
+    return <div className="modal-backdrop" onMouseDown={close}><div className={`result-modal modal-card ${result.won ? 'won' : 'lost'}`} onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={close}><X size={18} /></button><div className="result-emblem">{result.won ? <Crown size={27} /> : <Activity size={27} />}</div><div className="modal-eyebrow">{eyebrow}</div><h2>{headline}</h2><p>{paragraph}</p><div className="result-scoreboard"><div><small>{appointment ? 'YOUR MERIT-REVIEW SCORE' : internal ? 'YOUR PARTY SUPPORT' : 'YOUR SIMULATED SUPPORT'}</small><strong>{result.support}<i>pts</i></strong></div><span>VS</span><div><small>{appointment ? 'RIVAL NOMINEE' : internal ? 'RIVAL DELEGATE GROUP' : 'RIVAL CAMPAIGN'}</small><strong>{result.opponent}<i>pts</i></strong></div></div><div className="result-contest-cost">PAID CONTEST · ₦{money(result.fee)} · {result.opponentName || 'RIVAL'} · {result.won ? 'POSITION CONTESTED AND WON' : 'NO POSITION AWARDED'}</div>{result.won && modal.nextChapter && <div className="unlock-box"><span><Check size={13} /></span><div><small>NEXT CHAPTER UNLOCKED</small><strong>{modal.nextChapter.title} · {modal.nextChapter.office}</strong></div></div>}{!result.won && result.petitionEligible && <div className="dialog-note"><Scale size={14} /><span>The court desk is available only for a public-election loss and a genuine lawful basis; litigation is not guaranteed.</span></div>}<button className="primary-action result-continue" onClick={close}>{result.won ? 'CONTINUE THE STORY' : 'RETURN TO THE LADDER'} <ArrowRight size={14} /></button></div></div>;
   }
   if (modal.type === 'petition-result') return <div className="modal-backdrop" onMouseDown={close}><div className="dialog-modal modal-card" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={close}><X size={18} /></button><div className="dialog-topline"><span className="dialog-icon legal"><Scale size={20} /></span><span className="modal-eyebrow">FICTIONAL COURT OUTCOME</span></div><h2>{modal.succeeds ? 'A limited remedy is granted.' : 'The petition is dismissed.'}</h2><p>{modal.succeeds ? 'The court orders a lawful remedial process in the simulation. This does not automatically make you the office-holder; you must still follow the remedy.' : 'The evidence did not meet the simulated standard. The original result stands in this scenario.'}</p><div className="dialog-note"><Scale size={14} /><span>The game abstracts complex legal processes and is not legal advice.</span></div><div className="modal-actions"><button className="primary-action" onClick={close}>BACK TO THE CAMPAIGN <ArrowRight size={14} /></button></div></div></div>;
   if (modal.type === 'ending') return <div className="modal-backdrop ending-backdrop"><div className="ending-modal modal-card"><button className="modal-close" onClick={close}><X size={18} /></button><div className="ending-glow" /><div className="ending-kicker"><Crown size={14} /> THE REPUBLIC IS YOURS TO SERVE</div><h2>A mandate is<br /><em>only the beginning.</em></h2><p>You completed a fictional political-career arc and won the simulated national contest, {modal.contest.support} to {modal.contest.opponent}. The game ends with a choice: publish a transition plan, keep a promise to dissenters, and make your first 100 days accountable.</p><div className="ending-pill-row"><span><Check size={12} />12 CHAPTERS</span><span><Check size={12} />{profile.wins} SIMULATED WINS</span><span><Shield size={12} />{profile.integrity}% INTEGRITY</span></div><button className="primary-action" onClick={close}>OPEN THE TRANSITION JOURNAL <ArrowRight size={14} /></button><button className="secondary-button ending-restart" onClick={onReset}>START A NEW CANDIDATE</button></div></div>;
-  if (modal.type === 'reset') return <div className="modal-backdrop" onMouseDown={close}><div className="dialog-modal modal-card" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={close}><X size={18} /></button><div className="dialog-topline"><span className="dialog-icon"><Sparkles size={20} /></span><span className="modal-eyebrow">LOCAL SAVE</span></div><h2>Start a new candidate?</h2><p>Your current political story and in-game purse will be replaced. If you are signed in with cloud persistence enabled, the new run will become the saved profile. You can begin again with a fresh fictional candidate and the ₦1,000,000 game seed fund.</p><div className="modal-actions"><button className="secondary-button" onClick={close}>KEEP THIS RUN</button><button className="primary-action" onClick={onReset}>CREATE NEW RUN <ArrowRight size={14} /></button></div></div></div>;
+  if (modal.type === 'reset') { const storyType = profile.roleMode === 'institutional' ? 'institutional personnel story' : 'political story'; return <div className="modal-backdrop" onMouseDown={close}><div className="dialog-modal modal-card" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" onClick={close}><X size={18} /></button><div className="dialog-topline"><span className="dialog-icon"><Sparkles size={20} /></span><span className="modal-eyebrow">LOCAL SAVE</span></div><h2>Start a new story run?</h2><p>Your current {storyType} will be replaced by fresh onboarding, where you can choose a registered-party political start or fictional institutional roleplay. If you are signed in and cloud persistence is enabled, the new run becomes that account’s saved profile; the ₦1,000,000 funds remain in-game only.</p><div className="modal-actions"><button className="secondary-button" onClick={close}>KEEP THIS RUN</button><button className="primary-action" onClick={onReset}>CREATE NEW RUN <ArrowRight size={14} /></button></div></div></div>; }
   return null;
 }
 

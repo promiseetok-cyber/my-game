@@ -4,11 +4,13 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   build: {
-    chunkSizeWarningLimit: 600,
+    // MapLibre stays behind a lazy view toggle; its vendor chunk is ~1.06 MB minified (~290 KB gzip).
+    chunkSizeWarningLimit: 1100,
     rollupOptions: {
       output: {
         manualChunks: {
           'three-vendor': ['three'],
+          'maplibre-vendor': ['maplibre-gl'],
           'ui-vendor': ['react', 'react-dom', 'lucide-react'],
           'socket-vendor': ['socket.io-client'],
         },

@@ -42,7 +42,7 @@ create table if not exists public.meeting_messages (
   sender_name text not null default 'Player',
   kind text not null default 'speech' check (kind in ('speech','reply','summary')),
   body text not null check (char_length(body) between 1 and 500),
-  reply_to uuid references public.meeting_messages(id) on delete set null,
+  reply_to uuid,
   created_at timestamptz not null default now()
 );
 
@@ -73,6 +73,7 @@ create index if not exists meetings_open_created_idx on public.meetings(status, 
 create index if not exists meeting_messages_meeting_created_idx on public.meeting_messages(meeting_id, created_at asc);
 create index if not exists direct_messages_sender_created_idx on public.direct_messages(sender_id, created_at desc);
 create index if not exists direct_messages_recipient_created_idx on public.direct_messages(recipient_id, created_at desc);
+create unique index if not exists meeting_votes_account_unique on public.meeting_votes(meeting_id, user_id) where user_id is not null;
 
 alter table public.profiles enable row level security;
 alter table public.meetings enable row level security;
@@ -90,9 +91,7 @@ create policy "profiles_update_own" on public.profiles for update to authenticat
 
 drop policy if exists "meetings_read_open_or_joined" on public.meetings;
 create policy "meetings_read_open_or_joined" on public.meetings for select to authenticated using (
-  status = 'open' or host_id = auth.uid() or exists (
-    select 1 from public.meeting_participants mp where mp.meeting_id = meetings.id and mp.user_id = auth.uid()
-  )
+  status = 'open' or host_id = auth.uid()
 );
 drop policy if exists "meeting_host_insert" on public.meetings;
 create policy "meeting_host_insert" on public.meetings for insert to authenticated with check (host_id = auth.uid());
@@ -100,9 +99,11 @@ drop policy if exists "meeting_host_update" on public.meetings;
 create policy "meeting_host_update" on public.meetings for update to authenticated using (host_id = auth.uid()) with check (host_id = auth.uid());
 
 drop policy if exists "participants_read_own_or_host" on public.meeting_participants;
-create policy "participants_read_own" on public.meeting_participants for select to authenticated using (user_id = auth.uid());
+create policy "participants_read_own_or_host" on public.meeting_participants for select to authenticated using (user_id = auth.uid());
 drop policy if exists "participants_insert_self" on public.meeting_participants;
-create policy "participants_insert_self" on public.meeting_participants for insert to authenticated with check (user_id = auth.uid());
+create policy "participants_insert_self" on public.meeting_participants for insert to authenticated with check (
+  user_id = auth.uid() and exists (select 1 from public.meetings m where m.id = meeting_participants.meeting_id and m.status = 'open')
+);
 
 drop policy if exists "meeting_messages_read_participant" on public.meeting_messages;
 create policy "meeting_messages_read_participant" on public.meeting_messages for select to authenticated using (
@@ -111,7 +112,9 @@ create policy "meeting_messages_read_participant" on public.meeting_messages for
 );
 drop policy if exists "meeting_messages_insert_participant" on public.meeting_messages;
 create policy "meeting_messages_insert_participant" on public.meeting_messages for insert to authenticated with check (
-  sender_id = auth.uid() and exists (select 1 from public.meeting_participants mp where mp.meeting_id = meeting_messages.meeting_id and mp.user_id = auth.uid())
+  sender_id = auth.uid()
+  and exists (select 1 from public.meeting_participants mp where mp.meeting_id = meeting_messages.meeting_id and mp.user_id = auth.uid())
+  and exists (select 1 from public.meetings m where m.id = meeting_messages.meeting_id and m.status = 'open')
 );
 
 drop policy if exists "meeting_votes_read_participant" on public.meeting_votes;
@@ -119,9 +122,14 @@ create policy "meeting_votes_read_participant" on public.meeting_votes for selec
   user_id = auth.uid() or exists (select 1 from public.meetings m where m.id = meeting_votes.meeting_id and m.host_id = auth.uid())
 );
 drop policy if exists "meeting_votes_insert_self" on public.meeting_votes;
-create policy "meeting_votes_insert_self" on public.meeting_votes for insert to authenticated with check (user_id = auth.uid());
+create policy "meeting_votes_insert_self" on public.meeting_votes for insert to authenticated with check (
+  user_id = auth.uid() and exists (select 1 from public.meeting_participants mp where mp.meeting_id = meeting_votes.meeting_id and mp.user_id = auth.uid())
+  and exists (select 1 from public.meetings m where m.id = meeting_votes.meeting_id and m.status = 'open')
+);
 drop policy if exists "meeting_votes_update_self" on public.meeting_votes;
-create policy "meeting_votes_update_self" on public.meeting_votes for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+create policy "meeting_votes_update_self" on public.meeting_votes for update to authenticated using (user_id = auth.uid()) with check (
+  user_id = auth.uid() and exists (select 1 from public.meetings m where m.id = meeting_votes.meeting_id and m.status = 'open')
+);
 
 drop policy if exists "direct_messages_read_participant" on public.direct_messages;
 create policy "direct_messages_read_participant" on public.direct_messages for select to authenticated using (sender_id = auth.uid() or recipient_id = auth.uid());

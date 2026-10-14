@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { STATES, WORLD_VENUES } from './data.js';
+import { NPCS, PARTY_OPTIONS, STATES, WORLD_VENUES } from './data.js';
+import { createLocalPartyBranches } from './partyBranches.js';
+import { PARTY_REGISTER_CHECKED_AT, PARTY_REGISTER_SOURCE } from './partyRegistry.js';
 import { STATE_WORLD_PROFILES } from './stateWorldProfiles.js';
+import { createLocalityVisualProfile } from './localityStyles.js';
+import { meetingArrivalPoint } from './meetingWorld.js';
 
 const PALETTES = {
   coastal: { grass: '#859b7a', sand: '#c6b18a', water: '#5d9290', foliage: '#53745a' },
@@ -47,6 +51,244 @@ const ARCHITECTURE_PALETTES = {
 const WET_KINDS = new Set(['river', 'coastal', 'delta', 'confluence', 'lagoon-city', 'mangrove-city', 'highland-river']);
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+function pointCollidesWithRect(x, z, radius, rect) {
+  const nearestX = clamp(x, rect.minX, rect.maxX);
+  const nearestZ = clamp(z, rect.minZ, rect.maxZ);
+  const dx = x - nearestX;
+  const dz = z - nearestZ;
+  return dx * dx + dz * dz < radius * radius;
+}
+
+function circleBlockedAt(x, z, radius, colliders) {
+  return colliders.some((rect) => pointCollidesWithRect(x, z, radius, rect));
+}
+
+function aabbBlockedAt(x, z, halfX, halfZ, colliders) {
+  return colliders.some((rect) => x + halfX > rect.minX && x - halfX < rect.maxX && z + halfZ > rect.minZ && z - halfZ < rect.maxZ);
+}
+
+function segmentIntersectsAabb(x0, z0, x1, z1, minX, maxX, minZ, maxZ) {
+  let near = 0;
+  let far = 1;
+  const dx = x1 - x0;
+  const dz = z1 - z0;
+  const clip = (p, q) => {
+    if (Math.abs(p) < 1e-9) return q >= 0;
+    const t = q / p;
+    if (p < 0) near = Math.max(near, t);
+    else far = Math.min(far, t);
+    return near <= far;
+  };
+  return clip(-dx, x0 - minX) && clip(dx, maxX - x0) && clip(-dz, z0 - minZ) && clip(dz, maxZ - z0);
+}
+
+function segmentWithinCircle(x0, z0, x1, z1, centerX, centerZ, radius) {
+  const dx = x1 - x0;
+  const dz = z1 - z0;
+  const lengthSq = dx * dx + dz * dz;
+  const t = lengthSq > 1e-9 ? clamp(((centerX - x0) * dx + (centerZ - z0) * dz) / lengthSq, 0, 1) : 0;
+  const nearestX = x0 + dx * t;
+  const nearestZ = z0 + dz * t;
+  const distanceX = nearestX - centerX;
+  const distanceZ = nearestZ - centerZ;
+  return distanceX * distanceX + distanceZ * distanceZ < radius * radius;
+}
+
+function circlePathBlocked(x0, z0, x1, z1, radius, colliders) {
+  return colliders.some((rect) => (
+    segmentIntersectsAabb(x0, z0, x1, z1, rect.minX - radius, rect.maxX + radius, rect.minZ, rect.maxZ)
+    || segmentIntersectsAabb(x0, z0, x1, z1, rect.minX, rect.maxX, rect.minZ - radius, rect.maxZ + radius)
+    || segmentWithinCircle(x0, z0, x1, z1, rect.minX, rect.minZ, radius)
+    || segmentWithinCircle(x0, z0, x1, z1, rect.minX, rect.maxZ, radius)
+    || segmentWithinCircle(x0, z0, x1, z1, rect.maxX, rect.minZ, radius)
+    || segmentWithinCircle(x0, z0, x1, z1, rect.maxX, rect.maxZ, radius)
+  ));
+}
+
+function aabbPathBlocked(x0, z0, x1, z1, halfX, halfZ, colliders) {
+  return colliders.some((rect) => segmentIntersectsAabb(
+    x0, z0, x1, z1,
+    rect.minX - halfX, rect.maxX + halfX,
+    rect.minZ - halfZ, rect.maxZ + halfZ,
+  ));
+}
+
+function moveCircleSafely(position, dx, dz, radius, colliders, bounds) {
+  const startX = position.x;
+  const startZ = position.z;
+  const targetX = clamp(startX + dx, bounds.minX + radius, bounds.maxX - radius);
+  const targetZ = clamp(startZ + dz, bounds.minZ + radius, bounds.maxZ - radius);
+  if ((Math.abs(targetX - startX) > 1e-5 || Math.abs(targetZ - startZ) > 1e-5)
+    && !circlePathBlocked(startX, startZ, targetX, targetZ, radius, colliders)) {
+    position.x = targetX;
+    position.z = targetZ;
+  } else {
+    if (Math.abs(targetX - startX) > 1e-5 && !circlePathBlocked(startX, startZ, targetX, startZ, radius, colliders)) position.x = targetX;
+    if (Math.abs(targetZ - startZ) > 1e-5 && !circlePathBlocked(position.x, startZ, position.x, targetZ, radius, colliders)) position.z = targetZ;
+  }
+  return { x: position.x - startX, z: position.z - startZ, moved: Math.abs(position.x - startX) + Math.abs(position.z - startZ) > 1e-5 };
+}
+
+function findNearestFreePoint(x, z, radius, colliders, bounds, maxRadius = 5.5) {
+  const candidate = { x: clamp(x, bounds.minX + radius, bounds.maxX - radius), z: clamp(z, bounds.minZ + radius, bounds.maxZ - radius) };
+  if (!circleBlockedAt(candidate.x, candidate.z, radius, colliders)) return candidate;
+  for (let distance = 0.35; distance <= maxRadius; distance += 0.35) {
+    const count = Math.max(12, Math.ceil(distance * 5));
+    for (let index = 0; index < count; index += 1) {
+      const angle = (index / count) * Math.PI * 2;
+      const nextX = clamp(x + Math.cos(angle) * distance, bounds.minX + radius, bounds.maxX - radius);
+      const nextZ = clamp(z + Math.sin(angle) * distance, bounds.minZ + radius, bounds.maxZ - radius);
+      if (!circleBlockedAt(nextX, nextZ, radius, colliders)) return { x: nextX, z: nextZ };
+    }
+  }
+  return null;
+}
+
+function findWalkPath(start, target, radius, colliders, bounds, cellSize = 0.25) {
+  const isFree = (x, z) => x >= bounds.minX + radius && x <= bounds.maxX - radius
+    && z >= bounds.minZ + radius && z <= bounds.maxZ - radius
+    && !circleBlockedAt(x, z, radius, colliders);
+  const startPoint = { x: start.x, z: start.z };
+  const targetPoint = { x: target.x, z: target.z };
+  const findGridPoint = (point) => {
+    const baseX = Math.round(point.x / cellSize);
+    const baseZ = Math.round(point.z / cellSize);
+    for (let ring = 0; ring <= 8; ring += 1) {
+      let closest = null;
+      let closestDistance = Infinity;
+      for (let offsetX = -ring; offsetX <= ring; offsetX += 1) {
+        for (let offsetZ = -ring; offsetZ <= ring; offsetZ += 1) {
+          if (Math.max(Math.abs(offsetX), Math.abs(offsetZ)) !== ring) continue;
+          const candidate = { x: (baseX + offsetX) * cellSize, z: (baseZ + offsetZ) * cellSize };
+          if (!isFree(candidate.x, candidate.z) || circlePathBlocked(point.x, point.z, candidate.x, candidate.z, radius, colliders)) continue;
+          const distance = (candidate.x - point.x) ** 2 + (candidate.z - point.z) ** 2;
+          if (distance < closestDistance) { closest = candidate; closestDistance = distance; }
+        }
+      }
+      if (closest) return closest;
+    }
+    return null;
+  };
+  const startGrid = findGridPoint(startPoint);
+  const targetGrid = findGridPoint(targetPoint);
+  if (!startGrid || !targetGrid) return null;
+  const keyFor = (x, z) => `${x},${z}`;
+  const startIX = Math.round(startGrid.x / cellSize);
+  const startIZ = Math.round(startGrid.z / cellSize);
+  const targetIX = Math.round(targetGrid.x / cellSize);
+  const targetIZ = Math.round(targetGrid.z / cellSize);
+  const startKey = keyFor(startIX, startIZ);
+  const targetKey = keyFor(targetIX, targetIZ);
+  if (startKey === targetKey) return circlePathBlocked(startPoint.x, startPoint.z, targetPoint.x, targetPoint.z, radius, colliders) ? null : [targetPoint];
+
+  const searchMargin = 8;
+  const searchBounds = {
+    minX: Math.max(bounds.minX + radius, Math.min(startGrid.x, targetGrid.x) - searchMargin),
+    maxX: Math.min(bounds.maxX - radius, Math.max(startGrid.x, targetGrid.x) + searchMargin),
+    minZ: Math.max(bounds.minZ + radius, Math.min(startGrid.z, targetGrid.z) - searchMargin),
+    maxZ: Math.min(bounds.maxZ - radius, Math.max(startGrid.z, targetGrid.z) + searchMargin),
+  };
+  const heuristic = (x, z) => Math.hypot(targetGrid.x - x * cellSize, targetGrid.z - z * cellSize);
+  const open = [];
+  const push = (node) => {
+    let index = open.push(node) - 1;
+    while (index > 0) {
+      const parent = Math.floor((index - 1) / 2);
+      if (open[parent].f <= open[index].f) break;
+      [open[parent], open[index]] = [open[index], open[parent]];
+      index = parent;
+    }
+  };
+  const pop = () => {
+    const first = open[0];
+    const last = open.pop();
+    if (open.length && last) {
+      open[0] = last;
+      let index = 0;
+      while (true) {
+        const left = index * 2 + 1;
+        const right = left + 1;
+        let smallest = index;
+        if (left < open.length && open[left].f < open[smallest].f) smallest = left;
+        if (right < open.length && open[right].f < open[smallest].f) smallest = right;
+        if (smallest === index) break;
+        [open[index], open[smallest]] = [open[smallest], open[index]];
+        index = smallest;
+      }
+    }
+    return first;
+  };
+  const gScore = new Map([[startKey, 0]]);
+  const parents = new Map();
+  const points = new Map([[startKey, startGrid]]);
+  const closed = new Set();
+  push({ x: startIX, z: startIZ, key: startKey, g: 0, f: heuristic(startIX, startIZ) });
+  const directions = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+  let found = false;
+  let expanded = 0;
+  while (open.length && expanded < 40000) {
+    const current = pop();
+    if (closed.has(current.key) || current.g !== gScore.get(current.key)) continue;
+    if (current.key === targetKey) { found = true; break; }
+    closed.add(current.key);
+    expanded += 1;
+    const currentPoint = points.get(current.key);
+    for (const [stepX, stepZ] of directions) {
+      const nextX = current.x + stepX;
+      const nextZ = current.z + stepZ;
+      const worldX = nextX * cellSize;
+      const worldZ = nextZ * cellSize;
+      if (worldX < searchBounds.minX || worldX > searchBounds.maxX || worldZ < searchBounds.minZ || worldZ > searchBounds.maxZ) continue;
+      if (!isFree(worldX, worldZ) || circlePathBlocked(currentPoint.x, currentPoint.z, worldX, worldZ, radius, colliders)) continue;
+      const nextKey = keyFor(nextX, nextZ);
+      if (closed.has(nextKey)) continue;
+      const nextCost = current.g + cellSize * (stepX && stepZ ? Math.SQRT2 : 1);
+      if (nextCost >= (gScore.get(nextKey) ?? Infinity)) continue;
+      gScore.set(nextKey, nextCost);
+      parents.set(nextKey, current.key);
+      points.set(nextKey, { x: worldX, z: worldZ });
+      push({ x: nextX, z: nextZ, key: nextKey, g: nextCost, f: nextCost + heuristic(nextX, nextZ) });
+    }
+  }
+  if (!found) return null;
+  const gridPath = [];
+  let cursor = targetKey;
+  while (cursor !== startKey) {
+    gridPath.push(points.get(cursor));
+    cursor = parents.get(cursor);
+    if (!cursor) return null;
+  }
+  gridPath.push(startGrid);
+  gridPath.reverse();
+  const fullPath = [startPoint];
+  for (const point of gridPath.slice(1)) {
+    if (Math.hypot(point.x - fullPath[fullPath.length - 1].x, point.z - fullPath[fullPath.length - 1].z) > 0.02) fullPath.push(point);
+  }
+  if (Math.hypot(targetPoint.x - fullPath[fullPath.length - 1].x, targetPoint.z - fullPath[fullPath.length - 1].z) > 0.02) fullPath.push(targetPoint);
+  const smoothed = [fullPath[0]];
+  let pathIndex = 0;
+  while (pathIndex < fullPath.length - 1) {
+    let nextIndex = fullPath.length - 1;
+    while (nextIndex > pathIndex + 1 && circlePathBlocked(
+      fullPath[pathIndex].x, fullPath[pathIndex].z, fullPath[nextIndex].x, fullPath[nextIndex].z, radius, colliders,
+    )) nextIndex -= 1;
+    smoothed.push(fullPath[nextIndex]);
+    pathIndex = nextIndex;
+  }
+  return smoothed.slice(1);
+}
+
+function worldVehicleFootprint(vehicle) {
+  const footprint = vehicle.userData.vehicleFootprint || { halfLength: 0.8, halfWidth: 0.5 };
+  const angle = vehicle.rotation.y || 0;
+  const alongX = Math.abs(Math.cos(angle));
+  const alongZ = Math.abs(Math.sin(angle));
+  return {
+    halfX: alongX * footprint.halfLength + alongZ * footprint.halfWidth,
+    halfZ: alongZ * footprint.halfLength + alongX * footprint.halfWidth,
+  };
+}
 const hash = (value) => {
   let result = 2166136261;
   for (let i = 0; i < value.length; i += 1) result = Math.imul(result ^ value.charCodeAt(i), 16777619);
@@ -98,6 +340,32 @@ function box(w, h, d, color, opts = {}) {
   if (opts.castShadow !== false) mesh.castShadow = true;
   mesh.receiveShadow = true;
   return mesh;
+}
+
+function addDoorPortal(parent, { id, title, type = 'building', accent = '#e3b84d', partyId = null, metadata = null, x = 0, z = 0, width = 0.8, height = 1.25 }) {
+  const portal = new THREE.Group();
+  portal.position.set(x, 0, z);
+  portal.name = `door-${id}`;
+  const frame = box(width + 0.2, height + 0.16, 0.12, '#584a39', { castShadow: false });
+  frame.position.y = height / 2;
+  portal.add(frame);
+  const door = box(width, height, 0.045, '#384c42', { castShadow: false, roughness: 0.68 });
+  door.position.set(0, height / 2, 0.08);
+  door.userData.interaction = { id, title, type, partyId, metadata };
+  door.userData.isDoorPortal = true;
+  portal.add(door);
+  const handle = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), new THREE.MeshStandardMaterial({ color: '#e1c36d', metalness: 0.55, roughness: 0.35 }));
+  handle.position.set(width * 0.28, height * 0.49, 0.115);
+  portal.add(handle);
+  const lintel = box(width + 0.42, 0.16, 0.18, accent, { castShadow: false });
+  lintel.position.set(0, height + 0.13, 0.015);
+  portal.add(lintel);
+  const sign = labelSprite(title, accent);
+  sign.position.set(0, height + 0.58, 0.15);
+  sign.scale.set(2.15, 0.54, 1);
+  portal.add(sign);
+  parent.add(portal);
+  return door;
 }
 
 function makeTree(x, z, height, foliageColor, material) {
@@ -183,12 +451,27 @@ function makeRegionalTree(x, z, height, palette, material, rand) {
   return makeTree(x, z, height, palette.foliage, material);
 }
 
-function makeBuilding(rand, x, z, index, palette) {
+function makeBuilding(rand, x, z, index, palette, localityStyle = null) {
   const group = new THREE.Group();
-  const w = 2.1 + rand() * 2.5;
+  const form = localityStyle?.form || 'mixed';
+  const widthBias = form === 'shopfront' || form === 'glass-front' ? 0.72 : form === 'courtyard' ? 0.9 : 1;
+  const w = (2.1 + rand() * 2.5) * widthBias;
   const d = 2.2 + rand() * 2.3;
   const floors = 1 + Math.floor(rand() * (palette.maxFloors || 4));
   const h = 1.6 + floors * 0.78;
+  if (form === 'stilt') {
+    const supports = new THREE.Group();
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+      const post = box(0.13, 0.72, 0.13, '#866c4c', { castShadow: false });
+      post.position.set(sx * (w / 2 - 0.16), 0.36, sz * (d / 2 - 0.16));
+      supports.add(post);
+    }
+    group.add(supports);
+  } else if (form === 'stone-base') {
+    const base = box(w + 0.2, 0.32, d + 0.2, '#9a8a72', { castShadow: false });
+    base.position.y = 0.16;
+    group.add(base);
+  }
   const wallColors = palette.houseColors || ['#dfc9a6', '#d8c6ac', '#b7c7ae', '#d8b7a7', '#d9d5be', '#b2c0b5', '#c5bba7', '#e0d2b7'];
   const wall = box(w, h, d, wallColors[Math.floor(rand() * wallColors.length)]);
   wall.position.y = h / 2;
@@ -218,7 +501,31 @@ function makeBuilding(rand, x, z, index, palette) {
     awning.position.set(0, 0.92, d / 2 + 0.12);
     group.add(awning);
   }
-  const windowMat = new THREE.MeshStandardMaterial({ color: rand() > 0.65 ? '#d3e0ca' : '#41534e', roughness: 0.42, metalness: 0.12 });
+  const facadeAccent = localityStyle?.accent || palette.accent || '#d8f36b';
+  if (form === 'shopfront' || form === 'glass-front') {
+    const shopGlass = box(w * 0.78, 0.62, 0.055, form === 'glass-front' ? '#79a9a4' : '#49645d', { castShadow: false, metalness: 0.17, roughness: 0.3 });
+    shopGlass.position.set(0, 0.7, d / 2 + 0.06);
+    group.add(shopGlass);
+    const shopSign = box(w * 0.86, 0.22, 0.08, facadeAccent, { castShadow: false });
+    shopSign.position.set(0, 1.17, d / 2 + 0.09);
+    group.add(shopSign);
+    for (const side of [-1, 1]) {
+      const jamb = box(0.09, 0.7, 0.09, '#eee1c1', { castShadow: false });
+      jamb.position.set(side * w * 0.42, 0.7, d / 2 + 0.09);
+      group.add(jamb);
+    }
+  }
+  if (form === 'verandah') {
+    const veranda = box(w * 0.92, 0.12, 0.74, facadeAccent, { castShadow: false });
+    veranda.position.set(0, 1.58, d / 2 + 0.28);
+    group.add(veranda);
+    for (const postX of [-w * 0.39, w * 0.39]) {
+      const verandaPost = box(0.08, 1.15, 0.08, '#8a775e', { castShadow: false });
+      verandaPost.position.set(postX, 0.96, d / 2 + 0.56);
+      group.add(verandaPost);
+    }
+  }
+  const windowMat = new THREE.MeshStandardMaterial({ color: form === 'glass-front' ? '#8ab8b0' : rand() > 0.65 ? '#d3e0ca' : '#41534e', roughness: 0.42, metalness: 0.12 });
   const columns = Math.max(2, Math.floor(w / 0.65));
   const rows = Math.max(1, Math.floor(h / 0.9));
   for (let row = 0; row < rows; row += 1) {
@@ -304,47 +611,186 @@ function makeBuilding(rand, x, z, index, palette) {
     dish.rotation.x = -0.7;
     group.add(dish);
   }
+  addDoorPortal(group, { id: `home-${index}`, title: form === 'shopfront' ? 'Neighbourhood shop' : 'Community home', accent: facadeAccent, type: 'building', x: 0, z: d / 2 + 0.09, width: 0.54, height: 1.12 });
   group.position.set(x, 0, z);
+  const collisionRects = [{ x: 0, z: 0, halfX: w / 2 + 0.12, halfZ: d / 2 + 0.12 }];
+  if (index % 3 === 0) {
+    const plotW = w + 1.25;
+    const plotD = d + 1.35;
+    const wallThickness = 0.14;
+    const gateWidth = 1.2;
+    const frontRun = Math.max(0.8, (plotW - gateWidth) / 2);
+    collisionRects.push(
+      { x: -plotW / 2, z: 0.05, halfX: wallThickness / 2 + 0.04, halfZ: plotD / 2 + 0.08 },
+      { x: plotW / 2, z: 0.05, halfX: wallThickness / 2 + 0.04, halfZ: plotD / 2 + 0.08 },
+      { x: 0, z: -plotD / 2 + 0.05, halfX: plotW / 2 + 0.05, halfZ: wallThickness / 2 + 0.04 },
+      { x: -(gateWidth / 2 + frontRun / 2), z: plotD / 2 + 0.05, halfX: frontRun / 2 + 0.04, halfZ: wallThickness / 2 + 0.04 },
+      { x: gateWidth / 2 + frontRun / 2, z: plotD / 2 + 0.05, halfX: frontRun / 2 + 0.04, halfZ: wallThickness / 2 + 0.04 },
+      { x: -gateWidth / 2, z: plotD / 2 + 0.05, halfX: 0.09, halfZ: 0.09 },
+      { x: gateWidth / 2, z: plotD / 2 + 0.05, halfX: 0.09, halfZ: 0.09 },
+    );
+  }
+  group.userData.collisionRects = collisionRects;
   group.userData.groundHeight = palette.grass;
+  return group;
+}
+
+function makePartyOffice(party, branch, x, z) {
+  const group = new THREE.Group();
+  const color = party.color || '#3b8c72';
+  const base = box(3.55, 0.18, 3.65, '#b5a27f', { castShadow: false });
+  base.position.y = 0.09;
+  group.add(base);
+  const front = box(3.05, 2.35, 2.28, '#d8c5a4');
+  front.position.set(0, 1.28, 0.06);
+  group.add(front);
+  const roof = box(3.28, 0.22, 2.5, '#4a5248');
+  roof.position.set(0, 2.58, 0.06);
+  group.add(roof);
+  const awning = box(3.14, 0.17, 0.58, color, { castShadow: false });
+  awning.position.set(0, 1.82, 1.15);
+  group.add(awning);
+  const glass = box(1.1, 0.6, 0.055, '#52736d', { castShadow: false, metalness: 0.12, roughness: 0.3 });
+  glass.position.set(-0.78, 0.96, 1.22);
+  group.add(glass);
+  const sign = box(2.85, 0.42, 0.12, color, { castShadow: false });
+  sign.position.set(0, 2.2, 1.29);
+  group.add(sign);
+  const acronym = labelSprite(party.tag, '#fff5d7');
+  acronym.position.set(0, 2.2, 1.38);
+  acronym.scale.set(1.85, 0.46, 1);
+  group.add(acronym);
+  for (const side of [-1, 1]) {
+    const column = box(0.13, 1.75, 0.13, '#efe3c9', { castShadow: false });
+    column.position.set(side * 1.38, 0.97, 1.18);
+    group.add(column);
+  }
+  const flag = box(0.46, 0.26, 0.035, color, { castShadow: false });
+  flag.position.set(-1.28, 2.82, 0.72);
+  group.add(flag);
+  addDoorPortal(group, { id: `party-office-${party.id}`, title: `${party.tag} office`, type: 'party-office', partyId: party.id, accent: color, x: 0.48, z: 1.25, width: 0.56, height: 1.26, metadata: { partyId: party.id, partyName: party.name, branch } });
+  group.position.set(x, 0, z);
+  group.userData.partyId = party.id;
+  group.userData.branch = branch;
+  group.userData.collisionRects = [
+    { x: 0, z: 0.06, halfX: 1.62, halfZ: 1.24 },
+    // Compound walls deliberately stop short of the front gate; the gap stays walkable.
+    { x: -2.8, z: 0.25, halfX: 0.105, halfZ: 2.82 },
+    { x: 2.8, z: 0.25, halfX: 0.105, halfZ: 2.82 },
+    { x: 0, z: -2.5, halfX: 2.82, halfZ: 0.105 },
+    { x: -1.7625, z: 3.0, halfX: 1.06, halfZ: 0.105 },
+    { x: 1.7625, z: 3.0, halfX: 1.06, halfZ: 0.105 },
+    { x: -0.725, z: 3.0, halfX: 0.11, halfZ: 0.12 },
+    { x: 0.725, z: 3.0, halfX: 0.11, halfZ: 0.12 },
+  ];
   return group;
 }
 
 function makeCar(color, kind = 'sedan', accent = '#f1d846') {
   const g = new THREE.Group();
-  const bodyLength = kind === 'bus' ? 1.9 : kind === 'keke' ? 1.12 : 1.45;
-  const bodyWidth = kind === 'keke' ? 0.7 : 0.9;
-  const body = box(bodyLength, kind === 'bus' ? 0.55 : 0.35, bodyWidth, color, { roughness: 0.47, metalness: 0.08 });
-  body.position.y = kind === 'bus' ? 0.55 : 0.42;
+  const bus = ['bus', 'danfo', 'brt', 'minibus', 'city-bus', 'shuttle'].includes(kind);
+  const keke = ['keke', 'tricycle'].includes(kind);
+  const motorcycle = ['okada', 'motorcycle'].includes(kind);
+  const pickup = kind === 'pickup';
+  const bodyLength = bus ? 2.12 : keke ? 1.16 : pickup ? 1.7 : motorcycle ? 0.74 : kind === 'suv' ? 1.62 : 1.45;
+  const bodyWidth = motorcycle ? 0.36 : keke ? 0.72 : bus ? 1.02 : 0.9;
+  g.userData.vehicleFootprint = { halfLength: bodyLength / 2 + 0.12, halfWidth: bodyWidth / 2 + 0.12 };
+  const body = box(bodyLength, bus ? 0.66 : motorcycle ? 0.23 : 0.38, bodyWidth, color, { roughness: 0.43, metalness: 0.08 });
+  body.position.set(0, bus ? 0.59 : motorcycle ? 0.56 : 0.42, 0);
   g.add(body);
-  const cabin = box(kind === 'bus' ? 1.2 : 0.73, 0.42, bodyWidth * 0.83, kind === 'bus' ? '#d5d3bd' : '#303f3e', { roughness: 0.34, metalness: 0.08 });
-  cabin.position.set(-0.08, kind === 'bus' ? 1.0 : 0.72, 0);
+  const cabin = bus
+    ? box(1.45, 0.62, bodyWidth * 0.84, '#304b46', { roughness: 0.28, metalness: 0.12 })
+    : keke
+      ? box(0.74, 0.43, bodyWidth * 0.9, '#31554b', { roughness: 0.32, metalness: 0.08 })
+      : motorcycle
+        ? box(0.28, 0.34, 0.25, '#222b29', { roughness: 0.4 })
+        : box(pickup ? 0.8 : 0.76, pickup ? 0.44 : 0.42, bodyWidth * 0.83, kind === 'suv' ? '#374e46' : '#303f3e', { roughness: 0.31, metalness: 0.1 });
+  cabin.position.set(-0.08, bus ? 1.18 : motorcycle ? 0.78 : keke ? 0.8 : 0.74, 0);
   g.add(cabin);
   const wheelMat = new THREE.MeshStandardMaterial({ color: '#202522', roughness: 0.97 });
-  for (const x of [-bodyLength * 0.32, bodyLength * 0.32]) {
-    for (const z of [-bodyWidth * 0.51, bodyWidth * 0.51]) {
-      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.12, 9), wheelMat);
-      wheel.rotation.x = Math.PI / 2;
-      wheel.position.set(x, 0.2, z);
+  if (motorcycle) {
+    for (const wheelX of [-0.3, 0.31]) {
+      const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.055, 7, 11), wheelMat);
+      wheel.position.set(wheelX, 0.22, 0);
       g.add(wheel);
     }
-  }
-  if (kind === 'bus') {
-    for (let i = 0; i < 3; i += 1) {
-      const stripe = box(0.43, 0.05, 0.92, i === 1 ? accent : '#213b32', { castShadow: false });
-      stripe.position.set(-0.47 + i * 0.45, 0.79, 0);
-      g.add(stripe);
+    const rider = makePerson('#d5a542', '#704a35');
+    rider.scale.set(0.48, 0.48, 0.48);
+    rider.position.set(-0.03, 0.36, 0);
+    rider.userData.legs?.forEach((leg) => { leg.rotation.x = -0.45; });
+    g.add(rider);
+  } else {
+    for (const x of [-bodyLength * 0.32, bodyLength * 0.32]) {
+      for (const z of [-bodyWidth * 0.51, bodyWidth * 0.51]) {
+        const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.12, 9), wheelMat);
+        wheel.rotation.x = Math.PI / 2;
+        wheel.position.set(x, 0.2, z);
+        g.add(wheel);
+      }
     }
   }
-  if (kind === 'keke') {
-    const hood = box(0.38, 0.3, 0.64, '#e6cf55');
-    hood.position.set(0.5, 0.5, 0);
+  if (bus) {
+    for (let i = 0; i < 4; i += 1) {
+      const window = box(0.32, 0.25, 0.04, '#9bc3bd', { castShadow: false, metalness: 0.1, roughness: 0.25 });
+      window.position.set(-0.58 + i * 0.38, 1.22, bodyWidth * 0.44);
+      g.add(window);
+    }
+    const stripe = box(1.86, 0.12, bodyWidth + 0.035, accent, { castShadow: false });
+    stripe.position.set(-0.02, 0.69, 0);
+    g.add(stripe);
+    const destination = labelSprite(kind === 'brt' ? 'BRT' : kind === 'danfo' ? 'LAGOS' : 'CITY BUS', '#fff5d7');
+    destination.position.set(0.13, 1.5, bodyWidth * 0.46);
+    destination.scale.set(1.25, 0.33, 1);
+    g.add(destination);
+  }
+  if (keke) {
+    const hood = box(0.34, 0.29, 0.66, '#e6cf55');
+    hood.position.set(0.48, 0.49, 0);
     g.add(hood);
-    const roof = box(0.76, 0.09, 0.72, '#387a55');
-    roof.position.set(-0.05, 1.02, 0);
+    const roof = box(0.78, 0.09, 0.74, accent || '#387a55');
+    roof.position.set(-0.05, 1.05, 0);
     g.add(roof);
+  }
+  if (pickup) {
+    const bed = box(0.56, 0.18, 0.82, '#525c56', { castShadow: false });
+    bed.position.set(0.56, 0.7, 0);
+    g.add(bed);
+  }
+  const vehicleTitle = motorcycle ? 'Okada motorcycle' : keke ? 'Keke Napep' : bus ? (kind === 'danfo' ? 'Danfo minibus' : kind === 'brt' ? 'BRT bus' : 'Public bus') : pickup ? 'Pickup vehicle' : kind === 'taxi' ? 'Yellow taxi' : 'Nigerian car';
+  const vehicleDoor = addDoorPortal(g, { id: `vehicle-${kind}-${color.replace('#', '')}`, title: vehicleTitle, type: 'vehicle', accent, x: -0.12, z: bodyWidth / 2 + 0.035, width: 0.38, height: 0.68, metadata: { kind } });
+  if (motorcycle) {
+    vehicleDoor.visible = false;
+    const touchTarget = new THREE.Mesh(new THREE.SphereGeometry(0.48, 10, 8), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }));
+    touchTarget.position.set(0, 0.55, 0);
+    touchTarget.userData.interaction = { id: `vehicle-${kind}-${color.replace('#', '')}`, title: vehicleTitle, type: 'vehicle', metadata: { kind } };
+    g.add(touchTarget);
   }
   g.castShadow = true;
   return g;
+}
+
+function makeWaterTaxi(color = '#e9c94e', accent = '#257f89') {
+  const boat = new THREE.Group();
+  boat.userData.vehicleFootprint = { halfLength: 0.88, halfWidth: 0.43 };
+  const hull = new THREE.Mesh(new THREE.ConeGeometry(0.55, 1.5, 6), new THREE.MeshStandardMaterial({ color, roughness: 0.62 }));
+  hull.rotation.z = -Math.PI / 2;
+  hull.scale.set(0.54, 0.42, 1);
+  hull.position.y = 0.15;
+  boat.add(hull);
+  const cabin = box(0.62, 0.42, 0.53, '#f2eee0', { castShadow: false });
+  cabin.position.set(-0.08, 0.48, 0);
+  boat.add(cabin);
+  const roof = box(0.73, 0.1, 0.64, accent, { castShadow: false });
+  roof.position.set(-0.08, 0.74, 0);
+  boat.add(roof);
+  const glass = box(0.42, 0.18, 0.55, '#76abb0', { castShadow: false, metalness: 0.1, roughness: 0.28 });
+  glass.position.set(-0.08, 0.51, 0.03);
+  boat.add(glass);
+  const hit = new THREE.Mesh(new THREE.SphereGeometry(0.6, 8, 6), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }));
+  hit.position.y = 0.4;
+  hit.userData.interaction = { id: 'water-taxi', title: 'Water taxi', type: 'vehicle', metadata: { kind: 'water-taxi' } };
+  boat.add(hit);
+  return boat;
 }
 
 function makeStreetLight(scene, x, z) {
@@ -357,7 +803,13 @@ function makeStreetLight(scene, x, z) {
   scene.add(arm);
   const lamp = box(0.48, 0.16, 0.26, '#d7d8c3', { castShadow: false });
   lamp.position.set(x + 0.67, 4.08, z);
+  lamp.material.emissive.set('#f4cf8a');
+  lamp.material.emissiveIntensity = 0;
   scene.add(lamp);
+  const light = new THREE.PointLight('#ffd99b', 0, 15, 2);
+  light.position.set(x + 0.67, 3.98, z);
+  scene.add(light);
+  return { light, bulb: lamp.material };
 }
 
 function makeUtilityPole(scene, x, z) {
@@ -414,20 +866,349 @@ function makeBusStop(scene, x, z) {
   scene.add(shelter);
 }
 
-function makePerson(shirt = '#f3a17b', skin = '#7d5138') {
+function makeRoadsideStall(x, z, palette, accent, index = 0) {
   const group = new THREE.Group();
-  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.22, 0.42, 3, 6), new THREE.MeshStandardMaterial({ color: shirt, roughness: 0.82 }));
-  torso.position.y = 0.62;
+  const counter = box(1.7, 0.72, 1.05, ['#a87950', '#b98456', '#a98860'][index % 3]);
+  counter.position.y = 0.42;
+  group.add(counter);
+  for (const sx of [-0.76, 0.76]) for (const sz of [-0.42, 0.42]) {
+    const post = box(0.075, 1.68, 0.075, '#6a5b43', { castShadow: false });
+    post.position.set(sx, 0.93, sz);
+    group.add(post);
+  }
+  const awnings = palette.awningColors || ['#e0b34d', '#3d8b78', '#d9694f'];
+  for (let stripe = 0; stripe < 4; stripe += 1) {
+    const canopyStripe = box(0.44, 0.11, 1.32, stripe % 2 === 0 ? (index % 2 ? accent : awnings[index % awnings.length]) : awnings[(index + stripe) % awnings.length], { castShadow: false });
+    canopyStripe.position.set(-0.66 + stripe * 0.44, 1.78, 0);
+    group.add(canopyStripe);
+  }
+  const crateColors = ['#d47737', '#edc14e', '#6fa465'];
+  crateColors.forEach((color, crateIndex) => {
+    const produce = new THREE.Mesh(new THREE.SphereGeometry(0.14, 7, 6), new THREE.MeshStandardMaterial({ color, roughness: 0.8 }));
+    produce.position.set(-0.47 + crateIndex * 0.46, 0.92, 0.04);
+    group.add(produce);
+  });
+  const sign = labelSprite(index % 2 ? 'FRESH FOOD' : 'MARKET', accent);
+  sign.position.set(0, 1.45, 0.55);
+  sign.scale.set(1.7, 0.44, 1);
+  group.add(sign);
+  group.position.set(x, 0, z);
+  return group;
+}
+
+function makeLocalityMicroLandmark(locality, stateInfo, localityStyle, palette) {
+  const group = new THREE.Group();
+  const feature = localityStyle.microLandmark;
+  const accent = localityStyle.accent || palette.accent || '#d8f36b';
+  const base = new THREE.Mesh(new THREE.CircleGeometry(2.3, 24), new THREE.MeshStandardMaterial({ color: palette.sand, roughness: 0.95 }));
+  base.rotation.x = -Math.PI / 2;
+  base.position.y = 0.035;
+  group.add(base);
+  if (feature === 'water tank') {
+    for (const [x, z] of [[-0.72, -0.58], [0.72, -0.58], [-0.72, 0.58], [0.72, 0.58]]) {
+      const leg = box(0.12, 2.5, 0.12, '#59645a');
+      leg.position.set(x, 1.25, z);
+      group.add(leg);
+    }
+    const tank = new THREE.Mesh(new THREE.CylinderGeometry(0.94, 0.94, 0.78, 12), new THREE.MeshStandardMaterial({ color: '#76a8a8', roughness: 0.48, metalness: 0.08 }));
+    tank.position.y = 2.73;
+    group.add(tank);
+    const cap = new THREE.Mesh(new THREE.ConeGeometry(0.95, 0.5, 12), new THREE.MeshStandardMaterial({ color: accent, roughness: 0.65 }));
+    cap.position.y = 3.36;
+    group.add(cap);
+  } else if (feature === 'market canopy') {
+    const stall = makeRoadsideStall(0, 0, palette, accent, 2);
+    group.add(stall);
+  } else if (feature === 'bus shelter') {
+    const roof = box(3.3, 0.16, 1.3, accent, { castShadow: false });
+    roof.position.y = 2.05;
+    group.add(roof);
+    for (const x of [-1.45, 1.45]) for (const z of [-0.5, 0.5]) {
+      const post = box(0.09, 1.92, 0.09, '#77796c', { castShadow: false });
+      post.position.set(x, 0.96, z);
+      group.add(post);
+    }
+    const bench = box(1.7, 0.12, 0.38, '#98734f');
+    bench.position.set(0, 0.62, 0.12);
+    group.add(bench);
+  } else if (feature === 'civic roundabout') {
+    const island = new THREE.Mesh(new THREE.CylinderGeometry(1.35, 1.45, 0.45, 20), new THREE.MeshStandardMaterial({ color: '#7b9667' }));
+    island.position.y = 0.23;
+    group.add(island);
+    const monument = box(0.55, 2.1, 0.55, accent);
+    monument.position.y = 1.43;
+    group.add(monument);
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(0.4, 10, 7), new THREE.MeshStandardMaterial({ color: '#dfc46c' }));
+    cap.position.y = 2.72;
+    group.add(cap);
+  } else if (feature === 'footbridge') {
+    const deck = box(4.2, 0.22, 1.25, '#998a6c');
+    deck.position.set(0, 1.35, 0);
+    group.add(deck);
+    for (const side of [-1, 1]) {
+      const rail = box(4.2, 0.16, 0.08, accent, { castShadow: false });
+      rail.position.set(0, 1.8, side * 0.57);
+      group.add(rail);
+      for (let x = -1.8; x <= 1.8; x += 0.9) {
+        const post = box(0.08, 0.48, 0.08, '#86775e', { castShadow: false });
+        post.position.set(x, 1.58, side * 0.57);
+        group.add(post);
+      }
+    }
+    for (const x of [-1.65, 1.65]) {
+      const support = box(0.3, 1.3, 0.32, '#aaa18b');
+      support.position.set(x, 0.67, 0);
+      group.add(support);
+    }
+  } else {
+    const hall = box(3.4, 1.8, 2.55, '#d5c4a2');
+    hall.position.y = 0.95;
+    group.add(hall);
+    const roof = box(3.75, 0.22, 2.8, '#4b594e');
+    roof.position.y = 1.98;
+    group.add(roof);
+    for (const x of [-1.15, 0, 1.15]) {
+      const column = box(0.14, 1.3, 0.14, accent);
+      column.position.set(x, 0.79, 1.34);
+      group.add(column);
+    }
+  }
+  const label = labelSprite(`${locality?.ward || stateInfo.capital} hub`, accent);
+  label.position.set(0, feature === 'water tank' ? 4.15 : 3.05, 0.12);
+  label.scale.set(3.4, 0.85, 1);
+  group.add(label);
+  addDoorPortal(group, { id: `locality-hub-${localityStyle.code}`, title: feature === 'community hall' ? 'Community hall' : feature, type: 'landmark', accent, x: 0, z: 1.68, width: 0.62, height: 1.18, metadata: { state: stateInfo.name, lga: locality?.lga, ward: locality?.ward, fictional: true } });
+  if (feature === 'water tank') {
+    group.userData.collisionRects = [-0.72, 0.72].flatMap((x) => [-0.58, 0.58].map((z) => ({ x, z, halfX: 0.14, halfZ: 0.14 })));
+  } else if (feature === 'market canopy') {
+    group.userData.collisionRects = [{ x: 0, z: 0, halfX: 0.9, halfZ: 0.58 }];
+  } else if (feature === 'bus shelter') {
+    group.userData.collisionRects = [
+      { x: -1.45, z: 0, halfX: 0.11, halfZ: 0.58 },
+      { x: 1.45, z: 0, halfX: 0.11, halfZ: 0.58 },
+      { x: 0, z: 0.12, halfX: 0.92, halfZ: 0.24 },
+    ];
+  } else if (feature === 'civic roundabout') {
+    group.userData.collisionRects = [{ x: 0, z: 0, halfX: 1.4, halfZ: 1.4 }];
+  } else if (feature === 'footbridge') {
+    group.userData.collisionRects = [-1.65, 1.65].map((x) => ({ x, z: 0, halfX: 0.2, halfZ: 0.3 }));
+  } else {
+    group.userData.collisionRects = [{ x: 0, z: 0, halfX: 1.78, halfZ: 1.36 }];
+  }
+  group.position.set(17.5, 0, -17.5);
+  group.name = `locality-micro-landmark-${localityStyle.code}`;
+  return group;
+}
+
+function makePerson(shirt = '#f3a17b', skin = '#7d5138', appearance = {}) {
+  const group = new THREE.Group();
+  const headStyle = ['close', 'natural', 'wrap', 'cap'].includes(appearance.headStyle) ? appearance.headStyle : 'close';
+  const shirtColor = appearance.outfitColor || shirt;
+  const skinColor = appearance.skinTone || skin;
+  const shirtMaterial = new THREE.MeshStandardMaterial({ color: shirtColor, roughness: 0.82 });
+  const trouserMaterial = new THREE.MeshStandardMaterial({ color: '#363f38', roughness: 0.95 });
+  const skinMaterial = new THREE.MeshStandardMaterial({ color: skinColor, roughness: 0.86 });
+  const darkMaterial = new THREE.MeshStandardMaterial({ color: '#201d1a', roughness: 0.9 });
+  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.22, 0.42, 3, 8), shirtMaterial);
+  torso.position.y = 0.7;
   torso.castShadow = true;
   group.add(torso);
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.19, 12, 10), new THREE.MeshStandardMaterial({ color: skin, roughness: 0.86 }));
-  head.position.y = 1.14;
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.09, 0.17, 8), skinMaterial);
+  neck.position.y = 1.11;
+  neck.castShadow = true;
+  group.add(neck);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.19, 14, 12), skinMaterial);
+  head.position.y = 1.25;
   head.castShadow = true;
   group.add(head);
-  const legs = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.14, 0.43, 7), new THREE.MeshStandardMaterial({ color: '#363f38', roughness: 0.95 }));
-  legs.position.y = 0.22;
-  group.add(legs);
+  for (const side of [-1, 1]) {
+    const ear = new THREE.Mesh(new THREE.SphereGeometry(0.043, 8, 8), skinMaterial);
+    ear.position.set(side * 0.182, 1.245, 0.005);
+    group.add(ear);
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.023, 7, 6), darkMaterial);
+    eye.position.set(side * 0.064, 1.272, 0.164);
+    group.add(eye);
+  }
+  const nose = new THREE.Mesh(new THREE.SphereGeometry(0.026, 7, 6), skinMaterial);
+  nose.scale.set(0.75, 1.2, 0.7);
+  nose.position.set(0, 1.218, 0.184);
+  group.add(nose);
+  const hairMaterial = new THREE.MeshStandardMaterial({ color: '#232521', roughness: 0.97 });
+  if (headStyle === 'wrap') {
+    const wrap = new THREE.Mesh(new THREE.SphereGeometry(0.207, 12, 8), new THREE.MeshStandardMaterial({ color: '#d5b96f', roughness: 0.9 }));
+    wrap.position.set(0, 1.355, -0.005);
+    wrap.scale.set(1.02, 0.49, 1.02);
+    wrap.castShadow = true;
+    group.add(wrap);
+    const fold = new THREE.Mesh(new THREE.TorusGeometry(0.157, 0.018, 5, 14), new THREE.MeshStandardMaterial({ color: '#b8924d', roughness: 0.95 }));
+    fold.rotation.x = Math.PI / 2;
+    fold.position.set(0, 1.32, 0);
+    group.add(fold);
+  } else if (headStyle === 'cap') {
+    const crown = new THREE.Mesh(new THREE.SphereGeometry(0.205, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: '#263b35', roughness: 0.92 }));
+    crown.position.set(0, 1.295, -0.005);
+    crown.castShadow = true;
+    group.add(crown);
+    const brim = box(0.31, 0.035, 0.2, '#263b35', { castShadow: true });
+    brim.position.set(0, 1.31, 0.095);
+    group.add(brim);
+  } else {
+    const hair = new THREE.Mesh(new THREE.SphereGeometry(headStyle === 'natural' ? 0.202 : 0.194, 12, 8), hairMaterial);
+    hair.position.set(0, headStyle === 'natural' ? 1.345 : 1.335, -0.005);
+    hair.scale.set(1, headStyle === 'natural' ? 0.68 : 0.4, 1.02);
+    hair.castShadow = true;
+    group.add(hair);
+  }
+  const legs = [];
+  const arms = [];
+  for (const side of [-1, 1]) {
+    const arm = new THREE.Group();
+    arm.position.set(side * 0.245, 0.89, 0);
+    const sleeve = new THREE.Mesh(new THREE.CapsuleGeometry(0.082, 0.22, 3, 7), shirtMaterial);
+    sleeve.position.y = -0.13;
+    sleeve.castShadow = true;
+    arm.add(sleeve);
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.068, 8, 8), skinMaterial);
+    hand.position.y = -0.3;
+    arm.add(hand);
+    group.add(arm);
+    arms.push(arm);
+
+    const leg = new THREE.Group();
+    leg.position.set(side * 0.12, 0.43, 0);
+    const trouser = new THREE.Mesh(new THREE.CapsuleGeometry(0.068, 0.24, 3, 6), trouserMaterial);
+    trouser.position.y = -0.16;
+    trouser.castShadow = true;
+    leg.add(trouser);
+    const shoe = box(0.14, 0.085, 0.25, '#292e2b', { castShadow: true });
+    shoe.position.set(0, -0.34, 0.05);
+    leg.add(shoe);
+    group.add(leg);
+    legs.push(leg);
+  }
+  group.userData.legs = legs;
+  group.userData.arms = arms;
+  group.userData.torso = torso;
+  group.userData.head = head;
   return group;
+}
+
+function makeSeatedAttendee(shirt = '#d4b750', skin = '#7d5138') {
+  const group = new THREE.Group();
+  const shirtMaterial = new THREE.MeshStandardMaterial({ color: shirt, roughness: 0.84 });
+  const skinMaterial = new THREE.MeshStandardMaterial({ color: skin, roughness: 0.88 });
+  const trouserMaterial = new THREE.MeshStandardMaterial({ color: '#37413b', roughness: 0.94 });
+  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.21, 0.36, 3, 7), shirtMaterial);
+  torso.position.set(0, 0.83, 0);
+  torso.rotation.x = -0.08;
+  torso.castShadow = true;
+  group.add(torso);
+  const hips = box(0.34, 0.18, 0.29, '#435044', { castShadow: true });
+  hips.position.set(0, 0.58, 0);
+  group.add(hips);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.17, 12, 9), skinMaterial);
+  head.position.set(0, 1.24, 0.03);
+  head.castShadow = true;
+  group.add(head);
+  for (const side of [-1, 1]) {
+    const thigh = new THREE.Mesh(new THREE.CapsuleGeometry(0.075, 0.23, 3, 6), trouserMaterial);
+    thigh.rotation.x = Math.PI / 2;
+    thigh.position.set(side * 0.12, 0.47, 0.2);
+    group.add(thigh);
+    const shin = new THREE.Mesh(new THREE.CapsuleGeometry(0.065, 0.22, 3, 6), trouserMaterial);
+    shin.position.set(side * 0.12, 0.24, 0.39);
+    group.add(shin);
+    const shoe = box(0.16, 0.075, 0.24, '#292e2b', { castShadow: true });
+    shoe.position.set(side * 0.12, 0.085, 0.49);
+    group.add(shoe);
+  }
+  const makeArm = (side) => {
+    const arm = new THREE.Group();
+    arm.position.set(side * 0.22, 0.96, 0);
+    const upper = new THREE.Mesh(new THREE.CapsuleGeometry(0.065, 0.2, 3, 5), shirtMaterial);
+    upper.position.set(side * 0.045, -0.17, 0.025);
+    upper.rotation.z = side * -0.16;
+    arm.add(upper);
+    const forearm = new THREE.Mesh(new THREE.CapsuleGeometry(0.052, 0.18, 3, 5), skinMaterial);
+    forearm.position.set(side * 0.055, -0.37, 0.055);
+    arm.add(forearm);
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.064, 8, 6), skinMaterial);
+    hand.position.set(side * 0.055, -0.49, 0.06);
+    arm.add(hand);
+    arm.traverse((part) => { if (part.isMesh) part.castShadow = true; });
+    group.add(arm);
+    return arm;
+  };
+  const leftArm = makeArm(-1);
+  const rightArm = makeArm(1);
+  return { group, head, leftArm, rightArm };
+}
+
+function makeMeetingChair() {
+  const chair = new THREE.Group();
+  const metal = '#58645b';
+  const seat = box(0.48, 0.08, 0.44, '#b49a70', { castShadow: false });
+  seat.position.set(0, 0.5, 0);
+  chair.add(seat);
+  const back = box(0.46, 0.48, 0.07, '#8b795c', { castShadow: false });
+  back.position.set(0, 0.77, -0.18);
+  chair.add(back);
+  for (const x of [-0.17, 0.17]) {
+    for (const z of [-0.15, 0.15]) {
+      const leg = box(0.045, 0.48, 0.045, metal, { castShadow: false, metalness: 0.16 });
+      leg.position.set(x, 0.25, z);
+      chair.add(leg);
+    }
+  }
+  return chair;
+}
+
+function createSpeechBubble(text = '') {
+  const canvas = document.createElement('canvas');
+  canvas.width = 640;
+  canvas.height = 220;
+  const context = canvas.getContext('2d');
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, depthWrite: false, opacity: 0.98 });
+  const sprite = new THREE.Sprite(material);
+  sprite.scale.set(4.9, 1.68, 1);
+  const update = (name, body) => {
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = 'rgba(8,18,14,0.94)';
+    context.strokeStyle = '#d8f36b';
+    context.lineWidth = 5;
+    context.beginPath();
+    context.roundRect(10, 10, 620, 188, 26);
+    context.fill();
+    context.stroke();
+    context.fillStyle = '#d8f36b';
+    context.font = '700 21px Arial, sans-serif';
+    context.textAlign = 'left';
+    context.textBaseline = 'top';
+    context.fillText(String(name || 'SPEAKER').toUpperCase().slice(0, 34), 32, 27);
+    context.fillStyle = '#f3f3e8';
+    context.font = '600 24px Arial, sans-serif';
+    const words = String(body || '').replace(/\s+/g, ' ').trim().slice(0, 115).split(' ');
+    let line = '';
+    let y = 66;
+    let lines = 0;
+    for (const word of words) {
+      const next = line ? `${line} ${word}` : word;
+      if (context.measureText(next).width > 565 && line) {
+        context.fillText(line, 32, y);
+        y += 34;
+        lines += 1;
+        line = word;
+        if (lines >= 3) break;
+      } else line = next;
+    }
+    if (line && lines < 3) context.fillText(line, 32, y);
+    texture.needsUpdate = true;
+  };
+  update('THE FLOOR IS OPEN', text || 'Type a speech or reply to speak.');
+  sprite.visible = false;
+  return { sprite, update };
 }
 
 function makeStadium(group, material) {
@@ -603,6 +1384,9 @@ function makeVenue(venue, palette, sceneMaterials, stateLabel) {
     if (type !== 'caucus') makeNigerianFlag(g, -1.55, 2.45, 0.68);
   }
 
+  if (type !== 'square') {
+    addDoorPortal(g, { id: `venue-${venue.id}`, title: venue.short || venue.label, type: 'venue', accent: color, x: 0, z: type === 'stadium' ? 3.0 : type === 'airport' ? 2.85 : 1.45, width: 0.82, height: 1.32, metadata: { venueId: venue.id, venueType: type } });
+  }
   const pad = new THREE.Mesh(new THREE.CircleGeometry(type === 'stadium' ? 3.1 : 2.45, 30), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.105, depthWrite: false }));
   pad.rotation.x = -Math.PI / 2;
   pad.position.y = 0.045;
@@ -625,6 +1409,44 @@ function makeVenue(venue, palette, sceneMaterials, stateLabel) {
   label.userData.venueId = venue.id;
   label.userData.isHotspot = true;
   g.add(label);
+  if (type === 'airport') {
+    g.userData.collisionRects = [
+      { x: 0, z: 2.1, halfX: 1.86, halfZ: 0.74 },
+      { x: -1.5, z: -0.15, halfX: 1.38, halfZ: 1.18 },
+    ];
+  } else if (['office', 'court', 'assembly', 'caucus'].includes(type)) {
+    const compoundWidth = type === 'assembly' ? 5.6 : 4.8;
+    const compoundDepth = 5.5;
+    const gateWidth = 1.45;
+    const gateRun = (compoundWidth - gateWidth) / 2;
+    g.userData.collisionRects = [
+      { x: 0, z: 0, halfX: (type === 'assembly' ? 3.5 : 2.8) / 2 + 0.14, halfZ: 1.27 },
+      { x: -compoundWidth / 2, z: 0.25, halfX: 0.105, halfZ: compoundDepth / 2 + 0.08 },
+      { x: compoundWidth / 2, z: 0.25, halfX: 0.105, halfZ: compoundDepth / 2 + 0.08 },
+      { x: 0, z: -compoundDepth / 2 + 0.25, halfX: compoundWidth / 2 + 0.05, halfZ: 0.105 },
+      { x: -(0.725 + gateRun / 2), z: compoundDepth / 2 + 0.25, halfX: gateRun / 2 + 0.04, halfZ: 0.105 },
+      { x: 0.725 + gateRun / 2, z: compoundDepth / 2 + 0.25, halfX: gateRun / 2 + 0.04, halfZ: 0.105 },
+      { x: -0.725, z: compoundDepth / 2 + 0.25, halfX: 0.11, halfZ: 0.12 },
+      { x: 0.725, z: compoundDepth / 2 + 0.25, halfX: 0.11, halfZ: 0.12 },
+    ];
+  } else if (type === 'market') {
+    g.userData.collisionRects = Array.from({ length: 4 }, (_, index) => ({
+      x: -1.95 + index * 1.3,
+      z: (index % 2) * 1.15,
+      halfX: 0.64,
+      halfZ: 0.56,
+    }));
+  } else if (type === 'square') {
+    g.userData.collisionRects = [
+      { x: 0, z: 0, halfX: 0.52, halfZ: 0.52 },
+      { x: -1.9, z: 0, halfX: 0.76, halfZ: 0.42 },
+      { x: 1.9, z: 0, halfX: 0.76, halfZ: 0.42 },
+      { x: 0, z: -1.9, halfX: 0.42, halfZ: 0.76 },
+      { x: 0, z: 1.9, halfX: 0.42, halfZ: 0.76 },
+    ];
+  } else if (type !== 'stadium') {
+    g.userData.collisionRects = [{ x: 0, z: 0, halfX: 1.38, halfZ: 1.22 }];
+  }
   g.position.set(x, 0, z);
   g.userData.venueId = venue.id;
   g.userData.isHotspot = true;
@@ -880,27 +1702,191 @@ function makeStateSignature(stateInfo, palette, sceneMaterials) {
   title.position.set(0, 4.15, 0.1);
   title.scale.set(4.1, 1.02, 1);
   group.add(title);
+  addDoorPortal(group, { id: `state-landmark-${stateInfo.name}`, title: stateInfo.landmark, type: 'landmark', accent: palette.accent, x: 0, z: 2.75, width: 0.72, height: 1.24, metadata: { state: stateInfo.name } });
+  if (feature === 'market') {
+    group.userData.collisionRects = [-1.62, 0, 1.62].map((x) => ({ x, z: 0, halfX: 0.66, halfZ: 0.48 }));
+  } else if (feature === 'palace' || feature === 'mosque' || feature === 'minaret') {
+    group.userData.collisionRects = [
+      { x: 0, z: 0, halfX: feature === 'minaret' ? 0.84 : 1.78, halfZ: feature === 'minaret' ? 0.84 : 1.5 },
+      ...(feature === 'minaret' ? [] : [-2.05, 2.05].map((x) => ({ x, z: -0.15, halfX: 0.32, halfZ: 0.36 }))),
+    ];
+  } else if (feature === 'railway') {
+    group.userData.collisionRects = [{ x: 0, z: 0, halfX: 1.22, halfZ: 0.68 }];
+  } else if (feature === 'waterfront' || feature === 'bridge') {
+    group.userData.collisionRects = [{ x: 0, z: -0.35, halfX: 2.22, halfZ: 0.62 }];
+  } else if (feature === 'rock') {
+    group.userData.collisionRects = [{ x: 0, z: 0.1, halfX: 2.18, halfZ: 0.96 }];
+  } else if (feature === 'park') {
+    group.userData.collisionRects = [
+      ...[-1, 1].flatMap((xSign) => [-1, 1].map((zSign) => ({ x: xSign * 2, z: zSign * 1.8, halfX: 0.42, halfZ: 0.42 }))),
+      { x: 0, z: 0, halfX: 0.3, halfZ: 0.3 },
+    ];
+  } else if (feature === 'moat') {
+    group.userData.collisionRects = [{ x: 0, z: 0, halfX: 1.42, halfZ: 1.42 }];
+  } else if (feature === 'heritage') {
+    group.userData.collisionRects = [{ x: 0, z: 0, halfX: 1.92, halfZ: 1.38 }];
+  } else if (feature === 'stadium') {
+    group.userData.collisionRects = [
+      { x: -2.02, z: 0, halfX: 0.42, halfZ: 1.68 },
+      { x: 2.02, z: 0, halfX: 0.42, halfZ: 1.68 },
+      { x: -0.95, z: 2.02, halfX: 0.62, halfZ: 0.42 },
+      { x: 0.95, z: 2.02, halfX: 0.62, halfZ: 0.42 },
+      { x: 0, z: -2.02, halfX: 1.35, halfZ: 0.42 },
+    ];
+  } else {
+    group.userData.collisionRects = [{ x: 0, z: 0, halfX: feature === 'transit' ? 0.75 : 0.54, halfZ: 0.55 }];
+  }
   group.position.set(-17.6, 0, 17.6);
   group.name = `regional-signature-${stateInfo.name}`;
   return group;
 }
 
-function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, playerColor, touchRef, focusRef) {
+function buildInteriorRoom(info, palette, playerColor) {
+  const group = new THREE.Group();
+  group.name = `interior-${info.id || info.type}`;
+  const wallMaterial = '#e3d8bf';
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(13, 13), new THREE.MeshStandardMaterial({ color: '#bca985', roughness: 0.92, side: THREE.DoubleSide }));
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.y = -0.05;
+  group.add(floor);
+  const walls = [
+    { size: [13, 4.5, 0.22], pos: [0, 2.2, -6.4] },
+    { size: [0.22, 4.5, 13], pos: [-6.4, 2.2, 0] },
+    { size: [0.22, 4.5, 13], pos: [6.4, 2.2, 0] },
+    { size: [13, 0.22, 13], pos: [0, 4.45, 0] },
+    { size: [13, 4.5, 0.22], pos: [0, 2.2, 6.4] },
+  ];
+  group.userData.collisionRects = [
+    { x: 0, z: -6.4, halfX: 6.5, halfZ: 0.13 },
+    { x: -6.4, z: 0, halfX: 0.13, halfZ: 6.5 },
+    { x: 6.4, z: 0, halfX: 0.13, halfZ: 6.5 },
+    { x: 0, z: 6.4, halfX: 6.5, halfZ: 0.13 },
+    { x: 0, z: -0.75, halfX: info.type === 'party-office' ? 1.82 : 1.42, halfZ: 0.68 },
+  ];
+  walls.forEach(({ size, pos }, index) => {
+    const wall = box(...size, index === 4 ? '#d4c5a8' : wallMaterial, { castShadow: false });
+    wall.material.side = THREE.DoubleSide;
+    wall.position.set(...pos);
+    group.add(wall);
+  });
+  const title = labelSprite(info.title || 'COMMUNITY ROOM', palette.accent || '#d8f36b');
+  title.position.set(0, 3.25, -6.22);
+  title.scale.set(3.3, 0.76, 1);
+  group.add(title);
+  const windowColor = '#81aaa2';
+  for (const side of [-1, 1]) {
+    const window = box(1.65, 1.28, 0.06, windowColor, { castShadow: false, metalness: 0.1, roughness: 0.34 });
+    window.position.set(side * 6.26, 2.48, -0.6);
+    group.add(window);
+  }
+  const rug = new THREE.Mesh(new THREE.PlaneGeometry(6.6, 4.1), new THREE.MeshStandardMaterial({ color: info.type === 'party-office' ? '#9b684d' : '#627b62', roughness: 0.98, side: THREE.DoubleSide }));
+  rug.rotation.x = -Math.PI / 2;
+  rug.position.set(0, 0.015, 0.55);
+  group.add(rug);
+  const desk = box(info.type === 'party-office' ? 3.5 : 2.7, 0.18, 1.18, '#77563c');
+  desk.position.set(0, 1.05, -0.75);
+  group.add(desk);
+  for (const x of [-1.2, 1.2]) {
+    const leg = box(0.12, 0.98, 0.12, '#5b4635', { castShadow: false });
+    leg.position.set(x, 0.5, -0.75);
+    group.add(leg);
+  }
+  const purpose = info.type === 'party-office' ? 'LOCAL PARTY SECRETARIAT' : info.type === 'vehicle' ? 'NIGERIAN STREET TRANSPORT' : info.type === 'venue' ? 'CIVIC GATHERING PLACE' : 'COMMUNITY SPACE';
+  const purposeLabel = labelSprite(purpose, palette.accent || '#d8f36b');
+  purposeLabel.position.set(0, 2.35, -5.95);
+  purposeLabel.scale.set(2.9, 0.62, 1);
+  group.add(purposeLabel);
+
+  if (info.type === 'party-office') {
+    const branch = Array.isArray(info.branch) ? info.branch : [];
+    const tag = labelSprite('SIMULATED LOCAL BRANCH', '#ffc978');
+    tag.position.set(0, 1.92, -5.96);
+    tag.scale.set(2.55, 0.5, 1);
+    group.add(tag);
+    for (let index = 0; index < Math.min(branch.length, 6); index += 1) {
+      const exec = branch[index];
+      const x = (index % 3 - 1) * 3.15;
+      const z = index < 3 ? -2.0 : 1.35;
+      const chair = makeMeetingChair();
+      chair.position.set(x, 0, z);
+      chair.rotation.y = Math.PI;
+      group.add(chair);
+      const person = makePerson(['#d18769', '#688a73', '#cfb256', '#7284a1', '#bb8056', '#937fa3'][index], '#775039');
+      person.scale.set(0.76, 0.76, 0.76);
+      person.position.set(x, 0, z + 0.45);
+      person.rotation.y = Math.PI;
+      group.add(person);
+      person.userData.name = exec?.name || 'Simulated local officer';
+      person.userData.office = exec?.position || 'Branch officer';
+    }
+  } else if (info.type === 'vehicle') {
+    const dash = box(7.4, 0.64, 0.92, '#384844');
+    dash.position.set(0, 1.1, 4.45);
+    group.add(dash);
+    const windscreen = box(6.0, 1.45, 0.12, '#7faeb3', { castShadow: false, metalness: 0.1, roughness: 0.3 });
+    windscreen.position.set(0, 2.55, 6.19);
+    group.add(windscreen);
+    for (const x of [-2.65, 0, 2.65]) {
+      const seat = box(1.85, 0.76, 0.8, '#354b44');
+      seat.position.set(x, 0.65, 1.25);
+      group.add(seat);
+      const back = box(1.85, 1.15, 0.25, '#446458');
+      back.position.set(x, 1.35, 0.85);
+      group.add(back);
+    }
+    const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.08, 8, 20), new THREE.MeshStandardMaterial({ color: '#242b29' }));
+    wheel.position.set(-1.85, 1.58, 3.85);
+    group.add(wheel);
+  } else if (info.metadata?.venueType === 'stadium') {
+    for (let tier = 0; tier < 3; tier += 1) {
+      const stand = box(8.2, 0.32, 0.8, ['#d4b958', '#597f66', '#9f6352'][tier]);
+      stand.position.set(0, 0.35 + tier * 0.38, -2.65 + tier * 0.86);
+      group.add(stand);
+    }
+    const field = new THREE.Mesh(new THREE.PlaneGeometry(7.4, 3.4), new THREE.MeshStandardMaterial({ color: '#62905c', roughness: 0.96, side: THREE.DoubleSide }));
+    field.rotation.x = -Math.PI / 2;
+    field.position.set(0, 0.08, 2.05);
+    group.add(field);
+  } else if (info.type === 'venue') {
+    for (let index = 0; index < 4; index += 1) {
+      const seat = box(1.45, 0.36, 0.58, index % 2 ? '#546f64' : '#c7a84d');
+      seat.position.set(-4.0 + index * 2.65, 0.45, 2.0);
+      group.add(seat);
+    }
+  } else {
+    const sofa = box(3.8, 0.62, 0.95, '#547263');
+    sofa.position.set(0, 0.55, 2.5);
+    group.add(sofa);
+    for (const x of [-1.3, 0, 1.3]) {
+      const chair = box(0.92, 0.54, 0.84, '#a9835b');
+      chair.position.set(x, 0.48, -2.0);
+      group.add(chair);
+    }
+  }
+  const exitDoor = addDoorPortal(group, { id: `exit-${info.id || info.type}`, title: 'Exit to street', type: 'exit', accent: '#e5c465', x: 0, z: 5.77, width: 0.9, height: 1.8 });
+  exitDoor.userData.interaction = { id: 'exit-interior', title: 'Exit to street', type: 'exit' };
+  group.visible = false;
+  void playerColor;
+  return group;
+}
+
+function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, playerColor, playerAppearance, worldMinuteRef, meetingRef, meetingMessagesRef, meetingContextRef, meetingTravelRef, focusRef, partyFocusRef, exitInteriorRef, interiorChangeRef) {
   const stateInfo = STATES.find((item) => item.name === state) || STATES[0];
   const profile = STATE_WORLD_PROFILES[stateInfo.name] || STATE_WORLD_PROFILES.Lagos;
+  const localityStyle = createLocalityVisualProfile(stateInfo, profile, locality);
   const basePalette = PALETTES[stateInfo.terrain] || PALETTES.coastal;
   const tone = REGIONAL_TONES[profile.kind] || REGIONAL_TONES.upland;
   const architecture = ARCHITECTURE_PALETTES[profile.architecture] || ARCHITECTURE_PALETTES.southern;
-  const palette = { ...basePalette, ...tone, ...profile, ...architecture };
+  const palette = { ...basePalette, ...tone, ...profile, ...architecture, ...localityStyle, accent: localityStyle.accent || profile.accent };
   const localitySeed = locality ? `${locality.lga}/${locality.ward}/${locality.lat}/${locality.lon}` : stateInfo.capital;
   const rand = seeded(hash(`${stateInfo.name}/${localitySeed}`));
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(palette.sky || '#b8c4ac');
-  scene.fog = new THREE.Fog(palette.sky || '#b8c4ac', 42, 94);
+  scene.background = new THREE.Color('#8ccde6');
+  scene.fog = new THREE.Fog('#b9d8d6', 58, 112);
 
-  const camera = new THREE.PerspectiveCamera(39, 1, 0.1, 150);
-  camera.position.set(26, 28, 31);
-  camera.lookAt(0, 0, 0);
+  const camera = new THREE.PerspectiveCamera(43, 1, 0.1, 180);
+  camera.position.set(-4.2, 7.4, 16.5);
+  camera.lookAt(-5.8, 1, 3.5);
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.6));
@@ -908,15 +1894,17 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.15;
-  renderer.domElement.setAttribute('aria-label', locality ? `Procedurally generated 3D neighbourhood for ${locality.ward}, ${locality.lga}, ${stateInfo.name}; not a surveyed street map` : `Procedurally generated 3D district for ${stateInfo.capital}, ${stateInfo.name}; not a surveyed street map`);
+  renderer.toneMappingExposure = 1.32;
+  const sceneLabel = locality ? `Procedurally generated 3D neighbourhood for ${locality.ward}, ${locality.lga}, ${stateInfo.name}` : `Procedurally generated 3D district for ${stateInfo.capital}, ${stateInfo.name}`;
+  renderer.domElement.setAttribute('aria-label', `${sceneLabel}; not a surveyed map. Tap or click open ground to walk, drag to orbit, and pinch or scroll to zoom. Desktop keyboard: WASD or arrow keys.`);
   renderer.domElement.tabIndex = 0;
   renderer.domElement.style.touchAction = 'none';
   root.appendChild(renderer.domElement);
 
-  scene.add(new THREE.HemisphereLight('#e6f4df', '#6c6954', 1.75));
-  const sun = new THREE.DirectionalLight('#fff2d7', 3.1);
-  sun.position.set(-14, 27, 15);
+  const ambientSky = new THREE.HemisphereLight('#e7f7ff', '#6b6448', 2.05);
+  scene.add(ambientSky);
+  const sun = new THREE.DirectionalLight('#fff1c8', 3.8);
+  sun.position.set(-14, 31, 15);
   sun.castShadow = true;
   sun.shadow.mapSize.set(1024, 1024);
   sun.shadow.camera.left = -28;
@@ -937,16 +1925,59 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
   addRegionalRelief(scene, palette, profile, rand);
   if (WET_KINDS.has(profile.kind)) addRegionalWater(scene, palette, profile.kind, rand);
 
-  const roadScale = locality?.settlement === 'local' ? 0.88 : (profile.architecture === 'planned' ? 1.2 : 1);
-  const localDensity = locality?.settlement === 'local' ? profile.density * 0.74 : profile.density;
-  const asphaltMat = new THREE.MeshStandardMaterial({ color: '#46504b', roughness: 0.91 });
-  const curbMat = new THREE.MeshStandardMaterial({ color: '#d8c9a3', roughness: 0.91 });
+  const roadPlan = localityStyle.roadPlan;
+  const roadScale = (locality?.settlement === 'local' ? 1.08 : (profile.architecture === 'planned' ? 1.16 : 1)) * localityStyle.roadWidthFactor;
+  const localDensity = clamp(profile.density * localityStyle.densityFactor, 0.22, 1.08);
+  const primaryRoadAt = roadPlan === 'offset-grid' ? 2.35 : roadPlan === 'waterfront' ? -1.5 : 0;
+  const secondaryRoadAt = roadPlan === 'civic-ring' ? -12.2 : 12.5;
+  const sideRoadAt = roadPlan === 'offset-grid' ? -3.3 : roadPlan === 'waterfront' ? 8.8 : -13.2;
+  const asphaltMat = new THREE.MeshStandardMaterial({ color: roadPlan === 'waterfront' ? '#414d4d' : '#46504b', roughness: 0.87 });
+  const curbMat = new THREE.MeshStandardMaterial({ color: '#dfcfaa', roughness: 0.91 });
+  const mainRoadWidth = 4.1 * roadScale;
   const roads = [
-    { axis: 'x', at: 0, width: 4.1 * roadScale, length: 52 },
-    { axis: 'z', at: 0, width: 4.1 * roadScale, length: 52 },
-    { axis: 'x', at: 12.5, width: 2.35 * roadScale, length: 52 },
-    { axis: 'z', at: -13.2, width: 2.35 * roadScale, length: 52 },
+    { axis: 'x', at: primaryRoadAt, width: mainRoadWidth, length: 58 },
+    { axis: 'z', at: roadPlan === 'offset-grid' ? 0 : 0, width: mainRoadWidth, length: 58 },
+    { axis: 'x', at: secondaryRoadAt, width: 2.35 * roadScale, length: 58 },
+    { axis: 'z', at: sideRoadAt, width: 2.35 * roadScale, length: 58 },
   ];
+  if (roadPlan === 'boulevard' || roadPlan === 'market-spine') {
+    roads.push({ axis: 'x', at: primaryRoadAt + (roadPlan === 'boulevard' ? 7.2 : -6.8), width: 2.1 * roadScale, length: 52 });
+  }
+  if (roadPlan === 'switchback') {
+    roads.push({ axis: 'x', at: primaryRoadAt + 8.2, width: 2.0 * roadScale, length: 42 });
+    roads.push({ axis: 'x', at: primaryRoadAt - 8.2, width: 2.0 * roadScale, length: 42 });
+  }
+  const worldBounds = { minX: -24, maxX: 24, minZ: -33, maxZ: 33 };
+  const worldColliders = [];
+  const registerGroupColliders = (group, destination = worldColliders) => {
+    const localRects = group.userData?.collisionRects || [];
+    const cosine = Math.cos(group.rotation.y || 0);
+    const sine = Math.sin(group.rotation.y || 0);
+    for (const rect of localRects) {
+      const corners = [
+        [-1, -1], [-1, 1], [1, -1], [1, 1],
+      ].map(([signX, signZ]) => {
+        const localX = (rect.x + signX * rect.halfX) * group.scale.x;
+        const localZ = (rect.z + signZ * rect.halfZ) * group.scale.z;
+        return {
+          x: group.position.x + cosine * localX + sine * localZ,
+          z: group.position.z - sine * localX + cosine * localZ,
+        };
+      });
+      destination.push({
+        minX: Math.min(...corners.map((point) => point.x)),
+        maxX: Math.max(...corners.map((point) => point.x)),
+        minZ: Math.min(...corners.map((point) => point.z)),
+        maxZ: Math.max(...corners.map((point) => point.z)),
+      });
+    }
+  };
+  const hasRoadClearance = (x, z, halfX, halfZ, clearance = 0.9) => roads.some((road) => {
+    if (road.axis === 'x') {
+      return Math.abs(z - road.at) < halfZ + road.width / 2 + clearance && Math.abs(x) < halfX + road.length / 2;
+    }
+    return Math.abs(x - road.at) < halfX + road.width / 2 + clearance && Math.abs(z) < halfZ + road.length / 2;
+  });
   for (const road of roads) {
     const alongX = road.axis === 'x';
     const slab = new THREE.Mesh(new THREE.PlaneGeometry(alongX ? road.length : road.width, alongX ? road.width : road.length), asphaltMat);
@@ -974,23 +2005,23 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
   // Zebra crossings, open roadside drains, and speed-calming details make the streets read as lived-in civic roads.
   for (let stripe = 0; stripe < 6; stripe += 1) {
     const crossingA = box(0.36, 0.025, 3.5, '#e3ddc7', { castShadow: false });
-    crossingA.position.set(-3.25 + stripe * 0.66, 0.012, 0);
+    crossingA.position.set(-3.25 + stripe * 0.66, 0.012, primaryRoadAt);
     scene.add(crossingA);
     const crossingB = box(3.6, 0.025, 0.34, '#e3ddc7', { castShadow: false });
-    crossingB.position.set(12.5, 0.012, -11.15 + stripe * 0.66);
+    crossingB.position.set(secondaryRoadAt, 0.012, sideRoadAt + 1.2 + stripe * 0.66);
     scene.add(crossingB);
   }
   for (const side of [-1, 1]) {
     const drain = box(48, 0.08, 0.18, '#454e47', { castShadow: false });
-    drain.position.set(0, -0.045, side * 2.34);
+    drain.position.set(0, -0.045, primaryRoadAt + side * (mainRoadWidth / 2 + 0.26));
     scene.add(drain);
   }
   for (let bump = -4; bump <= 4; bump += 1) {
     const marker = box(0.3, 0.085, 0.2, bump % 2 === 0 ? '#e6cb60' : '#39433d', { castShadow: false });
-    marker.position.set(6.3, 0.045, bump * 0.38);
+    marker.position.set(6.3, 0.045, primaryRoadAt + bump * 0.38);
     scene.add(marker);
   }
-  [[-13.8, -4.1], [13.9, -3.4], [-14.2, 13.5], [14.3, 14.1], [3.5, 16.2]].forEach(([x, z]) => makeStreetLight(scene, x, z));
+  const streetLampFixtures = [[-13.8, -4.1], [13.9, -3.4], [-14.2, 13.5], [14.3, 14.1], [3.5, 16.2]].map(([x, z]) => makeStreetLight(scene, x, z));
   const utilityXs = [-18, -9, 0, 9, 18];
   utilityXs.forEach((x) => makeUtilityPole(scene, x, 3.15));
   const wireMaterial = new THREE.LineBasicMaterial({ color: '#40453e', transparent: true, opacity: 0.72 });
@@ -1005,10 +2036,10 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
       scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(curve.getPoints(10)), wireMaterial));
     }
   }
-  makeBusStop(scene, 8.6, 1.6);
+  makeBusStop(scene, 8.6, primaryRoadAt + 2.25);
 
   const sidewalkMaterial = new THREE.MeshStandardMaterial({ color: '#c9b996', roughness: 0.94 });
-  for (const point of [-4.5, 4.5]) {
+  for (const point of [primaryRoadAt - (mainRoadWidth / 2 + 2), primaryRoadAt + (mainRoadWidth / 2 + 2)]) {
     for (const other of [-9, 9]) {
       const paving = new THREE.Mesh(new THREE.PlaneGeometry(5.7, 5.7), sidewalkMaterial);
       paving.rotation.x = -Math.PI / 2;
@@ -1029,16 +2060,23 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     for (const xBlock of blocks) {
       if (Math.abs(xBlock) < 8 && Math.abs(zBlock) < 8) continue;
       if (Math.abs(zBlock + 10.5) < 4.8) continue;
-      if (xBlock === -17.8 && zBlock === 17.8) continue;
+      if ((xBlock === -17.8 && zBlock === 17.8) || (xBlock === 17.8 && zBlock === -17.8)) continue;
       if (rand() > Math.min(0.98, localDensity + 0.08)) continue;
       const count = rand() < localDensity ? 2 : 1;
       for (let i = 0; i < count; i += 1) {
         const offsetX = (rand() - 0.5) * 2.0;
         const offsetZ = (rand() - 0.5) * 2.0;
-        const building = makeBuilding(rand, xBlock + offsetX, zBlock + offsetZ, buildingIndex, palette);
+        const candidateX = xBlock + offsetX;
+        const candidateZ = zBlock + offsetZ;
+        const building = makeBuilding(rand, candidateX, candidateZ, buildingIndex, palette, localityStyle);
         const s = 0.75 + rand() * 0.35;
         building.scale.setScalar(s);
+        const collisionRects = building.userData.collisionRects || [];
+        const halfX = collisionRects.reduce((extent, rect) => Math.max(extent, Math.abs(rect.x) + rect.halfX), 0) * s;
+        const halfZ = collisionRects.reduce((extent, rect) => Math.max(extent, Math.abs(rect.z) + rect.halfZ), 0) * s;
+        if (hasRoadClearance(candidateX, candidateZ, halfX, halfZ, 0.55)) { buildingIndex += 1; continue; }
         scene.add(building);
+        registerGroupColliders(building);
         buildingIndex += 1;
       }
     }
@@ -1048,8 +2086,13 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     const x = (rand() - 0.5) * 31;
     const z = (rand() - 0.5) * 31;
     if (Math.abs(x) < 5.5 || Math.abs(z) < 5.5) continue;
-    if (Math.abs(z + 10.5) < 4.5 || Math.hypot(x + 17.6, z - 17.6) < 5.2) continue;
-    scene.add(makeBuilding(rand, x, z, buildingIndex++, palette));
+    if (Math.abs(z + 10.5) < 4.5 || Math.hypot(x + 17.6, z - 17.6) < 5.2 || Math.hypot(x - 17.5, z + 17.5) < 5.2) continue;
+    const building = makeBuilding(rand, x, z, buildingIndex++, palette, localityStyle);
+    const halfX = (building.userData.collisionRects || []).reduce((extent, rect) => Math.max(extent, Math.abs(rect.x) + rect.halfX), 0);
+    const halfZ = (building.userData.collisionRects || []).reduce((extent, rect) => Math.max(extent, Math.abs(rect.z) + rect.halfZ), 0);
+    if (hasRoadClearance(x, z, halfX, halfZ, 0.6)) continue;
+    scene.add(building);
+    registerGroupColliders(building);
   }
 
   // Small green pockets, trees, kiosks, and benches vary by biome and settlement density.
@@ -1058,14 +2101,72 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     const x = (rand() - 0.5) * 37;
     const z = (rand() - 0.5) * 37;
     if (Math.abs(x) < 4.6 || Math.abs(z) < 4.6 || Math.abs(z + 10.5) < 3.1) continue;
-    if (Math.abs(x) > 22 || Math.abs(z) > 22 || Math.hypot(x + 17.6, z - 17.6) < 4.2) continue;
+    if (Math.abs(x) > 22 || Math.abs(z) > 22 || Math.hypot(x + 17.6, z - 17.6) < 4.2 || Math.hypot(x - 17.5, z + 17.5) < 4.2) continue;
     const tree = makeRegionalTree(x, z, 2.3 + rand() * 2.0, palette, sceneMaterials, rand);
     tree.scale.setScalar(0.73 + rand() * 0.42);
     scene.add(tree);
   }
 
-  scene.add(makeStateSignature(stateInfo, palette, sceneMaterials));
-  for (const venue of WORLD_VENUES) scene.add(makeVenue(venue, palette, sceneMaterials, stateInfo.name));
+  for (let stallIndex = 0; stallIndex < localityStyle.marketStalls; stallIndex += 1) {
+    const rowIndex = Math.floor(stallIndex / 2);
+    const side = stallIndex % 2 === 0 ? -1 : 1;
+    const x = -12.5 + rowIndex * 5.1;
+    const z = primaryRoadAt + side * (mainRoadWidth / 2 + 1.55);
+    scene.add(makeRoadsideStall(x, z, palette, localityStyle.roadsideAccent, stallIndex));
+  }
+  const microLandmark = makeLocalityMicroLandmark(locality, stateInfo, localityStyle, palette);
+  scene.add(microLandmark);
+  registerGroupColliders(microLandmark);
+  const stateSignature = makeStateSignature(stateInfo, palette, sceneMaterials);
+  scene.add(stateSignature);
+  registerGroupColliders(stateSignature);
+  for (const venue of WORLD_VENUES) {
+    const venueGroup = makeVenue(venue, palette, sceneMaterials, stateInfo.name);
+    scene.add(venueGroup);
+    registerGroupColliders(venueGroup);
+  }
+
+  const safeMeetingPoint = (meetingId, venueId, playerId, slot) => {
+    const point = meetingArrivalPoint(meetingId, venueId, playerId, slot);
+    return findNearestFreePoint(point.x, point.z, 0.5, worldColliders, worldBounds, 3.25) || point;
+  };
+  const meetingStage = new THREE.Group();
+  const meetingStageRing = new THREE.Mesh(new THREE.RingGeometry(5.06, 5.16, 48), new THREE.MeshBasicMaterial({ color: '#f0c777', transparent: true, opacity: 0.38, side: THREE.DoubleSide }));
+  meetingStageRing.rotation.x = -Math.PI / 2;
+  meetingStageRing.position.y = 0.045;
+  meetingStage.add(meetingStageRing);
+  const meetingSeats = new Map();
+  const syncMeetingSeats = (currentMeeting, meetingVenue) => {
+    const participants = meetingContextRef.current?.meetingParticipants || [];
+    const visibleIds = new Set();
+    for (const person of participants) {
+      if (!person?.id || person.meetingId !== currentMeeting.id || !Number.isInteger(Number(person.meetingSlot)) || !['at-venue', 'in-session'].includes(person.meetingStatus)) continue;
+      visibleIds.add(person.id);
+      let chair = meetingSeats.get(person.id);
+      if (!chair) {
+        chair = makeMeetingChair();
+        meetingStage.add(chair);
+        meetingSeats.set(person.id, chair);
+      }
+      const position = safeMeetingPoint(currentMeeting.id, meetingVenue.id, person.id, Number(person.meetingSlot));
+      const localX = position.x - meetingVenue.x;
+      const localZ = position.z - meetingVenue.z;
+      chair.position.set(localX, 0, localZ);
+      chair.rotation.y = Math.atan2(-localX, -localZ);
+      chair.visible = true;
+    }
+    for (const [id, chair] of meetingSeats) {
+      if (!visibleIds.has(id)) { meetingStage.remove(chair); disposeGroup(chair); meetingSeats.delete(id); }
+    }
+  };
+  const speechBubble = createSpeechBubble();
+  meetingStage.add(speechBubble.sprite);
+  meetingStage.visible = false;
+  scene.add(meetingStage);
+  let lastMeetingMessageId = null;
+  let speakingAvatar = null;
+  let speakingUntil = 0;
+  let bubbleUntil = 0;
 
   // A small arrival gateway marks the selected generated community; it is not a surveyed boundary or street map.
   const gate = new THREE.Group();
@@ -1081,34 +2182,99 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
   gate.add(signText);
   scene.add(gate);
 
+  const branchRoster = createLocalPartyBranches(PARTY_OPTIONS, {
+    state: stateInfo.name,
+    lga: locality?.lga || stateInfo.capital,
+    ward: locality?.ward || 'Capital District',
+    reservedNames: NPCS.map((person) => person.name),
+  });
+  const partyOfficeDoors = new Map();
+  const partyStreetMaterial = new THREE.MeshStandardMaterial({ color: '#424a45', roughness: 0.9 });
+  for (const row of [-1, 1]) {
+    const street = new THREE.Mesh(new THREE.PlaneGeometry(58, 3.9), partyStreetMaterial);
+    street.rotation.x = -Math.PI / 2;
+    street.position.set(0, -0.035, row * 26.5);
+    scene.add(street);
+    for (let dashIndex = -8; dashIndex <= 8; dashIndex += 1) {
+      const dash = box(1.1, 0.02, 0.07, '#e6ddb9', { castShadow: false });
+      dash.position.set(dashIndex * 3.1, 0.01, row * 26.5);
+      scene.add(dash);
+    }
+    const streetLabel = labelSprite('WARD PARTY STREET', localityStyle.accent);
+    streetLabel.position.set(0, 2.9, row * 31.3);
+    streetLabel.scale.set(4.6, 1.0, 1);
+    scene.add(streetLabel);
+  }
+  const partyRowSize = Math.ceil(PARTY_OPTIONS.length / 2);
+  PARTY_OPTIONS.forEach((party, index) => {
+    const row = index < partyRowSize ? -1 : 1;
+    const slot = index % partyRowSize;
+    const x = -20.5 + slot * 4.1;
+    const z = row * 29;
+    const branch = branchRoster[party.id] || [];
+    const office = makePartyOffice(party, branch, x, z);
+    if (row > 0) office.rotation.y = Math.PI;
+    scene.add(office);
+    registerGroupColliders(office);
+    office.traverse((object) => {
+      if (object.userData?.interaction?.type === 'party-office') partyOfficeDoors.set(party.id, object);
+    });
+  });
+
   const traffic = [];
+  const heroTaxi = makeCar('#f1c53d', 'taxi', '#28694e');
+  heroTaxi.position.set(-9.2, 0, primaryRoadAt + 2.72);
+  if (!aabbBlockedAt(heroTaxi.position.x, heroTaxi.position.z, worldVehicleFootprint(heroTaxi).halfX, worldVehicleFootprint(heroTaxi).halfZ, worldColliders)) scene.add(heroTaxi);
+  const addTrafficVehicle = (object, route) => {
+    const footprint = worldVehicleFootprint(object);
+    if (aabbBlockedAt(object.position.x, object.position.z, footprint.halfX, footprint.halfZ, worldColliders)) return false;
+    scene.add(object);
+    traffic.push({ object, ...route });
+    return true;
+  };
   const routeBrand = palette.accent;
   const routeAccent = ['#203b32', '#f2d95d', '#efe5ce', '#263a57', '#f3ead5', '#283a32'][hash(stateInfo.name) % 6];
-  const cars = [
-    [routeBrand, 'bus', -18, -0.82, 1.05],
-    ['#3c88bc', 'sedan', -4, 0.76, 1.38],
-    ['#eee2c0', 'sedan', 10, -0.76, 1.18],
-    ['#d86644', 'bus', 19, 0.76, 0.8],
-  ];
-  cars.slice(0, Math.max(2, Math.round(2 + localDensity * 2))).forEach(([color, type, x, z, speed], i) => {
-    const car = makeCar(color, type, routeAccent);
-    car.position.set(x, 0, z);
-    if ((i % 2) === 0) car.rotation.y = Math.PI;
-    scene.add(car);
-    traffic.push({ object: car, axis: 'x', speed, min: -25, max: 25, dir: (i % 2) === 0 ? 1 : -1 });
-  });
-  const verticalCars = [
-    [routeBrand, 'keke', 0.72, -17, 1.05],
-    ['#ddd9ca', 'sedan', -0.7, 18, 1.12],
-    [routeAccent, 'keke', 12.8, -18, 0.82],
-  ];
-  verticalCars.slice(0, Math.max(1, Math.round(localDensity * 3))).forEach(([color, type, x, z, speed], i) => {
-    const car = makeCar(color, type);
-    car.position.set(x, 0, z);
-    car.rotation.y = Math.PI / 2 * (i % 2 === 0 ? 1 : -1);
-    scene.add(car);
-    traffic.push({ object: car, axis: 'z', speed, min: -25, max: 25, dir: i % 2 === 0 ? 1 : -1 });
-  });
+  const roadKinds = localityStyle.trafficMix.filter((kind) => kind !== 'water-taxi');
+  const roadVehicleKinds = roadKinds.length ? roadKinds : ['sedan', 'minibus', 'keke'];
+  const trafficColors = [routeBrand, '#f0c84b', '#d85539', '#e9e1ca', '#548cbd', '#365e47', '#6e5140'];
+  const horizontalCount = Math.max(3, Math.min(6, Math.round(2 + localDensity * 3)));
+  for (let i = 0; i < horizontalCount; i += 1) {
+    const kind = roadVehicleKinds[(i + hash(localityStyle.identity)) % roadVehicleKinds.length];
+    const color = trafficColors[(i + hash(stateInfo.name)) % trafficColors.length];
+    const direction = i % 2 === 0 ? 1 : -1;
+    const car = makeCar(color, kind, routeAccent);
+    car.position.set(-19 + i * (38 / Math.max(1, horizontalCount - 1)), 0, primaryRoadAt + (direction > 0 ? -0.78 : 0.78));
+    car.rotation.y = direction > 0 ? 0 : Math.PI;
+    addTrafficVehicle(car, { axis: 'x', speed: 0.68 + (i % 3) * 0.23, min: -25, max: 25, dir: direction });
+  }
+  const verticalCount = Math.max(2, Math.min(4, Math.round(1 + localDensity * 2)));
+  for (let i = 0; i < verticalCount; i += 1) {
+    const kind = roadVehicleKinds[(i + 2 + hash(localityStyle.identity)) % roadVehicleKinds.length];
+    const direction = i % 2 === 0 ? 1 : -1;
+    const car = makeCar(trafficColors[(i + 2) % trafficColors.length], kind, routeAccent);
+    car.position.set(sideRoadAt + (direction > 0 ? -0.74 : 0.74), 0, -18 + i * 12.5);
+    car.rotation.y = direction > 0 ? Math.PI / 2 : -Math.PI / 2;
+    addTrafficVehicle(car, { axis: 'z', speed: 0.66 + (i % 2) * 0.27, min: -25, max: 25, dir: direction });
+  }
+  if (localityStyle.trafficMix.includes('water-taxi')) {
+    const boat = makeWaterTaxi('#f0c84b', routeAccent);
+    boat.position.set(-18, 0.06, -28.2);
+    addTrafficVehicle(boat, { axis: 'x', speed: 0.68, min: -26, max: 26, dir: 1 });
+  }
+  const getWorldActorColliders = () => {
+    const colliders = worldColliders.slice();
+    const vehicles = [...(heroTaxi.parent ? [heroTaxi] : []), ...traffic.map((item) => item.object)];
+    for (const vehicle of vehicles) {
+      const { halfX, halfZ } = worldVehicleFootprint(vehicle);
+      colliders.push({
+        minX: vehicle.position.x - halfX,
+        maxX: vehicle.position.x + halfX,
+        minZ: vehicle.position.z - halfZ,
+        maxZ: vehicle.position.z + halfZ,
+      });
+    }
+    return colliders;
+  };
 
   const pedestrians = [];
   const clothing = ['#df8066', '#527c6e', '#d4b750', '#657ca0', '#b87c49', '#9b87ba'];
@@ -1118,13 +2284,17 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     if (Math.abs(x) < 3.0 && Math.abs(z) < 3.0) continue;
     if (Math.abs(z + 10.5) < 1.6 || Math.abs(x) < 1.8) continue;
     const person = makePerson(clothing[i % clothing.length]);
-    person.position.set(x, 0, z);
-    person.scale.setScalar(0.8 + rand() * 0.28);
+    const personScale = 0.8 + rand() * 0.28;
+    const collisionRadius = 0.33 * personScale;
+    const safeStart = findNearestFreePoint(x, z, collisionRadius, getWorldActorColliders(), worldBounds, 4.5);
+    if (!safeStart) continue;
+    person.position.set(safeStart.x, 0, safeStart.z);
+    person.scale.setScalar(personScale);
     scene.add(person);
-    pedestrians.push({ object: person, phase: rand() * Math.PI * 2, speed: 0.35 + rand() * 0.35, startX: x, startZ: z, walkX: rand() > 0.5 });
+    pedestrians.push({ object: person, phase: rand() * Math.PI * 2, speed: 0.35 + rand() * 0.35, startX: safeStart.x, startZ: safeStart.z, walkX: rand() > 0.5, collisionRadius });
   }
 
-  const player = makePerson(playerColor || '#d8f36b', '#764c37');
+  const player = makePerson(playerColor || '#d8f36b', playerAppearance?.skinTone || '#764c37', playerAppearance || {});
   player.scale.set(1.15, 1.15, 1.15);
   player.position.set(-5.8, 0, 3.5);
   const playerHalo = new THREE.Mesh(new THREE.TorusGeometry(0.56, 0.06, 8, 26), new THREE.MeshBasicMaterial({ color: '#d8f36b' }));
@@ -1153,7 +2323,27 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
         remoteGroup.add(avatar);
         remoteSprites.set(item.id, avatar);
       }
-      avatar.position.set(clamp(Number(item.x) || 0, -22, 22), 0, clamp(Number(item.z) || 0, -22, 22));
+      avatar.userData.playerId = item.id;
+      avatar.userData.playerName = item.name || 'VISITOR';
+      avatar.userData.meetingId = item.meetingId || null;
+      avatar.userData.meetingStatus = item.meetingStatus || null;
+      avatar.userData.meetingSlot = Number.isInteger(Number(item.meetingSlot)) ? Number(item.meetingSlot) : null;
+      const activeMeeting = meetingRef?.current;
+      const hasArrivedAtMeeting = activeMeeting?.id && item.meetingId === activeMeeting.id && ['at-venue', 'in-session'].includes(item.meetingStatus) && avatar.userData.meetingSlot !== null;
+      const savedMeetingPosition = hasArrivedAtMeeting ? safeMeetingPoint(activeMeeting.id, activeMeeting.location?.venueId || 'square', item.id, avatar.userData.meetingSlot) : null;
+      const targetX = clamp(savedMeetingPosition?.x ?? (Number(item.x) || 0), worldBounds.minX, worldBounds.maxX);
+      const targetZ = clamp(savedMeetingPosition?.z ?? (Number(item.z) || 0), worldBounds.minZ, worldBounds.maxZ);
+      const priorPosition = avatar.position.clone();
+      if (!avatar.userData.collisionReady) {
+        const safeStart = findNearestFreePoint(targetX, targetZ, 0.47, worldColliders, worldBounds, 12);
+        if (safeStart) avatar.position.set(safeStart.x, 0, safeStart.z);
+        else avatar.position.set(-5.8, 0, 3.5);
+        avatar.userData.collisionReady = true;
+      } else {
+        const movement = moveCircleSafely(avatar.position, targetX - avatar.position.x, targetZ - avatar.position.z, 0.47, worldColliders, worldBounds);
+        if (movement.moved) avatar.rotation.y = Math.atan2(movement.x, movement.z);
+      }
+      avatar.userData.walking = priorPosition.distanceTo(avatar.position) > 0.006;
     }
     for (const [id, avatar] of remoteSprites.entries()) {
       if (!presentIds.has(id)) {
@@ -1164,13 +2354,13 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
   };
 
   const controls = new OrbitControls(camera, renderer.domElement);
-  controls.target.set(0, 0.35, 0);
+  controls.target.set(-5.8, 1, 3.5);
   controls.enableDamping = true;
   controls.dampingFactor = 0.065;
-  controls.minDistance = 12;
+  controls.minDistance = 7;
   controls.maxDistance = 62;
   controls.maxPolarAngle = Math.PI / 2.18;
-  controls.minPolarAngle = Math.PI / 5;
+  controls.minPolarAngle = Math.PI / 8;
   controls.enablePan = true;
   controls.panSpeed = 0.55;
   controls.rotateSpeed = 0.55;
@@ -1179,7 +2369,7 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
 
   const clickable = [];
   scene.traverse((object) => {
-    if (object.userData?.isHotspot || object.userData?.venueId) clickable.push(object);
+    if (object.userData?.interaction || object.userData?.isHotspot || object.userData?.venueId) clickable.push(object);
   });
   const raycaster = new THREE.Raycaster();
   const pointer = new THREE.Vector2();
@@ -1187,51 +2377,278 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
   const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   const intersection = new THREE.Vector3();
   let isMoving = false;
+  let movementWaypoints = [];
+  let movementWaypointIndex = 0;
+  let interiorActive = false;
+  let interiorGroup = null;
+  const interiorColliders = [];
+  const activeCollisionRects = () => (interiorActive ? interiorColliders : getWorldActorColliders());
+  const activeWorldBounds = () => (interiorActive
+    ? { minX: -5.55, maxX: 5.55, minZ: -5.45, maxZ: 5.45 }
+    : worldBounds);
+  const setSafeWalkTarget = (x, z, maxRadius = 5.5) => {
+    const radius = interiorActive ? 0.46 : 0.5;
+    const colliders = activeCollisionRects();
+    const bounds = activeWorldBounds();
+    const safePoint = findNearestFreePoint(x, z, radius, colliders, bounds, maxRadius);
+    if (!safePoint) {
+      isMoving = false;
+      movementWaypoints = [];
+      return false;
+    }
+    const path = findWalkPath(player.position, safePoint, radius, colliders, bounds);
+    if (!path) {
+      isMoving = false;
+      movementWaypoints = [];
+      return false;
+    }
+    moveTarget.set(safePoint.x, 0, safePoint.z);
+    movementWaypoints = path;
+    movementWaypointIndex = 0;
+    isMoving = movementWaypoints.length > 0;
+    return true;
+  };
+  let pendingInteraction = null;
+  let activeMeetingRoute = null;
+  const travelToMeeting = (request) => {
+    if (!request?.meetingId) {
+      if (activeMeetingRoute && isMoving && Math.hypot(moveTarget.x - activeMeetingRoute.target.x, moveTarget.z - activeMeetingRoute.target.z) < 0.12) {
+        isMoving = false; movementWaypoints = []; movementWaypointIndex = 0; pendingInteraction = null;
+      }
+      activeMeetingRoute = null;
+      return;
+    }
+    const meetingId = String(request.meetingId);
+    const slot = request.slot !== null && request.slot !== undefined && Number.isInteger(Number(request.slot)) ? Number(request.slot) : null;
+    if (activeMeetingRoute?.meetingId === meetingId && activeMeetingRoute.playerId === request.playerId && activeMeetingRoute.slot === slot) {
+      if (activeMeetingRoute.confirmed) return;
+      const alreadyFollowingRoute = isMoving && Math.hypot(moveTarget.x - activeMeetingRoute.target.x, moveTarget.z - activeMeetingRoute.target.z) < 0.12;
+      if (alreadyFollowingRoute) return;
+      const restarted = setSafeWalkTarget(activeMeetingRoute.target.x, activeMeetingRoute.target.z, 3.25);
+      if (restarted) activeMeetingRoute.target = { x: moveTarget.x, z: moveTarget.z };
+      return;
+    }
+    const venueId = request.venueId || 'square';
+    const venue = WORLD_VENUES.find((item) => item.id === venueId) || WORLD_VENUES.find((item) => item.id === 'square');
+    const arrival = safeMeetingPoint(meetingId, venue.id, request.playerId, slot);
+    if (interiorActive) exitInterior();
+    pendingInteraction = null;
+    const started = setSafeWalkTarget(arrival.x, arrival.z, 3.25);
+    if (!started) { activeMeetingRoute = null; return; }
+    activeMeetingRoute = { meetingId, venueId: venue.id, playerId: request.playerId, slot, target: { x: moveTarget.x, z: moveTarget.z }, confirmed: false };
+    isFocusingCamera = false;
+    if (Math.hypot(player.position.x - moveTarget.x, player.position.z - moveTarget.z) < 0.28) {
+      activeMeetingRoute.confirmed = true;
+      player.rotation.y = Math.atan2(venue.x - player.position.x, venue.z - player.position.z);
+      meetingContextRef.current?.onMeetingArrival?.(meetingId);
+    }
+  };
+  if (meetingTravelRef) meetingTravelRef.current = travelToMeeting;
+  let savedExteriorPosition = null;
+  let savedCameraPosition = null;
+  let savedCameraTarget = null;
+  let previousPlayerPosition = player.position.clone();
   let lastEmit = 0;
   let activePointer = null;
+  let activeTouchCount = 0;
+  let multiTouchGesture = false;
   let isFocusingCamera = false;
   const cameraFocusTarget = new THREE.Vector3();
   const cameraFocusPosition = new THREE.Vector3();
+  const disposeGroup = (group) => {
+    group?.traverse((object) => {
+      if (object.geometry) object.geometry.dispose();
+      if (object.material) {
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        materials.forEach((material) => {
+          if (material.map) material.map.dispose();
+          material.dispose();
+        });
+      }
+    });
+  };
+  let activeInteriorClickables = [];
+  const exitInterior = () => {
+    if (!interiorActive) return;
+    for (const object of activeInteriorClickables) {
+      const index = clickable.indexOf(object);
+      if (index >= 0) clickable.splice(index, 1);
+    }
+    activeInteriorClickables = [];
+    scene.add(player);
+    if (interiorGroup) {
+      scene.remove(interiorGroup);
+      disposeGroup(interiorGroup);
+      interiorGroup = null;
+    }
+    if (savedExteriorPosition) player.position.copy(savedExteriorPosition);
+    if (savedCameraPosition) camera.position.copy(savedCameraPosition);
+    if (savedCameraTarget) controls.target.copy(savedCameraTarget);
+    previousPlayerPosition.copy(player.position);
+    interiorColliders.length = 0;
+    interiorActive = false;
+    isMoving = false;
+    movementWaypoints = [];
+    movementWaypointIndex = 0;
+    pendingInteraction = null;
+    controls.minDistance = 7;
+    controls.maxDistance = 62;
+    controls.maxPolarAngle = Math.PI / 2.18;
+    controls.update();
+    interiorChangeRef?.current?.(null);
+  };
+  const enterInterior = (interaction) => {
+    if (!interaction || interiorActive) return;
+    savedExteriorPosition = player.position.clone();
+    savedCameraPosition = camera.position.clone();
+    savedCameraTarget = controls.target.clone();
+    if (interiorGroup) {
+      scene.remove(interiorGroup);
+      disposeGroup(interiorGroup);
+    }
+    const office = interaction.type === 'party-office' ? PARTY_OPTIONS.find((item) => item.id === interaction.partyId) : null;
+    const info = {
+      ...interaction,
+      title: office ? `${office.tag} · ${office.name}` : interaction.title || 'Community space',
+      branch: interaction.metadata?.branch || [],
+      party: office || null,
+      nationalOfficers: office ? { chair: office.chair, secretary: office.secretary, checkedAt: PARTY_REGISTER_CHECKED_AT, source: PARTY_REGISTER_SOURCE } : null,
+      fictional: interaction.type === 'party-office' || interaction.type === 'building' || interaction.type === 'landmark',
+    };
+    interiorGroup = buildInteriorRoom(info, palette, playerColor);
+    interiorColliders.length = 0;
+    registerGroupColliders(interiorGroup, interiorColliders);
+    scene.add(interiorGroup);
+    interiorGroup.add(player);
+    player.position.set(0, 0, 3.15);
+    player.rotation.y = Math.PI;
+    interiorGroup.visible = true;
+    activeInteriorClickables = [];
+    interiorGroup.traverse((object) => {
+      if (object.userData?.interaction) {
+        activeInteriorClickables.push(object);
+        clickable.push(object);
+      }
+    });
+    interiorActive = true;
+    isMoving = false;
+    movementWaypoints = [];
+    movementWaypointIndex = 0;
+    pendingInteraction = null;
+    camera.position.set(0, 3.35, 4.45);
+    controls.target.set(0, 1.28, -0.2);
+    controls.minDistance = 3.0;
+    controls.maxDistance = 8.8;
+    controls.maxPolarAngle = Math.PI / 1.85;
+    controls.update();
+    interiorChangeRef?.current?.(info);
+  };
+  const beginDoorInteraction = (interaction, portalGroup) => {
+    if (!interaction) return;
+    if (interaction.type === 'exit') {
+      if (!interiorActive) return;
+      const portal = portalGroup || player;
+      portal.updateWorldMatrix?.(true, false);
+      const point = new THREE.Vector3();
+      portal.getWorldPosition(point);
+      const rotation = new THREE.Quaternion();
+      portal.getWorldQuaternion(rotation);
+      const facing = new THREE.Vector3(0, 0, 1).applyQuaternion(rotation).normalize();
+      const approach = point.add(facing.multiplyScalar(-0.82));
+      if (!setSafeWalkTarget(approach.x, approach.z, 1.6)) return;
+      pendingInteraction = interaction;
+      if (player.position.distanceTo(moveTarget) < 1.25) exitInterior();
+      return;
+    }
+    if (interiorActive) return;
+    const portal = portalGroup || player;
+    portal.updateWorldMatrix?.(true, false);
+    const point = new THREE.Vector3();
+    portal.getWorldPosition(point);
+    const rotation = new THREE.Quaternion();
+    portal.getWorldQuaternion(rotation);
+    const facing = new THREE.Vector3(0, 0, 1).applyQuaternion(rotation).normalize();
+    const approachDistance = interaction.type === 'venue' && ['office', 'court', 'assembly', 'caucus'].includes(interaction.metadata?.venueType) ? 2.35 : 1.75;
+    const approach = point.add(facing.multiplyScalar(approachDistance));
+    if (!setSafeWalkTarget(approach.x, approach.z, 2.5)) return;
+    pendingInteraction = interaction;
+    if (player.position.distanceTo(moveTarget) < 1.25) enterInterior(interaction);
+  };
   const focusVenue = (venueId) => {
     const venue = WORLD_VENUES.find((item) => item.id === venueId);
     if (!venue) return;
-    moveTarget.set(clamp(venue.x - 2.5, -20, 20), 0, clamp(venue.z + 3.0, -20, 20));
-    isMoving = true;
-    cameraFocusTarget.set(venue.x, 0.35, venue.z);
-    cameraFocusPosition.set(venue.x + 12.5, 14.5, venue.z + 13.5);
+    if (interiorActive) exitInterior();
+    setSafeWalkTarget(venue.x - 2.5, venue.z + 3.0, 4.5);
+    pendingInteraction = null;
+    cameraFocusTarget.set(venue.x, 0.8, venue.z);
+    cameraFocusPosition.set(venue.x + 8.7, 7.3, venue.z + 12.5);
     isFocusingCamera = true;
   };
   if (focusRef) focusRef.current = focusVenue;
+  if (exitInteriorRef) exitInteriorRef.current = exitInterior;
+  if (partyFocusRef) {
+    partyFocusRef.current = (partyId) => {
+      const door = partyOfficeDoors.get(partyId);
+      if (door) beginDoorInteraction(door.userData.interaction, door.parent);
+    };
+  }
 
   const setTargetFromEvent = (event) => {
     const bounds = renderer.domElement.getBoundingClientRect();
     pointer.x = ((event.clientX - bounds.left) / bounds.width) * 2 - 1;
     pointer.y = -((event.clientY - bounds.top) / bounds.height) * 2 + 1;
     raycaster.setFromCamera(pointer, camera);
-    const hits = raycaster.intersectObjects(clickable, true);
+    const activeTargets = interiorActive ? activeInteriorClickables : clickable.filter((object) => !activeInteriorClickables.includes(object));
+    const hits = raycaster.intersectObjects(activeTargets, true);
+    const interactionHit = hits.find((hit) => hit.object.userData?.interaction);
+    if (interactionHit) {
+      const portalGroup = interactionHit.object.parent || interactionHit.object;
+      beginDoorInteraction(interactionHit.object.userData.interaction, portalGroup);
+      return;
+    }
     const venueHit = hits.find((hit) => hit.object.userData?.venueId);
     if (venueHit) {
       const venueGroup = venueHit.object.parent?.userData?.venueId ? venueHit.object.parent : venueHit.object;
-      moveTarget.set(clamp(venueGroup.position.x - 2.2, -20, 20), 0, clamp(venueGroup.position.z + 2.2, -20, 20));
-      isMoving = true;
+      setSafeWalkTarget(venueGroup.position.x - 2.2, venueGroup.position.z + 2.2, 4.5);
+      pendingInteraction = null;
       onVenueSelect?.(venueHit.object.userData.venueId);
       return;
     }
-    if (raycaster.ray.intersectPlane(groundPlane, intersection) && Math.abs(intersection.x) < 22 && Math.abs(intersection.z) < 22) {
-      moveTarget.set(intersection.x, 0, intersection.z);
-      isMoving = true;
+    if (raycaster.ray.intersectPlane(groundPlane, intersection)) {
+      const limit = interiorActive ? 5.8 : 33;
+      if (Math.abs(intersection.x) < (interiorActive ? 6.1 : 24) && Math.abs(intersection.z) < limit) {
+        setSafeWalkTarget(intersection.x, intersection.z, 5.5);
+        pendingInteraction = null;
+      }
     }
   };
-  const onPointerDown = (event) => { isFocusingCamera = false; activePointer = { x: event.clientX, y: event.clientY, id: event.pointerId }; };
-  const onPointerUp = (event) => {
-    if (!activePointer || activePointer.id !== event.pointerId) return;
-    const moved = Math.hypot(event.clientX - activePointer.x, event.clientY - activePointer.y);
-    if (moved < 5) setTargetFromEvent(event);
-    activePointer = null;
+  const onPointerDown = (event) => {
+    isFocusingCamera = false;
+    if (event.pointerType === 'touch') {
+      activeTouchCount += 1;
+      if (activeTouchCount > 1) { multiTouchGesture = true; activePointer = null; return; }
+    }
+    if (!multiTouchGesture) activePointer = { x: event.clientX, y: event.clientY, id: event.pointerId };
+  };
+  const releasePointer = (event) => {
+    if (event.pointerType === 'touch') activeTouchCount = Math.max(0, activeTouchCount - 1);
+    if (activePointer?.id === event.pointerId && !multiTouchGesture) {
+      const moved = Math.hypot(event.clientX - activePointer.x, event.clientY - activePointer.y);
+      if (moved < 7) setTargetFromEvent(event);
+      activePointer = null;
+    }
+    if (activeTouchCount === 0) multiTouchGesture = false;
+  };
+  const onPointerUp = (event) => releasePointer(event);
+  const onPointerCancel = (event) => {
+    if (event.pointerType === 'touch') activeTouchCount = Math.max(0, activeTouchCount - 1);
+    if (activePointer?.id === event.pointerId) activePointer = null;
+    if (activeTouchCount === 0) multiTouchGesture = false;
   };
   const keyState = new Set();
   const onKeyDown = (event) => {
     if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
+    if (event.key === 'Escape' && interiorActive) { exitInterior(); return; }
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'w', 'a', 's', 'd'].includes(event.key)) {
       keyState.add(event.key.toLowerCase());
       event.preventDefault();
@@ -1240,6 +2657,7 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
   const onKeyUp = (event) => keyState.delete(event.key.toLowerCase());
   renderer.domElement.addEventListener('pointerdown', onPointerDown);
   renderer.domElement.addEventListener('pointerup', onPointerUp);
+  renderer.domElement.addEventListener('pointercancel', onPointerCancel);
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('keyup', onKeyUp);
 
@@ -1255,59 +2673,231 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
   resize();
 
   let frame = 0;
+  let lastLightingMinute = -1;
+  const skyDay = new THREE.Color('#8ccde6');
+  const skyDusk = new THREE.Color('#d48a69');
+  const skyNight = new THREE.Color('#172435');
+  const fogDay = new THREE.Color('#b9d8d6');
+  const fogDusk = new THREE.Color('#9a7a75');
+  const fogNight = new THREE.Color('#293746');
+  const currentSky = new THREE.Color();
+  const currentFog = new THREE.Color();
   const clock = new THREE.Clock();
+  const updateTimeOfDay = () => {
+    const minute = ((Number(worldMinuteRef?.current) || 0) % 1440 + 1440) % 1440;
+    if (minute === lastLightingMinute) return;
+    lastLightingMinute = minute;
+    const hour = minute / 60;
+    const solarArc = Math.sin(((hour - 6) / 12) * Math.PI);
+    const daylight = clamp((solarArc + 0.06) / 1.06, 0.035, 1);
+    const dawn = clamp(1 - Math.abs(hour - 6.5) / 1.8, 0, 1);
+    const dusk = clamp(1 - Math.abs(hour - 18) / 1.8, 0, 1);
+    const twilight = Math.max(dawn, dusk);
+    currentSky.copy(skyNight).lerp(skyDay, daylight);
+    currentFog.copy(fogNight).lerp(fogDay, daylight);
+    if (twilight > 0) {
+      currentSky.lerp(skyDusk, twilight * 0.63);
+      currentFog.lerp(fogDusk, twilight * 0.45);
+    }
+    scene.background.copy(currentSky);
+    scene.fog.color.copy(currentFog);
+    ambientSky.intensity = 0.56 + daylight * 1.52;
+    sun.intensity = 0.36 + daylight * 3.42;
+    const sunAngle = ((hour - 12) / 12) * Math.PI;
+    sun.position.set(Math.cos(sunAngle) * 23, Math.max(3.2, daylight * 31), Math.sin(sunAngle) * 23);
+    fill.intensity = 0.22 + daylight * 0.5;
+    renderer.toneMappingExposure = 0.95 + daylight * 0.37;
+    const lampPower = clamp((0.48 - daylight) * 2.2, 0, 1);
+    streetLampFixtures.forEach(({ light, bulb }) => {
+      light.intensity = lampPower * 1.45;
+      bulb.emissiveIntensity = lampPower * 1.2;
+    });
+  };
   const animate = () => {
     frame = requestAnimationFrame(animate);
     const delta = Math.min(clock.getDelta(), 0.04);
     const elapsed = clock.elapsedTime;
+    updateTimeOfDay();
     for (const item of traffic) {
+      const { x: currentX, z: currentZ } = item.object.position;
+      let nextX = currentX;
+      let nextZ = currentZ;
+      let wrapping = false;
       if (item.axis === 'x') {
-        item.object.position.x += item.speed * item.dir * delta;
-        if (item.dir > 0 && item.object.position.x > item.max) item.object.position.x = item.min;
-        if (item.dir < 0 && item.object.position.x < item.min) item.object.position.x = item.max;
+        nextX += item.speed * item.dir * delta;
+        if (item.dir > 0 && nextX > item.max) { nextX = item.min; wrapping = true; }
+        if (item.dir < 0 && nextX < item.min) { nextX = item.max; wrapping = true; }
       } else {
-        item.object.position.z += item.speed * item.dir * delta;
-        if (item.dir > 0 && item.object.position.z > item.max) item.object.position.z = item.min;
-        if (item.dir < 0 && item.object.position.z < item.min) item.object.position.z = item.max;
+        nextZ += item.speed * item.dir * delta;
+        if (item.dir > 0 && nextZ > item.max) { nextZ = item.min; wrapping = true; }
+        if (item.dir < 0 && nextZ < item.min) { nextZ = item.max; wrapping = true; }
       }
+      const { halfX, halfZ } = worldVehicleFootprint(item.object);
+      const blocked = wrapping
+        ? aabbBlockedAt(nextX, nextZ, halfX, halfZ, worldColliders)
+        : aabbPathBlocked(currentX, currentZ, nextX, nextZ, halfX, halfZ, worldColliders);
+      if (!blocked) item.object.position.set(nextX, item.object.position.y, nextZ);
     }
+    const pedestrianBlockers = getWorldActorColliders();
     pedestrians.forEach((p) => {
-      const walk = Math.sin(elapsed * p.speed + p.phase) * 0.46;
-      p.object.position.x = p.startX + (p.walkX ? walk : 0);
-      p.object.position.z = p.startZ + (!p.walkX ? walk : 0);
+      const phase = elapsed * p.speed + p.phase;
+      const walk = Math.sin(phase) * 0.46;
+      const targetX = p.startX + (p.walkX ? walk : 0);
+      const targetZ = p.startZ + (!p.walkX ? walk : 0);
+      const movement = moveCircleSafely(p.object.position, targetX - p.object.position.x, targetZ - p.object.position.z, p.collisionRadius, pedestrianBlockers, worldBounds);
+      p.object.userData.walking = movement.moved;
+      if (movement.moved) p.object.rotation.y = Math.atan2(movement.x, movement.z);
       p.object.position.y = Math.abs(Math.sin(elapsed * 2.2 + p.phase)) * 0.035;
+      p.object.userData.legs?.forEach((leg, index) => {
+        leg.rotation.x = movement.moved ? Math.sin(phase + index * Math.PI) * 0.48 : THREE.MathUtils.damp(leg.rotation.x, 0, 8, delta);
+      });
+      p.object.userData.arms?.forEach((arm, index) => {
+        arm.rotation.x = movement.moved ? Math.sin(phase + index * Math.PI + Math.PI) * 0.25 : THREE.MathUtils.damp(arm.rotation.x, 0, 8, delta);
+      });
+      if (p.object.userData.torso) p.object.userData.torso.position.y = 0.7 + (movement.moved ? Math.abs(Math.sin(phase * 2)) * 0.025 : 0);
     });
-    const speed = 7.2 * delta;
+    const currentMeeting = meetingRef?.current;
+    const meetingIsVisible = Boolean(currentMeeting?.id && ['open', 'closed'].includes(currentMeeting.status));
+    meetingStage.visible = meetingIsVisible;
+    if (meetingIsVisible) {
+      const meetingVenue = WORLD_VENUES.find((item) => item.id === currentMeeting.location?.venueId) || WORLD_VENUES.find((item) => item.id === 'square');
+      meetingStage.position.set(meetingVenue.x || 0, 0, meetingVenue.z || 0);
+      syncMeetingSeats(currentMeeting, meetingVenue);
+      const context = meetingContextRef.current || {};
+      const participants = Array.isArray(context.meetingParticipants) ? context.meetingParticipants : [];
+      const selfParticipant = participants.find((person) => person.id === context.playerId);
+      player.userData.playerId = context.playerId || 'local-player';
+      player.userData.playerName = selfParticipant?.name || currentMeeting.hostName || player.userData.playerName || 'Player';
+      player.userData.meetingId = selfParticipant?.meetingId || (currentMeeting.status === 'open' ? currentMeeting.id : null);
+      player.userData.meetingStatus = selfParticipant?.meetingStatus || (currentMeeting.status === 'open' ? ['at-venue', 'discussion'].includes(context.meetingPhase) ? 'at-venue' : 'en-route' : null);
+      player.userData.meetingSlot = Number.isInteger(Number(selfParticipant?.meetingSlot ?? context.meetingSlot)) ? Number(selfParticipant?.meetingSlot ?? context.meetingSlot) : null;
+      const messages = Array.isArray(meetingMessagesRef?.current) ? meetingMessagesRef.current : [];
+      const latestMessage = [...messages].reverse().find((item) => ['speech', 'reply'].includes(item?.kind) && (item.body || item.message));
+      if (latestMessage && latestMessage.id !== lastMeetingMessageId) {
+        lastMeetingMessageId = latestMessage.id;
+        const speakerName = latestMessage.senderName || latestMessage.name || 'Community speaker';
+        const senderSocketId = latestMessage.senderSocketId || null;
+        speakingAvatar = senderSocketId === player.userData.playerId || (!senderSocketId && speakerName === player.userData.playerName)
+          ? player
+          : [...remoteSprites.entries()].find(([id, avatar]) => id === senderSocketId || (!senderSocketId && avatar.userData.playerName === speakerName))?.[1] || null;
+        speakingUntil = elapsed + 3.1;
+        bubbleUntil = elapsed + 7.5;
+        speechBubble.update(speakerName, latestMessage.body || latestMessage.message);
+      }
+      const bubbleTimeLeft = bubbleUntil - elapsed;
+      if (bubbleTimeLeft > 0) {
+        if (speakingAvatar) {
+          const speakerPosition = new THREE.Vector3();
+          speakingAvatar.updateWorldMatrix(true, false);
+          speakingAvatar.getWorldPosition(speakerPosition);
+          speechBubble.sprite.position.set(speakerPosition.x - meetingVenue.x, speakerPosition.y + 1.9, speakerPosition.z - meetingVenue.z);
+        } else speechBubble.sprite.position.set(0, 2.6, 0);
+        speechBubble.sprite.visible = true;
+        speechBubble.sprite.material.opacity = Math.min(0.98, bubbleTimeLeft < 1.1 ? bubbleTimeLeft / 1.1 : 0.98);
+      } else speechBubble.sprite.visible = false;
+    } else {
+      speechBubble.sprite.visible = false;
+      speakingAvatar = null;
+      lastMeetingMessageId = null;
+      meetingSeats.forEach((chair) => { meetingStage.remove(chair); disposeGroup(chair); });
+      meetingSeats.clear();
+    }
+    const speed = (interiorActive ? 5.8 : 7.2) * delta;
     let dx = 0;
     let dz = 0;
     if (keyState.has('w') || keyState.has('arrowup')) dz -= 1;
     if (keyState.has('s') || keyState.has('arrowdown')) dz += 1;
     if (keyState.has('a') || keyState.has('arrowleft')) dx -= 1;
     if (keyState.has('d') || keyState.has('arrowright')) dx += 1;
-    const touch = touchRef.current || { x: 0, z: 0 };
-    if (Math.hypot(touch.x, touch.z) > 0.04) { dx += touch.x; dz += touch.z; }
+    const playerRadius = 0.5;
+    const movementColliders = activeCollisionRects();
+    const movementBounds = activeWorldBounds();
+    let playerMoved = false;
     if (dx || dz) {
       const len = Math.hypot(dx, dz) || 1;
-      player.position.x = clamp(player.position.x + (dx / len) * speed, -22, 22);
-      player.position.z = clamp(player.position.z + (dz / len) * speed, -22, 22);
+      const movement = moveCircleSafely(player.position, (dx / len) * speed, (dz / len) * speed, playerRadius, movementColliders, movementBounds);
+      playerMoved = movement.moved;
+      if (movement.moved) player.rotation.y = Math.atan2(movement.x, movement.z);
       isMoving = false;
+      movementWaypoints = [];
+      movementWaypointIndex = 0;
+      pendingInteraction = null;
     } else if (isMoving) {
-      const difference = new THREE.Vector3(moveTarget.x - player.position.x, 0, moveTarget.z - player.position.z);
-      if (difference.length() < speed * 1.25) {
-        player.position.x = moveTarget.x;
-        player.position.z = moveTarget.z;
-        isMoving = false;
-      } else {
-        difference.normalize().multiplyScalar(speed * 0.8);
-        player.position.add(difference);
+      const waypoint = movementWaypoints[movementWaypointIndex] || { x: moveTarget.x, z: moveTarget.z };
+      const remainingX = waypoint.x - player.position.x;
+      const remainingZ = waypoint.z - player.position.z;
+      const remaining = Math.hypot(remainingX, remainingZ);
+      const scale = remaining > 1e-6 ? Math.min(1, (speed * 0.8) / remaining) : 1;
+      const movement = moveCircleSafely(player.position, remainingX * scale, remainingZ * scale, playerRadius, movementColliders, movementBounds);
+      playerMoved = movement.moved;
+      if (movement.moved) player.rotation.y = Math.atan2(movement.x, movement.z);
+      const distanceToWaypoint = Math.hypot(waypoint.x - player.position.x, waypoint.z - player.position.z);
+      if (distanceToWaypoint < 0.06) {
+        if (movementWaypointIndex < movementWaypoints.length - 1) {
+          movementWaypointIndex += 1;
+        } else if (Math.hypot(moveTarget.x - player.position.x, moveTarget.z - player.position.z) < 0.06
+          && !circleBlockedAt(moveTarget.x, moveTarget.z, playerRadius, movementColliders)) {
+          isMoving = false;
+          movementWaypoints = [];
+          movementWaypointIndex = 0;
+          if (pendingInteraction?.type === 'exit') exitInterior();
+          else if (pendingInteraction) enterInterior(pendingInteraction);
+        }
+      } else if (!movement.moved) {
+        const retryPath = findWalkPath(player.position, moveTarget, playerRadius, movementColliders, movementBounds);
+        if (retryPath?.length) {
+          movementWaypoints = retryPath;
+          movementWaypointIndex = 0;
+        } else {
+          isMoving = false;
+          movementWaypoints = [];
+          movementWaypointIndex = 0;
+          pendingInteraction = null;
+        }
       }
     }
-    player.rotation.y = Math.sin(elapsed * 0.65) * 0.055;
+    if (activeMeetingRoute && !activeMeetingRoute.confirmed && activeMeetingRoute.meetingId === currentMeeting?.id
+      && Math.hypot(player.position.x - activeMeetingRoute.target.x, player.position.z - activeMeetingRoute.target.z) < 0.36) {
+      activeMeetingRoute.confirmed = true;
+      isMoving = false; movementWaypoints = []; movementWaypointIndex = 0; pendingInteraction = null;
+      const venue = WORLD_VENUES.find((item) => item.id === activeMeetingRoute.venueId) || WORLD_VENUES.find((item) => item.id === 'square');
+      player.rotation.y = Math.atan2(venue.x - player.position.x, venue.z - player.position.z);
+      meetingContextRef.current?.onMeetingArrival?.(activeMeetingRoute.meetingId);
+    }
+    const walkingNow = playerMoved;
+    const playerSeatedAtMeeting = Boolean(currentMeeting?.id && player.userData.meetingId === currentMeeting.id && ['at-venue', 'in-session'].includes(player.userData.meetingStatus));
+    const playerIsSpeaking = speakingAvatar === player && elapsed < speakingUntil;
+    player.userData.legs?.forEach((leg, index) => {
+      leg.rotation.x = walkingNow ? Math.sin(elapsed * 11 + index * Math.PI) * 0.52 : THREE.MathUtils.damp(leg.rotation.x, playerSeatedAtMeeting ? -1.12 : 0, 8, delta);
+    });
+    player.userData.arms?.forEach((arm, index) => {
+      arm.rotation.x = walkingNow ? Math.sin(elapsed * 11 + index * Math.PI + Math.PI) * 0.25 : THREE.MathUtils.damp(arm.rotation.x, 0, 8, delta);
+      arm.rotation.z = THREE.MathUtils.damp(arm.rotation.z, playerIsSpeaking && index === 0 ? -0.5 - Math.max(0, Math.sin(elapsed * 7.4)) * 0.55 : 0, 8, delta);
+    });
+    if (player.userData.head) player.userData.head.rotation.x = playerIsSpeaking ? Math.sin(elapsed * 4.2) * 0.075 : THREE.MathUtils.damp(player.userData.head.rotation.x, 0, 6, delta);
+    if (player.userData.torso) player.userData.torso.position.y = 0.7 + (walkingNow ? Math.abs(Math.sin(elapsed * 11 * 2)) * 0.03 : playerSeatedAtMeeting ? 0.035 : 0);
+    if (!interiorActive && !isFocusingCamera) {
+      const followDelta = new THREE.Vector3(player.position.x - previousPlayerPosition.x, 0, player.position.z - previousPlayerPosition.z);
+      if (followDelta.lengthSq() > 0) { camera.position.add(followDelta); controls.target.add(followDelta); }
+    }
+    previousPlayerPosition.copy(player.position);
     if (elapsed - lastEmit > 0.18) {
       lastEmit = elapsed;
-      playerRef.current = { x: player.position.x, z: player.position.z };
+      if (!interiorActive) playerRef.current = { x: player.position.x, z: player.position.z, heading: player.rotation.y };
     }
     updateRemotePlayers(remoteRef.current);
+    for (const avatar of remoteSprites.values()) {
+      const avatarAtMeeting = Boolean(currentMeeting?.id && avatar.userData.meetingId === currentMeeting.id && ['at-venue', 'in-session'].includes(avatar.userData.meetingStatus));
+      const avatarIsSpeaking = speakingAvatar === avatar && elapsed < speakingUntil;
+      avatar.userData.legs?.forEach((leg, index) => {
+        leg.rotation.x = avatar.userData.walking ? Math.sin(elapsed * 9.5 + index * Math.PI) * 0.44 : THREE.MathUtils.damp(leg.rotation.x, avatarAtMeeting ? -1.12 : 0, 8, delta);
+      });
+      avatar.userData.arms?.forEach((arm, index) => {
+        arm.rotation.x = avatar.userData.walking ? Math.sin(elapsed * 9.5 + index * Math.PI + Math.PI) * 0.22 : THREE.MathUtils.damp(arm.rotation.x, 0, 8, delta);
+        arm.rotation.z = THREE.MathUtils.damp(arm.rotation.z, avatarIsSpeaking && index === 0 ? -0.5 - Math.max(0, Math.sin(elapsed * 7.4)) * 0.55 : 0, 8, delta);
+      });
+      if (avatar.userData.head) avatar.userData.head.rotation.x = avatarIsSpeaking ? Math.sin(elapsed * 4.2) * 0.075 : THREE.MathUtils.damp(avatar.userData.head.rotation.x, 0, 6, delta);
+    }
     if (isFocusingCamera) {
       const focusEase = 1 - Math.exp(-2.6 * delta);
       camera.position.lerp(cameraFocusPosition, focusEase);
@@ -1327,8 +2917,13 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     cancelAnimationFrame(frame);
     observer.disconnect();
     if (focusRef?.current === focusVenue) focusRef.current = null;
+    if (meetingTravelRef?.current === travelToMeeting) meetingTravelRef.current = null;
+    if (partyFocusRef) partyFocusRef.current = null;
+    if (exitInteriorRef) exitInteriorRef.current = null;
+    interiorChangeRef?.current?.(null);
     renderer.domElement.removeEventListener('pointerdown', onPointerDown);
     renderer.domElement.removeEventListener('pointerup', onPointerUp);
+    renderer.domElement.removeEventListener('pointercancel', onPointerCancel);
     window.removeEventListener('keydown', onKeyDown);
     window.removeEventListener('keyup', onKeyUp);
     controls.dispose();
@@ -1347,49 +2942,29 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
   };
 }
 
-export default function World({ state, locality = null, locationKey = 'state-capital', selectedVenueId = 'square', focusRequest = 0, onVenueSelect, onMove, remotePlayers = [], playerColor = '#d8f36b' }) {
+export default function World({ state, locality = null, locationKey = 'state-capital', selectedVenueId = 'square', focusRequest = 0, onVenueSelect, onMove, remotePlayers = [], playerColor = '#d8f36b', playerAppearance = {}, worldMinute = 942, meeting = null, meetingMessages = [], meetingParticipants = [], meetingPhase = 'idle', meetingSlot = null, playerId = 'local-player', onMeetingArrival, partyOfficeActionRef, exitInteriorActionRef, onInteriorChange }) {
   const mountRef = useRef(null);
-  const positionRef = useRef({ x: -5.8, z: 3.5 });
+  const positionRef = useRef({ x: -5.8, z: 3.5, heading: 0 });
+  const worldMinuteRef = useRef(worldMinute);
+  worldMinuteRef.current = worldMinute;
   const remoteRef = useRef(remotePlayers);
   const moveCallbackRef = useRef(onMove);
   const venueCallbackRef = useRef(onVenueSelect);
-  const touchRef = useRef({ x: 0, z: 0 });
+  const meetingRef = useRef(meeting);
+  const meetingMessagesRef = useRef(meetingMessages);
+  const meetingContextRef = useRef(null);
+  const meetingTravelRef = useRef(null);
   const focusRef = useRef(null);
-  const stickPointerRef = useRef(null);
-  const [stickOffset, setStickOffset] = useState({ x: 0, y: 0 });
+  const hasMountedFocusRef = useRef(false);
+  const interiorChangeRef = useRef(onInteriorChange);
   const [worldError, setWorldError] = useState(false);
   remoteRef.current = remotePlayers;
   moveCallbackRef.current = onMove;
   venueCallbackRef.current = onVenueSelect;
-
-  const updateStick = (event) => {
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const radius = Math.min(bounds.width, bounds.height) * 0.34;
-    const rawX = event.clientX - (bounds.left + bounds.width / 2);
-    const rawY = event.clientY - (bounds.top + bounds.height / 2);
-    const length = Math.hypot(rawX, rawY) || 1;
-    const scale = Math.min(1, radius / length);
-    const x = rawX * scale;
-    const y = rawY * scale;
-    touchRef.current = { x: x / radius, z: y / radius };
-    setStickOffset({ x, y });
-  };
-  const onStickDown = (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    stickPointerRef.current = event.pointerId;
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-    updateStick(event);
-  };
-  const onStickMove = (event) => {
-    if (stickPointerRef.current === event.pointerId) updateStick(event);
-  };
-  const onStickRelease = (event) => {
-    if (stickPointerRef.current !== event.pointerId) return;
-    stickPointerRef.current = null;
-    touchRef.current = { x: 0, z: 0 };
-    setStickOffset({ x: 0, y: 0 });
-  };
+  meetingRef.current = meeting;
+  meetingMessagesRef.current = meetingMessages;
+  meetingContextRef.current = { playerId, meetingSlot, meetingPhase, meetingParticipants, onMeetingArrival };
+  interiorChangeRef.current = onInteriorChange;
 
   useEffect(() => {
     if (!mountRef.current) return undefined;
@@ -1403,21 +2978,41 @@ export default function World({ state, locality = null, locationKey = 'state-cap
         positionRef,
         remoteRef,
         playerColor,
-        touchRef,
+        playerAppearance,
+        worldMinuteRef,
+        meetingRef,
+        meetingMessagesRef,
+        meetingContextRef,
+        meetingTravelRef,
         focusRef,
+        partyOfficeActionRef,
+        exitInteriorActionRef,
+        interiorChangeRef,
       );
-      focusRef.current?.(selectedVenueId);
       return cleanup;
     } catch (error) {
       console.error('NIGERIA 2027 3D scene failed to initialize:', error);
       setWorldError(true);
       return undefined;
     }
-  }, [state, playerColor, locationKey]);
+  }, [state, playerColor, playerAppearance?.skinTone, playerAppearance?.headStyle, playerAppearance?.outfitColor, locationKey]);
 
   useEffect(() => {
+    if (!hasMountedFocusRef.current) { hasMountedFocusRef.current = true; return; }
+    if (meeting?.id) {
+      if (meeting.status === 'open' && meetingPhase === 'en-route') meetingTravelRef.current?.({ meetingId: meeting.id, venueId: meeting.location?.venueId || 'square', playerId, slot: meetingSlot });
+      return;
+    }
     if (selectedVenueId) focusRef.current?.(selectedVenueId);
-  }, [selectedVenueId, focusRequest]);
+  }, [selectedVenueId, focusRequest, meeting?.id, meeting?.status, meeting?.location?.venueId, meetingPhase, meetingSlot, playerId]);
+
+  useEffect(() => {
+    const travel = meetingTravelRef.current;
+    if (!travel) return;
+    if (meeting?.id && meeting.status === 'open' && meetingPhase === 'en-route') {
+      travel({ meetingId: meeting.id, venueId: meeting.location?.venueId || 'square', playerId, slot: meetingSlot });
+    } else travel(null);
+  }, [meeting?.id, meeting?.status, meeting?.location?.venueId, meetingPhase, meetingSlot, playerId, locationKey, focusRequest]);
 
   useEffect(() => {
     const interval = window.setInterval(() => moveCallbackRef.current?.(positionRef.current), 180);
@@ -1428,25 +3023,6 @@ export default function World({ state, locality = null, locationKey = 'state-cap
     <div className="world-layer">
       <div className="world-canvas" ref={mountRef} />
       {worldError && <div className="world-error-banner" role="status"><strong>3D view unavailable</strong><span>The interactive scene could not start in this browser. The rest of the game should still work. Refresh the page or enable WebGL/hardware acceleration.</span></div>}
-      <div className="mobile-controls">
-        <div className="mobile-move-label">MOVE</div>
-        <div
-          className="virtual-stick"
-          role="application"
-          aria-label="Virtual joystick. Drag in any direction to move your candidate."
-          onPointerDown={onStickDown}
-          onPointerMove={onStickMove}
-          onPointerUp={onStickRelease}
-          onPointerCancel={onStickRelease}
-          onLostPointerCapture={onStickRelease}
-        >
-          <span className="stick-groove stick-groove-x" />
-          <span className="stick-groove stick-groove-y" />
-          <span className="stick-center" />
-          <span className="virtual-stick-thumb" style={{ transform: `translate(${stickOffset.x}px, ${stickOffset.y}px)` }} />
-        </div>
-        <div className="mobile-move-foot">DRAG TO WALK</div>
-      </div>
     </div>
   );
 }
