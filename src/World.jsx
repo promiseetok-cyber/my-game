@@ -1918,6 +1918,18 @@ function buildPartyOfficeInterior(info, palette, playerColor) {
   boardSub.position.set(0, 2.55, -6.02);
   boardSub.scale.set(2.85, 0.52, 1);
   group.add(boardSub);
+  const noticeAnchor = new THREE.Group();
+  noticeAnchor.position.set(0, 0, -5.62);
+  const noticeInteraction = {
+    id: `noticeboard-${info.id || 'party-office'}`,
+    title: 'Read the ward noticeboard',
+    type: 'office-activity',
+    activity: { id: 'noticeboard', title: 'Ward noticeboard', fictional: true },
+    targetObject: noticeAnchor,
+    approachPoint: { x: 0, z: -4.72 },
+  };
+  addInteriorHotspot(noticeAnchor, noticeInteraction, { y: 2.85, width: 4.4, height: 1.45, depth: 0.72 });
+  group.add(noticeAnchor);
   const flagPole = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.04, 1.9, 8), new THREE.MeshStandardMaterial({ color: '#a98d5b', metalness: 0.45, roughness: 0.45 }));
   flagPole.position.set(-5.15, 2.72, -6.05);
   group.add(flagPole);
@@ -1947,6 +1959,18 @@ function buildPartyOfficeInterior(info, palette, playerColor) {
     front.position.set(5.43, 0.25 + drawer * 0.34, -2.9);
     group.add(front);
   }
+  const recordsAnchor = new THREE.Group();
+  recordsAnchor.position.set(5.28, 0, -2.9);
+  const recordsInteraction = {
+    id: `records-cabinet-${info.id || 'party-office'}`,
+    title: 'Review the ward office files',
+    type: 'office-activity',
+    activity: { id: 'records-cabinet', title: 'Ward office records', fictional: true },
+    targetObject: recordsAnchor,
+    approachPoint: { x: 4.45, z: -2.9 },
+  };
+  addInteriorHotspot(recordsAnchor, recordsInteraction, { y: 0.9, width: 1.0, height: 1.5, depth: 1.1 });
+  group.add(recordsAnchor);
   const waterCooler = new THREE.Group();
   const coolerBase = box(0.62, 0.92, 0.56, '#d7ddd3', { castShadow: false, roughness: 0.55 });
   coolerBase.position.y = 0.46;
@@ -1956,6 +1980,18 @@ function buildPartyOfficeInterior(info, palette, playerColor) {
   waterCooler.add(waterBottle);
   waterCooler.position.set(5.4, 0, 2.0);
   group.add(waterCooler);
+  const breakAnchor = new THREE.Group();
+  breakAnchor.position.set(5.0, 0, 2.0);
+  const breakInteraction = {
+    id: `water-break-${info.id || 'party-office'}`,
+    title: 'Take a short water break',
+    type: 'office-activity',
+    activity: { id: 'water-break', title: 'Water break', fictional: true },
+    targetObject: breakAnchor,
+    approachPoint: { x: 4.15, z: 2.0 },
+  };
+  addInteriorHotspot(breakAnchor, breakInteraction, { y: 0.9, width: 0.9, height: 1.7, depth: 1.0 });
+  group.add(breakAnchor);
 
   // Conference table, visitor chairs and all six fictional branch executives.
   const table = box(5.55, 0.17, 1.55, '#77563c', { castShadow: true, roughness: 0.72 });
@@ -2904,7 +2940,7 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     pendingInteraction = null;
     if (interaction.type === 'exit') { exitInterior(); return; }
     if (interaction.type === 'seat') { sitAtInteriorSeat(interaction); return; }
-    if (interaction.type === 'executive') {
+    if (interaction.type === 'executive' || interaction.type === 'office-activity') {
       const target = interaction.targetObject;
       if (target) {
         target.updateWorldMatrix?.(true, false);
@@ -2912,14 +2948,15 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
         target.getWorldPosition(position);
         player.rotation.y = Math.atan2(position.x - player.position.x, position.z - player.position.z);
       }
-      notifyInteriorAction({ type: 'executive-ready', executive: interaction.executive });
+      if (interaction.type === 'executive') notifyInteriorAction({ type: 'executive-ready', executive: interaction.executive });
+      else notifyInteriorAction({ type: 'activity-ready', activity: interaction.activity });
       return;
     }
     enterInterior(interaction);
   };
   const beginDoorInteraction = (interaction, portalGroup) => {
     if (!interaction) return;
-    if (interiorActive && ['seat', 'executive'].includes(interaction.type)) {
+    if (interiorActive && ['seat', 'executive', 'office-activity'].includes(interaction.type)) {
       const approach = interaction.approachPoint;
       let target = null;
       if (approach && Number.isFinite(approach.x) && Number.isFinite(approach.z)) {
@@ -2936,7 +2973,8 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
         const approachPoint = point.add(facing.multiplyScalar(distance));
         target = { x: approachPoint.x, z: approachPoint.z };
       }
-      if (!setSafeWalkTarget(target.x, target.z, interaction.type === 'executive' ? 4.6 : 2.6)) return;
+      const searchRadius = interaction.type === 'executive' ? 4.6 : interaction.type === 'office-activity' ? 3.6 : 2.6;
+      if (!setSafeWalkTarget(target.x, target.z, searchRadius)) return;
       standFromSeat();
       pendingInteraction = interaction;
       if (player.position.distanceTo(moveTarget) < 1.25) completeInteriorInteraction(interaction);
