@@ -3684,6 +3684,7 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
   const stateSignature = makeStateSignature(stateInfo, palette, sceneMaterials);
   scene.add(stateSignature);
   registerGroupColliders(stateSignature);
+  const planeBoardingDoors = new Map();
   for (const venue of WORLD_VENUES) {
     const venueGroup = makeVenue(venue, palette, sceneMaterials, stateInfo.name, propertyProfileRef?.current, propertyOwnerRef?.current);
     scene.add(venueGroup);
@@ -3768,7 +3769,6 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     reservedNames: NPCS.map((person) => person.name),
   });
   const partyOfficeDoors = new Map();
-  const planeBoardingDoors = new Map();
   const partyStreetMaterial = new THREE.MeshStandardMaterial({ color: '#424a45', roughness: 0.9 });
   for (const row of [-1, 1]) {
     const street = new THREE.Mesh(new THREE.PlaneGeometry(58, 3.9), partyStreetMaterial);
