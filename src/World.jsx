@@ -5054,7 +5054,8 @@ export default function World({ state, locality = null, locationKey = 'state-cap
       return cleanup;
     } catch (error) {
       console.error('NIGERIA 2027 3D scene failed to initialize:', error);
-      setWorldError(error?.message || String(error) || 'Unknown 3D initialization error.');
+      const diagnostic = error?.stack || error?.message || String(error) || 'Unknown 3D initialization error.';
+      setWorldError(String(diagnostic).split('\n').slice(0, 7).join('\n').slice(0, 1200));
       return undefined;
     }
   }, [state, playerColor, playerAppearance?.skinTone, playerAppearance?.headStyle, playerAppearance?.outfitColor, locationKey]);
