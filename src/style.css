@@ -1897,3 +1897,266 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
   .scene-current-site,
   .mobile-gesture-hint { bottom: 60px; }
 }
+
+/* Edge-to-edge story world with compact floating controls. The scene remains mounted full-viewport; directories open as overlays instead of relying on page scroll. */
+html:has(.immersive-shell),
+body:has(.immersive-shell) { width: 100%; height: 100%; overflow: hidden !important; overscroll-behavior: none; }
+#root:has(.immersive-shell) { position: fixed; inset: 0; width: 100%; height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; }
+.app-shell.immersive-shell { position: fixed; z-index: 1; inset: 0; display: block; width: 100%; height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; background: #0a100d; isolation: isolate; }
+.immersive-shell .app-layout { position: absolute; z-index: auto; inset: 0; display: block; width: 100%; height: 100vh !important; height: 100dvh !important; min-height: 0; overflow: hidden; }
+.immersive-shell .main-content { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; padding: 0 !important; overflow: hidden !important; background: transparent; }
+.immersive-shell .main-content:has(.world-page) .main-heading-row { display: none !important; }
+.immersive-shell .world-page { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; margin: 0; padding: 0 !important; overflow: hidden; }
+.immersive-shell .world-topline,
+.immersive-shell .mobile-world-status,
+.immersive-shell .mobile-world-ticker,
+.immersive-shell .mobile-player-dock,
+.immersive-shell .scene-location-card,
+.immersive-shell .scene-brief-card,
+.immersive-shell .scene-current-site,
+.immersive-shell .scene-asset-note,
+.immersive-shell .scene-cinematic-label,
+.immersive-shell .mobile-scroll-note,
+.immersive-shell .world-page > .world-lower-row,
+.immersive-shell .world-page > .party-directory,
+.immersive-shell .world-page > .institution-world-panel,
+.immersive-shell .world-page > .locality-explorer { display: none !important; }
+.immersive-shell .world-view-frame { position: absolute !important; z-index: 0; inset: 0 !important; width: 100% !important; height: 100% !important; min-height: 0 !important; max-height: none !important; margin: 0 !important; overflow: hidden; border: 0 !important; border-radius: 0 !important; box-shadow: none !important; }
+.immersive-shell .world-view-frame.inside-interior .mini-map-card { display: none !important; }
+
+/* Floating NIGERIA 2027 command bar */
+.immersive-shell .topbar { position: fixed; z-index: 80; top: 12px; left: 50%; right: auto; width: min(1160px, calc(100vw - 32px)); height: 56px; flex: 0 0 56px; margin: 0; padding: 0 15px; transform: translateX(-50%); border: 1px solid rgba(255,255,255,.78); border-radius: 999px; color: #1d2b22; background: rgba(250,252,247,.96); box-shadow: 0 9px 32px rgba(0,0,0,.19); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }
+.immersive-shell .brand-lockup { width: auto; gap: 9px; }
+.immersive-shell .brand-type strong { color: #1d2b22; }
+.immersive-shell .brand-type strong b { color: #47865d; }
+.immersive-shell .brand-type small { color: #718076; }
+.immersive-shell .topbar-middle { display: none; }
+.immersive-shell .topbar-actions { gap: 7px; }
+.immersive-shell .world-topbar-tools { gap: 4px; }
+.immersive-shell .world-topbar-tools button,
+.immersive-shell .avatar-customize-shortcut { width: 34px; height: 34px; border: 1px solid rgba(44,73,54,.13); border-radius: 50%; color: #53675a; background: rgba(255,255,255,.8); }
+.immersive-shell .world-topbar-tools button:hover,
+.immersive-shell .avatar-customize-shortcut:hover,
+.immersive-shell .world-topbar-tools button[aria-expanded="true"] { color: #215a3a; border-color: rgba(44,112,69,.3); background: #eff6ed; }
+.immersive-shell .network-chip { height: 31px; padding: 0 10px; border-color: rgba(44,73,54,.14); border-radius: 999px; color: #64746a; background: rgba(255,255,255,.64); font-size: 8px; }
+.immersive-shell .network-chip.online { color: #34724c; border-color: rgba(53,131,81,.2); }
+.immersive-shell .wallet-chip { height: 34px; border-color: rgba(54,129,79,.17); border-radius: 999px; color: #214a32; background: #edf5eb; }
+.immersive-shell .wallet-chip svg { color: #47815a; }
+.immersive-shell .avatar-customize-shortcut { color: #657750; }
+.immersive-shell .top-avatar { width: 34px; height: 34px; border-color: rgba(54,129,79,.23); color: #17331f; background: #e8f1e6; }
+.immersive-shell .top-avatar:hover { background: #dcebd9; }
+.immersive-shell .season-pill { color: #526357; border-color: rgba(44,73,54,.12); border-radius: 999px; background: rgba(255,255,255,.66); }
+.immersive-shell .season-dot { background: #49845e; box-shadow: 0 0 0 3px rgba(73,132,94,.11); }
+.immersive-shell .season-divider { background: rgba(44,73,54,.2); }
+.immersive-shell .election-clock { color: #627167; }
+.immersive-shell .election-clock b { color: #2c4133; }
+.immersive-shell .election-clock i { background: rgba(44,73,54,.18); }
+@media (min-width: 1040px) {
+  .immersive-shell .topbar-middle { display: flex; }
+}
+
+/* Floating place, ward and time chips */
+.world-live-clock { display: none; }
+.immersive-shell .mobile-location-strip { position: absolute; z-index: 24; top: 82px; left: 16px; width: max-content; max-width: calc(100vw - 190px); min-height: 40px; display: flex; align-items: center; gap: 5px; margin: 0; padding: 5px 6px 5px 10px; border: 1px solid rgba(255,255,255,.82); border-radius: 999px; color: #263b2c; background: rgba(250,252,247,.96); box-shadow: 0 7px 24px rgba(0,0,0,.2); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+.immersive-shell .mobile-location-name { min-width: 0; flex: 1 1 auto; display: flex; align-items: center; gap: 7px; }
+.immersive-shell .mobile-location-name > svg { flex: 0 0 auto; color: #4b9466; }
+.immersive-shell .mobile-location-name > span { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.immersive-shell .mobile-location-name b { overflow: hidden; color: #263b2c; font: 700 8px/1.1 var(--font-mono); letter-spacing: .025em; white-space: nowrap; text-overflow: ellipsis; }
+.immersive-shell .mobile-location-name small { overflow: hidden; color: #748177; font: 6px/1.1 var(--font-mono); white-space: nowrap; text-overflow: ellipsis; }
+.immersive-shell .mobile-location-strip button { position: relative; width: 30px; height: 30px; min-height: 30px; flex: 0 0 30px; display: grid; place-items: center; padding: 0; border: 1px solid rgba(65,120,75,.14); border-radius: 50%; color: #41674c; background: #f3f7ef; cursor: pointer; touch-action: manipulation; }
+.immersive-shell .mobile-location-strip button span,
+.immersive-shell .mobile-world-shortcuts button span,
+.immersive-shell .mobile-bottom-nav button span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); clip-path: inset(50%); white-space: nowrap; }
+.immersive-shell .mobile-location-strip button:hover { color: #215a3a; background: #e7f1e4; }
+.immersive-shell .world-live-clock { position: absolute; z-index: 20; top: 132px; left: 16px; width: max-content; max-width: min(250px, calc(100vw - 190px)); min-height: 34px; display: flex; align-items: center; gap: 7px; padding: 5px 9px; border: 1px solid rgba(230,238,218,.16); border-radius: 999px; color: #dce7d9; background: rgba(9,17,12,.78); box-shadow: 0 6px 18px rgba(0,0,0,.18); backdrop-filter: blur(10px); pointer-events: none; }
+.immersive-shell .world-clock-icon { display: grid; place-items: center; width: 22px; height: 22px; flex: 0 0 auto; border-radius: 50%; color: #396f4a; background: #eaf3e7; }
+.immersive-shell .world-clock-copy { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.immersive-shell .world-clock-copy strong { color: #f0f4e9; font: 700 8px/1 var(--font-mono); letter-spacing: .05em; }
+.immersive-shell .world-clock-copy small { color: #9da99a; font: 6px/1 var(--font-mono); letter-spacing: .035em; white-space: nowrap; }
+.immersive-shell .world-clock-network { color: #aab8a9; font: 6px/1 var(--font-mono); letter-spacing: .04em; white-space: nowrap; }
+.immersive-shell .world-live-clock .network-led { width: 6px; height: 6px; margin-left: 2px; }
+
+/* Compact circular in-world icon palette */
+.immersive-shell .mobile-world-shortcuts { position: absolute; z-index: 32; top: 50%; right: 16px; width: auto; display: flex; flex-direction: column; align-items: center; gap: 8px; margin: 0; padding: 0; transform: translateY(-50%); border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.immersive-shell .mobile-world-shortcuts button { position: relative; width: 46px; height: 46px; min-height: 46px; flex: 0 0 46px; display: grid; place-items: center; padding: 0; border: 1px solid rgba(255,255,255,.82); border-radius: 50%; color: #52685a; background: rgba(250,252,247,.96); box-shadow: 0 7px 20px rgba(0,0,0,.2); cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent; transition: transform .16s ease, color .16s ease, background .16s ease; }
+.immersive-shell .mobile-world-shortcuts button svg { width: 18px; height: 18px; }
+.immersive-shell .mobile-world-shortcuts button.active { border-color: rgba(55,119,75,.28); color: #215a3a; background: #eaf3e7; box-shadow: 0 0 0 3px rgba(227,241,222,.42), 0 7px 20px rgba(0,0,0,.2); }
+.immersive-shell .mobile-world-shortcuts button:hover { transform: translateX(-2px); color: #215a3a; }
+.immersive-shell .mobile-world-shortcuts button:active { transform: scale(.94); }
+@media (hover: hover) {
+  .immersive-shell .mobile-world-shortcuts button:hover::after,
+  .immersive-shell .mobile-location-strip button:hover::after,
+  .immersive-shell .mobile-bottom-nav button:hover::after { content: attr(title); position: absolute; right: calc(100% + 10px); top: 50%; z-index: 2; padding: 7px 9px; transform: translateY(-50%); border: 1px solid rgba(231,239,223,.13); border-radius: 999px; color: #edf4e8; background: rgba(8,16,11,.91); box-shadow: 0 6px 18px rgba(0,0,0,.25); font: 700 7px/1 var(--font-mono); letter-spacing: .06em; white-space: nowrap; pointer-events: none; }
+}
+
+/* WAT clock, live minimap and mission prompt stay legible without boxing in the scene. */
+.immersive-shell .world-view-frame .mini-map-card { position: absolute; z-index: 16; top: 82px; right: 16px; bottom: auto; width: 168px; display: block; padding: 8px 9px 6px; border: 1px solid rgba(230,238,218,.2); border-radius: 12px; background: rgba(8,16,12,.82); box-shadow: 0 9px 28px rgba(0,0,0,.2); backdrop-filter: blur(10px); }
+.immersive-shell .world-view-frame .mini-map-card svg { display: block; width: 100%; height: 84px; margin: 3px 0; }
+.immersive-shell .world-view-frame .scene-mission-card { position: absolute; z-index: 18; left: 16px; bottom: 18px; width: min(300px, calc(100vw - 32px)); max-height: 170px; overflow-y: auto; padding: 11px 13px 10px; border: 1px solid rgba(230,238,218,.2); border-radius: 13px; background: rgba(8,16,12,.84); box-shadow: 0 12px 32px rgba(0,0,0,.25); backdrop-filter: blur(12px); }
+.immersive-shell .world-view-frame .scene-mission-card > strong { font-size: 13px; }
+.immersive-shell .world-view-frame .scene-mission-card > p { font-size: 8px; }
+.immersive-shell .world-view-frame .scene-controls { position: absolute; z-index: 18; left: 50%; bottom: 20px; display: flex; max-width: calc(100vw - 640px); flex-wrap: wrap; justify-content: center; transform: translateX(-50%); padding: 8px 11px; border-radius: 999px; background: rgba(8,16,12,.72); font-size: 6px; }
+.immersive-shell .mobile-gesture-hint { display: none; }
+
+/* Mobile navigation is a true icon dock; it does not consume scene height. */
+.immersive-shell .mobile-bottom-nav { display: none; }
+
+/* Directory sheets replace the former scroll-to-reach layout sections. */
+.immersive-shell .world-directory-scrim { position: fixed; z-index: 72; inset: 0; display: flex; align-items: center; justify-content: center; padding: 82px 16px 18px; background: rgba(4,10,7,.5); backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); animation: worldScrimIn .18s ease both; }
+.immersive-shell .world-directory-panel { width: min(760px, calc(100vw - 32px)); height: min(78dvh, 760px); min-height: min(260px, 68dvh); display: flex; flex-direction: column; overflow: hidden; border: 1px solid rgba(232,240,226,.16); border-radius: 18px; color: #e7eee3; background: rgba(15,23,18,.97); box-shadow: 0 26px 80px rgba(0,0,0,.56); }
+.immersive-shell .world-directory-header { flex: 0 0 auto; display: flex; align-items: center; gap: 11px; min-height: 68px; padding: 12px 15px; border-bottom: 1px solid rgba(230,238,218,.1); background: radial-gradient(ellipse at 0 0, rgba(216,243,107,.08), transparent 55%), rgba(255,255,255,.018); }
+.immersive-shell .world-directory-icon { width: 38px; height: 38px; flex: 0 0 38px; display: grid; place-items: center; border: 1px solid rgba(216,243,107,.24); border-radius: 12px; color: var(--lime); background: rgba(216,243,107,.08); }
+.immersive-shell .world-directory-header > div { min-width: 0; flex: 1; }
+.immersive-shell .world-directory-header small { color: #8f9d90; font: 7px var(--font-mono); letter-spacing: .12em; }
+.immersive-shell .world-directory-header h2 { margin: 4px 0 0; color: #eff3e8; font: 600 21px/1.05 var(--font-display); letter-spacing: -.035em; }
+.immersive-shell .world-directory-close { width: 36px; height: 36px; flex: 0 0 36px; display: grid; place-items: center; border: 1px solid rgba(230,238,218,.14); border-radius: 50%; color: #aab7aa; background: rgba(255,255,255,.04); cursor: pointer; }
+.immersive-shell .world-directory-close:hover { color: #fff; border-color: rgba(216,243,107,.32); background: rgba(216,243,107,.08); }
+.immersive-shell .world-directory-filters { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 6px; padding: 11px 14px 7px; }
+.immersive-shell .world-directory-filters button { min-height: 29px; padding: 0 11px; border: 1px solid rgba(230,238,218,.12); border-radius: 999px; color: #9aa79a; background: rgba(255,255,255,.025); cursor: pointer; font: 700 7px var(--font-mono); letter-spacing: .055em; }
+.immersive-shell .world-directory-filters button.active { border-color: rgba(216,243,107,.35); color: var(--lime); background: rgba(216,243,107,.08); }
+.immersive-shell .world-directory-scroll { min-height: 0; flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; scrollbar-color: rgba(216,243,107,.24) transparent; scrollbar-width: thin; }
+.immersive-shell .world-place-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); align-content: start; gap: 7px; padding: 6px 14px 15px; }
+.immersive-shell .world-place-grid .venue-chip { min-height: 54px; padding: 8px; border-color: rgba(230,238,218,.1); border-radius: 8px; background: rgba(255,255,255,.025); }
+.immersive-shell .world-place-grid .venue-chip:hover,
+.immersive-shell .world-place-grid .venue-chip.selected { border-color: rgba(216,243,107,.31); background: rgba(216,243,107,.07); }
+.immersive-shell .world-place-grid .venue-chip strong { color: #e2eadf; font-size: 9px; }
+.immersive-shell .world-place-grid .venue-chip small { color: #859287; font-size: 6px; }
+.immersive-shell .world-place-grid .venue-chip > svg { color: #aebbad; }
+.immersive-shell .world-directory-scroll .locality-explorer { margin: 0; padding: 14px; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.immersive-shell .world-directory-scroll .locality-explorer-head { align-items: flex-start; flex-direction: column; gap: 10px; }
+.immersive-shell .world-directory-scroll .locality-national-counts { width: 100%; }
+.immersive-shell .world-directory-scroll .locality-national-counts span { flex: 1; }
+.immersive-shell .world-directory-scroll .ward-chip-grid { max-height: none; }
+.immersive-shell .world-party-directory-scroll .party-directory { margin: 0; padding: 14px; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.immersive-shell .world-party-directory-scroll .party-directory-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+
+/* Floating drawers retain access to the complete campaign, civic and social systems. */
+.immersive-shell .left-sidebar,
+.immersive-shell .right-rail { top: 80px; bottom: 12px; max-height: none; border-radius: 14px; }
+.immersive-shell .left-sidebar { left: 12px; }
+.immersive-shell .right-rail { right: 12px; }
+.immersive-shell .world-drawer-backdrop { z-index: 54; inset: 0; background: rgba(3,8,5,.48); }
+.immersive-shell.nav-open .left-sidebar,
+.immersive-shell.phone-open .right-rail { z-index: 66; }
+
+@media (max-width: 780px) {
+  .immersive-shell .topbar { top: 7px; width: calc(100vw - 14px); height: 50px; flex-basis: 50px; padding: 0 8px; }
+  .immersive-shell .brand-lockup { gap: 7px; }
+  .immersive-shell .brand-mark { width: 25px; height: 25px; border-radius: 7px; }
+  .immersive-shell .brand-type strong { font-size: 11px; }
+  .immersive-shell .brand-type small { display: none; }
+  .immersive-shell .topbar-middle { display: none !important; }
+  .immersive-shell .topbar-actions { gap: 3px; }
+  .immersive-shell .world-topbar-tools { gap: 2px; }
+  .immersive-shell .world-topbar-tools button,
+  .immersive-shell .avatar-customize-shortcut,
+  .immersive-shell .top-avatar { width: 29px; height: 29px; }
+  .immersive-shell .wallet-chip { height: 29px; gap: 4px; padding: 0 6px; font-size: 8px; }
+  .immersive-shell .wallet-full { display: none; }
+  .immersive-shell .wallet-compact { display: inline; }
+  .immersive-shell .network-chip { display: none; }
+  .immersive-shell .mobile-location-strip { top: 68px; left: 9px; width: max-content; max-width: calc(100vw - 132px); min-height: 36px; gap: 4px; padding: 3px 4px 3px 8px; }
+  .immersive-shell .mobile-location-strip button { width: 28px; height: 28px; min-height: 28px; flex-basis: 28px; }
+  .immersive-shell .world-live-clock { top: 111px; left: 9px; min-height: 31px; max-width: calc(100vw - 135px); gap: 5px; padding: 4px 7px; }
+  .immersive-shell .world-clock-copy strong { font-size: 7px; }
+  .immersive-shell .world-clock-copy small { font-size: 5px; }
+  .immersive-shell .world-clock-network { font-size: 5px; }
+  .immersive-shell .world-clock-icon { width: 21px; height: 21px; }
+  .immersive-shell .mobile-world-shortcuts { right: 8px; gap: 7px; }
+  .immersive-shell .mobile-world-shortcuts button { width: 42px; height: 42px; min-height: 42px; flex-basis: 42px; }
+  .immersive-shell .mobile-world-shortcuts button svg { width: 17px; height: 17px; }
+  .immersive-shell .world-view-frame .mini-map-card { top: 68px; right: 9px; width: 108px; padding: 6px 6px 5px; border-radius: 11px; }
+  .immersive-shell .world-view-frame .mini-map-card svg { height: 49px; margin: 2px 0; }
+  .immersive-shell .world-view-frame .scene-mission-card { left: 9px; bottom: calc(70px + env(safe-area-inset-bottom)); width: min(226px, calc(100vw - 150px)); max-height: 145px; padding: 8px 9px; border-radius: 11px; }
+  .immersive-shell .world-view-frame .scene-mission-card > strong { margin-top: 5px; font-size: 10px; }
+  .immersive-shell .world-view-frame .scene-mission-card > p { margin-top: 4px; font-size: 7px; }
+  .immersive-shell .world-view-frame .scene-mission-card > button { margin-top: 5px; font-size: 6px; }
+  .immersive-shell .world-view-frame .scene-controls { display: none !important; }
+  .immersive-shell .mobile-gesture-hint { position: absolute; z-index: 18; top: auto; right: 8px; bottom: calc(70px + env(safe-area-inset-bottom)); left: auto; display: flex; max-width: min(220px, calc(100vw - 245px)); flex-wrap: wrap; align-items: center; justify-content: center; gap: 3px 4px; padding: 6px 7px; transform: none; border: 1px solid rgba(230,238,218,.15); border-radius: 10px; color: #dce8d8; background: rgba(8,16,12,.83); font: 5px/1.2 var(--font-mono); letter-spacing: .01em; white-space: normal; }
+  .immersive-shell .mobile-gesture-hint i { height: 7px; width: 1px; background: rgba(255,255,255,.18); }
+  .immersive-shell .mobile-bottom-nav { position: fixed; z-index: 40; left: 50%; bottom: max(8px, env(safe-area-inset-bottom)); width: auto; min-height: 0; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 5px; transform: translateX(-50%); border: 1px solid rgba(255,255,255,.8); border-radius: 999px; background: rgba(250,252,247,.96); box-shadow: 0 9px 27px rgba(0,0,0,.25); backdrop-filter: blur(16px); }
+  .immersive-shell .mobile-bottom-nav button { position: relative; width: 41px; height: 41px; min-width: 41px; min-height: 41px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; color: #65736a; background: transparent; cursor: pointer; touch-action: manipulation; }
+  .immersive-shell .mobile-bottom-nav button.active { color: #f4faee; background: #1c5939; box-shadow: 0 3px 9px rgba(17,67,40,.21); }
+  .immersive-shell .mobile-bottom-nav button:active { transform: scale(.96); }
+  .immersive-shell .world-directory-scrim { align-items: flex-end; padding: 72px 8px calc(66px + env(safe-area-inset-bottom)); }
+  .immersive-shell .world-directory-panel { width: 100%; height: min(74dvh, 700px); min-height: min(230px, 62dvh); border-radius: 17px; }
+  .immersive-shell .world-directory-header { min-height: 61px; padding: 9px 11px; }
+  .immersive-shell .world-directory-header h2 { font-size: 18px; }
+  .immersive-shell .world-directory-icon { width: 34px; height: 34px; flex-basis: 34px; border-radius: 11px; }
+  .immersive-shell .world-directory-close { width: 33px; height: 33px; flex-basis: 33px; }
+  .immersive-shell .world-directory-filters { gap: 4px; padding: 8px 10px 5px; }
+  .immersive-shell .world-directory-filters button { min-height: 27px; padding: 0 9px; font-size: 6px; }
+  .immersive-shell .world-place-grid { grid-template-columns: 1fr; gap: 5px; padding: 5px 10px 10px; }
+  .immersive-shell .world-place-grid .venue-chip { min-height: 47px; }
+  .immersive-shell .world-directory-scroll .locality-explorer { padding: 11px 10px; }
+  .immersive-shell .world-party-directory-scroll .party-directory { padding: 10px; }
+  .immersive-shell .world-party-directory-scroll .party-directory-grid { grid-template-columns: 1fr; }
+  .immersive-shell .left-sidebar,
+  .immersive-shell .right-rail { top: 65px; bottom: calc(68px + env(safe-area-inset-bottom)); width: min(360px, calc(100vw - 16px)); }
+  .immersive-shell .left-sidebar { left: 8px; }
+  .immersive-shell .right-rail { right: 8px; }
+}
+@media (max-width: 380px) {
+  .immersive-shell .avatar-customize-shortcut { display: none; }
+  .immersive-shell .topbar-actions { gap: 2px; }
+  .immersive-shell .world-topbar-tools { gap: 1px; }
+  .immersive-shell .world-topbar-tools button,
+  .immersive-shell .top-avatar { width: 26px; height: 27px; }
+  .immersive-shell .brand-type strong { font-size: 10px; }
+  .immersive-shell .world-clock-network { display: none; }
+  .immersive-shell .mobile-world-shortcuts { gap: 5px; right: 6px; }
+  .immersive-shell .mobile-world-shortcuts button { width: 39px; height: 39px; min-height: 39px; flex-basis: 39px; }
+  .immersive-shell .world-view-frame .mini-map-card { width: 97px; right: 7px; }
+  .immersive-shell .world-view-frame .scene-mission-card { width: min(190px, calc(100vw - 135px)); left: 7px; }
+  .immersive-shell .mobile-gesture-hint { display: none; }
+  .immersive-shell .mobile-bottom-nav button { width: 38px; height: 38px; min-width: 38px; min-height: 38px; }
+}
+@media (max-width: 780px) and (max-height: 600px) {
+  .immersive-shell .topbar { top: 5px; height: 45px; flex-basis: 45px; }
+  .immersive-shell .mobile-location-strip { top: 57px; }
+  .immersive-shell .world-live-clock { top: 98px; }
+  .immersive-shell .world-view-frame .mini-map-card { top: 57px; }
+  .immersive-shell .mobile-world-shortcuts { gap: 4px; }
+  .immersive-shell .mobile-world-shortcuts button { width: 37px; height: 37px; min-height: 37px; flex-basis: 37px; }
+  .immersive-shell .world-view-frame .scene-mission-card,
+  .immersive-shell .mobile-gesture-hint { bottom: calc(62px + env(safe-area-inset-bottom)); }
+  .immersive-shell .world-directory-scrim { padding-top: 62px; }
+}
+
+/* The same directory sheets remain usable when players toggle out of immersive mode. */
+.world-directory-scrim { position: fixed; z-index: 72; inset: 0; display: flex; align-items: center; justify-content: center; padding: 18px; background: rgba(4,10,7,.5); backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); }
+.world-directory-panel { width: min(760px, calc(100vw - 36px)); height: min(78dvh, 760px); min-height: min(260px, 68dvh); display: flex; flex-direction: column; overflow: hidden; border: 1px solid rgba(232,240,226,.16); border-radius: 18px; color: #e7eee3; background: rgba(15,23,18,.98); box-shadow: 0 26px 80px rgba(0,0,0,.56); }
+.world-directory-header { flex: 0 0 auto; display: flex; align-items: center; gap: 11px; min-height: 68px; padding: 12px 15px; border-bottom: 1px solid rgba(230,238,218,.1); }
+.world-directory-icon { width: 38px; height: 38px; flex: 0 0 38px; display: grid; place-items: center; border: 1px solid rgba(216,243,107,.24); border-radius: 12px; color: var(--lime); background: rgba(216,243,107,.08); }
+.world-directory-header > div { min-width: 0; flex: 1; }
+.world-directory-header small { color: #8f9d90; font: 7px var(--font-mono); letter-spacing: .12em; }
+.world-directory-header h2 { margin: 4px 0 0; color: #eff3e8; font: 600 21px/1.05 var(--font-display); letter-spacing: -.035em; }
+.world-directory-close { width: 36px; height: 36px; flex: 0 0 36px; display: grid; place-items: center; border: 1px solid rgba(230,238,218,.14); border-radius: 50%; color: #aab7aa; background: rgba(255,255,255,.04); cursor: pointer; }
+.world-directory-filters { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 6px; padding: 11px 14px 7px; }
+.world-directory-filters button { min-height: 29px; padding: 0 11px; border: 1px solid rgba(230,238,218,.12); border-radius: 999px; color: #9aa79a; background: rgba(255,255,255,.025); cursor: pointer; font: 700 7px var(--font-mono); letter-spacing: .055em; }
+.world-directory-filters button.active { border-color: rgba(216,243,107,.35); color: var(--lime); background: rgba(216,243,107,.08); }
+.world-directory-scroll { min-height: 0; flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; scrollbar-color: rgba(216,243,107,.24) transparent; scrollbar-width: thin; }
+.world-place-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); align-content: start; gap: 7px; padding: 6px 14px 15px; }
+.world-place-grid .venue-chip { min-height: 54px; padding: 8px; border-color: rgba(230,238,218,.1); border-radius: 8px; background: rgba(255,255,255,.025); }
+.world-place-grid .venue-chip strong { color: #e2eadf; font-size: 9px; }
+.world-place-grid .venue-chip small { color: #859287; font-size: 6px; }
+.world-directory-scroll .locality-explorer { margin: 0; padding: 14px; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.world-directory-scroll .locality-explorer-head { align-items: flex-start; flex-direction: column; gap: 10px; }
+.world-directory-scroll .locality-national-counts { width: 100%; }
+.world-directory-scroll .locality-national-counts span { flex: 1; }
+.world-directory-scroll .ward-chip-grid { max-height: none; }
+.world-party-directory-scroll .party-directory { margin: 0; padding: 14px; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+@media (max-width: 780px) {
+  .world-directory-scrim { align-items: flex-end; padding: 18px 8px calc(66px + env(safe-area-inset-bottom)); }
+  .world-directory-panel { width: 100%; height: min(74dvh, 700px); min-height: min(230px, 62dvh); border-radius: 17px; }
+  .world-directory-header { min-height: 61px; padding: 9px 11px; }
+  .world-directory-header h2 { font-size: 18px; }
+  .world-directory-icon { width: 34px; height: 34px; flex-basis: 34px; border-radius: 11px; }
+  .world-directory-close { width: 33px; height: 33px; flex-basis: 33px; }
+  .world-directory-filters { gap: 4px; padding: 8px 10px 5px; }
+  .world-directory-filters button { min-height: 27px; padding: 0 9px; font-size: 6px; }
+  .world-place-grid { grid-template-columns: 1fr; gap: 5px; padding: 5px 10px 10px; }
+  .world-place-grid .venue-chip { min-height: 47px; }
+  .world-directory-scroll .locality-explorer { padding: 11px 10px; }
+  .world-party-directory-scroll .party-directory { padding: 10px; }
+}

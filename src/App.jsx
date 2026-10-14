@@ -1174,10 +1174,10 @@ function App() {
       </aside>
     </div>
     <nav className="mobile-bottom-nav" aria-label="Mobile game navigation">
-      <button className={page === 'world' ? 'active' : ''} onClick={openMobileWorld} aria-current={page === 'world' ? 'page' : undefined}><Globe2 size={18} /><span>Home</span></button>
-      <button className={page === 'career' ? 'active' : ''} onClick={() => navigateMobile('career')} aria-current={page === 'career' ? 'page' : undefined}><TrendingUp size={18} /><span>Story</span></button>
-      <button className={page === 'atlas' ? 'active' : ''} onClick={() => navigateMobile('atlas')} aria-current={page === 'atlas' ? 'page' : undefined}><Map size={18} /><span>Atlas</span></button>
-      <button className={phoneOpen ? 'active' : ''} onClick={() => { if (phoneOpen) closeWorldPanels(); else openPhonePanel(); }} aria-pressed={phoneOpen}><Smartphone size={18} /><span>Phone</span></button>
+      <button className={page === 'world' ? 'active' : ''} onClick={openMobileWorld} aria-current={page === 'world' ? 'page' : undefined} aria-label="World home" title="World home"><Globe2 size={18} /><span>Home</span></button>
+      <button className={page === 'career' ? 'active' : ''} onClick={() => navigateMobile('career')} aria-current={page === 'career' ? 'page' : undefined} aria-label="Political story and career" title="Story"><TrendingUp size={18} /><span>Story</span></button>
+      <button className={page === 'atlas' ? 'active' : ''} onClick={() => navigateMobile('atlas')} aria-current={page === 'atlas' ? 'page' : undefined} aria-label="State atlas" title="Atlas"><Map size={18} /><span>Atlas</span></button>
+      <button className={phoneOpen ? 'active' : ''} onClick={() => { if (phoneOpen) closeWorldPanels(); else openPhonePanel(); }} aria-pressed={phoneOpen} aria-label="Phone, messages and meetings" title="Phone"><Smartphone size={18} /><span>Phone</span></button>
     </nav>
     {toast && <div className="toast-pop"><span className="toast-symbol"><Check size={14} /></span>{toast}</div>}
     {activeMeeting && meetingPhase === 'discussion' && <MeetingRoom meeting={activeMeeting} messages={meetingMessages} participants={meetingParticipants} votes={meetingVotes} draft={meetingDraft} setDraft={setMeetingDraft} replyTo={meetingReplyTo} setReplyTo={setMeetingReplyTo} onSend={submitMeetingMessage} onVote={castMeetingVote} onCloseMeeting={closeMeeting} onLeave={dismissMeeting} onMinimize={minimizeMeetingDiscussion} />}
@@ -1208,7 +1208,7 @@ function StatBar({ label, value, color, icon: Icon }) {
   return <div className={`stat-row ${color}`}><div className="stat-row-label"><span><Icon size={13} />{label}</span><b>{value}<small>%</small></b></div><div className="stat-track"><span style={{ width: `${value}%` }} /></div></div>;
 }
 
-function LocalityExplorer({ stateInfo, stateWorldProfile, data, loading, error, lgaName, selectedWardKey, onSelectLga, onSelectWard }) {
+function LocalityExplorer({ stateInfo, stateWorldProfile, data, loading, error, lgaName, selectedWardKey, onSelectLga, onSelectWard, rootId = 'locality-explorer' }) {
   const [wardQuery, setWardQuery] = useState('');
   const lga = data?.lgas?.find((item) => item.name === lgaName) || null;
   const wards = lga?.wards || [];
@@ -1216,7 +1216,7 @@ function LocalityExplorer({ stateInfo, stateWorldProfile, data, loading, error, 
   const filteredWards = wards.filter((item) => !wardQuery.trim() || item.name.toLowerCase().includes(wardQuery.trim().toLowerCase()));
   useEffect(() => setWardQuery(''), [lgaName]);
 
-  return <section id="locality-explorer" className="locality-explorer" aria-label="State, local government and ward explorer">
+  return <section id={rootId} className="locality-explorer" aria-label="State, local government and ward explorer">
     <div className="locality-explorer-head">
       <div><div className="eyebrow"><span className="eyebrow-line" />STATE → LGA → WARD</div><h2>Choose a local ground</h2><p>{stateInfo.name} · {stateWorldProfile.biome}. Select a local government and a named electoral ward to regenerate the 3D neighbourhood.</p></div>
       <div className="locality-national-counts"><span><b>37</b> STATES / FCT</span><span><b>774</b> LGAs</span><span><b>8,809</b> WARD RECORDS</span></div>
@@ -1278,6 +1278,7 @@ function PartyDirectory({ parties, branches, activeParty, stateInfo, locality, o
 function WorldPage({ stateInfo, profile, playerId, meetingSlot, meetingParticipants, meetingPhase, onMeetingArrival, onEnterMeeting, stateWorldProfile, venue, venueName, focusRequest, locationKey, locality, localityData, localityLoading, localityError, selectedLgaName, selectedWardKey, onSelectLga, onSelectWard, onSelectVenue, remotePlayers, onMove, playerColor, playerAppearance, onlineCount, networkStatus, onTravel, daysToFederal, daysToState, storyDay, worldMinute, activeMeeting, meetingMessages, currentParty, institutionRole, isInstitutional, chapter, missionProgress, onOpenCareer, onOpenPhone, onNavigate, onOpenAvatar, onExploreSideStory, onJoinPolitical }) {
   const [venueFilter, setVenueFilter] = useState('ALL');
   const [worldView, setWorldView] = useState('story');
+  const [worldPanel, setWorldPanel] = useState(null);
   const [interiorInfo, setInteriorInfo] = useState(null);
   const partyOfficeActionRef = useRef(null);
   const exitInteriorActionRef = useRef(null);
@@ -1313,6 +1314,12 @@ function WorldPage({ stateInfo, profile, playerId, meetingSlot, meetingParticipa
   const travellingMeetingPlayers = (meetingParticipants || []).filter((person) => person.meetingStatus === 'en-route').length;
   const interestedMeetingPlayers = Math.max((meetingParticipants || []).length, Number(activeMeeting?.interested || activeMeeting?.participants) || 0);
   useEffect(() => { if (activeMeeting?.id && ['en-route', 'at-venue', 'discussion'].includes(meetingPhase)) setWorldView('story'); }, [activeMeeting?.id, meetingPhase]);
+  useEffect(() => {
+    if (!worldPanel) return undefined;
+    const closeOnEscape = (event) => { if (event.key === 'Escape') setWorldPanel(null); };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [worldPanel]);
   return <div className="world-page">
     <div className="mobile-world-status" aria-label="Live story and player status">
       <div className="mobile-status-item mobile-status-clock"><Clock3 size={14} /><span><b>{worldClock} WAT</b><small>{dateLabel(storyDay)} · {timePhase}</small></span></div>
@@ -1321,16 +1328,20 @@ function WorldPage({ stateInfo, profile, playerId, meetingSlot, meetingParticipa
       <div className="mobile-status-item mobile-status-network"><Users size={14} /><span><b>{networkStatus === 'online' ? `${onlineCount || 1} PLAYERS` : 'LOCAL PLAY'}</b><small>{networkStatus === 'online' ? 'WORLD LINK ACTIVE' : 'GUEST PREVIEW'}</small></span></div>
     </div>
     <div className="mobile-world-shortcuts" aria-label="Quick world actions">
-      <button type="button" className={worldView === 'story' ? 'active' : ''} onClick={() => setWorldView('story')}><Move size={14} /><span>WALK</span></button>
-      <button type="button" className={worldView === 'map' ? 'active' : ''} onClick={() => setWorldView('map')}><Map size={14} /><span>LIVE MAP</span></button>
-      <button type="button" onClick={() => document.getElementById('mobile-world-places')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}><Landmark size={14} /><span>PLACES</span></button>
-      <button type="button" onClick={() => onNavigate('civic')}><Scale size={14} /><span>CIVIC</span></button>
-      <button type="button" onClick={onOpenPhone}><Smartphone size={14} /><span>PHONE</span></button>
+      <button type="button" className={worldView === 'story' ? 'active' : ''} onClick={() => setWorldView('story')} aria-label="Return to 3D story view" title="3D Story"><Move size={17} /><span>WALK</span></button>
+      <button type="button" className={worldView === 'map' ? 'active' : ''} onClick={() => setWorldView('map')} aria-label="Open live map" title="Live map"><Map size={17} /><span>LIVE MAP</span></button>
+      <button type="button" onClick={() => setWorldPanel('places')} aria-label="Browse places in the world" title="Places"><Landmark size={17} /><span>PLACES</span></button>
+      {!institutionRole && <button type="button" onClick={() => setWorldPanel('parties')} aria-label="Open registered party directory" title="INEC party directory"><Flag size={17} /><span>PARTIES</span></button>}
+      <button type="button" onClick={() => onNavigate('civic')} aria-label="Open civic research" title="Civic desk"><Scale size={17} /><span>CIVIC</span></button>
+      <button type="button" onClick={onOpenPhone} aria-label="Open phone, chat and meetings" title="Phone and meetings"><Smartphone size={17} /><span>PHONE</span></button>
     </div>
     <div className="mobile-location-strip">
       <div className="mobile-location-name"><MapPin size={16} /><span><b>{locality?.ward || stateInfo.capital}</b><small>{locality ? `${locality.lga} LGA · ` : ''}{stateInfo.name}</small></span></div>
-      <button type="button" onClick={() => onNavigate('atlas')}><Map size={13} /><span>ATLAS</span></button>
-      <button type="button" onClick={() => document.querySelector('.locality-explorer')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}><Users size={13} /><span>WARD LIST</span></button>
+      <button type="button" onClick={() => onNavigate('atlas')} aria-label="Open state atlas" title="State atlas"><Map size={13} /><span>ATLAS</span></button>
+      <button type="button" onClick={() => setWorldPanel('wards')} aria-label="Browse ward directory" title="Ward directory"><Users size={13} /><span>WARD LIST</span></button>
+    </div>
+    <div className="world-live-clock" aria-label={`World time ${worldClock} WAT, ${timePhase}; ${networkStatus === 'online' ? `${onlineCount || 1} players online` : 'local play'}`}>
+      <span className="world-clock-icon"><Clock3 size={13} /></span><span className="world-clock-copy"><strong>{worldClock} WAT</strong><small>{dateLabel(storyDay)} · {timePhase}</small></span><i className={`network-led ${networkStatus}`} /><span className="world-clock-network">{networkStatus === 'online' ? `${onlineCount || 1} IN WORLD` : 'LOCAL PLAY'}</span>
     </div>
     <div className="mobile-world-ticker">
       <span className={activeMeeting ? 'ticker-live meeting-live' : 'ticker-live'}><i />{activeMeeting ? activeMeeting.status === 'closed' ? 'MEETING RECORD' : ['at-venue', 'discussion'].includes(meetingPhase) ? 'AT VENUE' : 'MEETING · EN ROUTE' : isInstitutional ? 'STORY UPDATE' : 'MISSION'}</span>
@@ -1365,6 +1376,19 @@ function WorldPage({ stateInfo, profile, playerId, meetingSlot, meetingParticipa
       </div>
       </>}
     </div>
+    {worldPanel && <div className="world-directory-scrim" onClick={() => setWorldPanel(null)}>
+      <section className={`world-directory-panel ${worldPanel === 'wards' ? 'world-ward-directory-panel' : 'world-places-directory-panel'}`} role="dialog" aria-modal="true" aria-labelledby="world-directory-title" onClick={(event) => event.stopPropagation()}>
+        <header className="world-directory-header">
+          <span className="world-directory-icon">{worldPanel === 'wards' ? <Users size={18} /> : worldPanel === 'parties' ? <Flag size={18} /> : <Landmark size={18} />}</span>
+          <div><small>{worldPanel === 'parties' ? 'INEC REGISTER · LOCAL OFFICES SIMULATED' : `WORLD DIRECTORY · ${stateInfo.name.toUpperCase()}`}</small><h2 id="world-directory-title">{worldPanel === 'wards' ? 'Choose a ward' : worldPanel === 'parties' ? 'Registered parties' : 'Places to visit'}</h2></div>
+          <button type="button" className="world-directory-close" onClick={() => setWorldPanel(null)} aria-label="Close directory" title="Close"><X size={18} /></button>
+        </header>
+        {worldPanel === 'places' ? <>
+          <div className="world-directory-filters" aria-label="Filter places">{venueTypes.map((type) => <button type="button" key={type} className={venueFilter === type ? 'active' : ''} onClick={() => setVenueFilter(type)}>{type}</button>)}</div>
+          <div className="world-directory-scroll world-place-grid">{visibleVenues.map((place) => <button key={place.id} type="button" className={`venue-chip ${venue.id === place.id ? 'selected' : ''}`} onClick={() => { onSelectVenue(place.id); setWorldPanel(null); }} aria-label={`Travel to ${place.label} in the 3D city`} title={`Travel to ${place.label}`}><span className={`venue-icon venue-${place.type}`}>{venueIcon(place.type)}</span><span><strong>{place.label}</strong><small>{place.short} · VISIT IN 3D</small></span><ArrowRight size={15} /></button>)}</div>
+        </> : worldPanel === 'wards' ? <div className="world-directory-scroll world-ward-directory-scroll"><LocalityExplorer rootId="world-ward-directory" stateInfo={stateInfo} stateWorldProfile={stateWorldProfile} data={localityData} loading={localityLoading} error={localityError} lgaName={selectedLgaName} selectedWardKey={selectedWardKey} onSelectLga={onSelectLga} onSelectWard={(key) => { onSelectWard(key); setWorldPanel(null); }} /></div> : <div className="world-directory-scroll world-party-directory-scroll"><PartyDirectory parties={PARTY_OPTIONS} branches={localPartyBranches} activeParty={currentParty} stateInfo={stateInfo} locality={locality} onEnter={(partyId) => { setWorldPanel(null); enterPartyOffice(partyId); }} /></div>}
+      </section>
+    </div>}
     <div className="mobile-scroll-note"><span>SCROLL FOR PLACES, MISSIONS & WARD DIRECTORY</span><ChevronDown size={12} /></div>
     <div className="world-lower-row"><div id="mobile-world-places" className="location-card-grid"><div className="location-filter-row"><div><span className="eyebrow-line" />PLACES TO VISIT <b>{visibleVenues.length}</b></div><div className="location-filter">{venueTypes.map((type) => <button key={type} className={venueFilter === type ? 'active' : ''} onClick={() => setVenueFilter(type)}>{type}</button>)}</div></div><div className="venue-cards">{visibleVenues.map((place) => <button key={place.id} className={`venue-chip ${venue.id === place.id ? 'selected' : ''}`} onClick={() => onSelectVenue(place.id)} aria-label={`Travel to ${place.label} in the 3D city`} title={`Travel to ${place.label}`}><span className={`venue-icon venue-${place.type}`}>{venueIcon(place.type)}</span><span><strong>{place.label}</strong><small>{place.short} · VISIT IN 3D</small></span><ArrowRight size={13} /></button>)}</div></div>
       <div className="world-feed-card"><div className="feed-card-head"><span><Activity size={14} />DISTRICT PULSE</span><button onClick={() => onTravel('Lagos')}>RETURN TO START <ArrowRight size={12} /></button></div><div className="district-pulse-grid"><div><strong>37</strong><small>CAPITALS</small></div><div><strong>06</strong><small>GEO-ZONES</small></div><div><strong>{onlineCount || 1}</strong><small>PLAYERS</small></div></div><p>Regional biomes, roadside compounds, market stalls, civic landmarks and familiar Nigerian vehicles vary by state and locality. Multiplayer presence is a small-room prototype.</p></div></div>
