@@ -2482,6 +2482,17 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     const point = meetingArrivalPoint(meetingId, venueId, playerId, slot);
     return findNearestFreePoint(point.x, point.z, 0.5, worldColliders, worldBounds, 3.25) || point;
   };
+  const meetingParticipantIsAtSeat = (actor, activeMeeting) => {
+    if (!activeMeeting?.id || actor.userData.meetingId !== activeMeeting.id || !['at-venue', 'in-session'].includes(actor.userData.meetingStatus)) return false;
+    const meetingSlot = Number.isInteger(Number(actor.userData.meetingSlot)) ? Number(actor.userData.meetingSlot) : null;
+    const seat = safeMeetingPoint(
+      activeMeeting.id,
+      activeMeeting.location?.venueId || 'square',
+      actor.userData.playerId || 'local-player',
+      meetingSlot,
+    );
+    return Math.hypot(actor.position.x - seat.x, actor.position.z - seat.z) < 0.82;
+  };
   const meetingStage = new THREE.Group();
   const meetingStageRing = new THREE.Mesh(new THREE.RingGeometry(5.06, 5.16, 48), new THREE.MeshBasicMaterial({ color: '#f0c777', transparent: true, opacity: 0.38, side: THREE.DoubleSide }));
   meetingStageRing.rotation.x = -Math.PI / 2;
@@ -3303,7 +3314,8 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
       meetingContextRef.current?.onMeetingArrival?.(activeMeetingRoute.meetingId);
     }
     const walkingNow = playerMoved;
-    const playerSeatedAtMeeting = Boolean(currentMeeting?.id && player.userData.meetingId === currentMeeting.id && ['at-venue', 'in-session'].includes(player.userData.meetingStatus));
+    // Meeting attendance can outlive a movement update; only use the seated pose while physically at that attendee's chair.
+    const playerSeatedAtMeeting = Boolean(!walkingNow && !isMoving && meetingParticipantIsAtSeat(player, currentMeeting));
     const playerSeatedInOffice = Boolean(interiorActive && seatedInteriorSeatId);
     const playerSeated = playerSeatedAtMeeting || playerSeatedInOffice;
     const playerIsSpeaking = speakingAvatar === player && elapsed < speakingUntil;
@@ -3334,10 +3346,10 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     }
     updateRemotePlayers(remoteRef.current);
     for (const avatar of remoteSprites.values()) {
-      const avatarAtMeeting = Boolean(currentMeeting?.id && avatar.userData.meetingId === currentMeeting.id && ['at-venue', 'in-session'].includes(avatar.userData.meetingStatus));
+      const avatarSeatedAtMeeting = !avatar.userData.walking && meetingParticipantIsAtSeat(avatar, currentMeeting);
       const avatarIsSpeaking = speakingAvatar === avatar && elapsed < speakingUntil;
       avatar.userData.legs?.forEach((leg, index) => {
-        leg.rotation.x = avatar.userData.walking ? Math.sin(elapsed * 9.5 + index * Math.PI) * 0.44 : THREE.MathUtils.damp(leg.rotation.x, avatarAtMeeting ? -1.12 : 0, 8, delta);
+        leg.rotation.x = avatar.userData.walking ? Math.sin(elapsed * 9.5 + index * Math.PI) * 0.44 : THREE.MathUtils.damp(leg.rotation.x, avatarSeatedAtMeeting ? -1.12 : 0, 8, delta);
       });
       avatar.userData.arms?.forEach((arm, index) => {
         arm.rotation.x = avatar.userData.walking ? Math.sin(elapsed * 9.5 + index * Math.PI + Math.PI) * 0.22 : THREE.MathUtils.damp(arm.rotation.x, 0, 8, delta);
