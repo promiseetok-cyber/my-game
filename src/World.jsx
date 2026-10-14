@@ -2366,13 +2366,17 @@ function buildStadiumInterior(info, palette) {
   }
 
   for (const sign of [-1, 1]) {
-    const sideAd = box(44, 0.72, 0.22, sign > 0 ? '#20513c' : '#244c60', { castShadow: false });
-    sideAd.position.set(0, 0.56, sign * 15.0);
-    group.add(sideAd);
-    const sideAdText = labelSprite(sign > 0 ? 'UNITY • SPORT • COMMUNITY' : 'GAME DAY • UNITY STADIUM', accent);
-    sideAdText.position.set(0, 0.95, sign * 14.82);
-    sideAdText.scale.set(7.8, 0.9, 1);
-    group.add(sideAdText);
+    const adCenters = sign > 0 ? [-13, 13] : [0];
+    for (const centerX of adCenters) {
+      const adWidth = sign > 0 ? 18 : 44;
+      const sideAd = box(adWidth, 0.72, 0.22, sign > 0 ? '#20513c' : '#244c60', { castShadow: false });
+      sideAd.position.set(centerX, 0.56, sign * 15.0);
+      group.add(sideAd);
+      const sideAdText = labelSprite(sign > 0 ? 'UNITY • SPORT • COMMUNITY' : 'GAME DAY • UNITY STADIUM', accent);
+      sideAdText.position.set(centerX, 0.95, sign * 14.82);
+      sideAdText.scale.set(sign > 0 ? 5.0 : 7.8, 0.9, 1);
+      group.add(sideAdText);
+    }
   }
 
   const wallColor = '#626b65';
@@ -2389,7 +2393,8 @@ function buildStadiumInterior(info, palette) {
     const endCanopy = box(5.4, 0.48, 46, '#46524c', { castShadow: false, roughness: 0.72, metalness: 0.12 });
     endCanopy.position.set(sign * 26.9, 13.45, 0);
     group.add(endCanopy);
-    for (const x of [-21, 0, 21]) {
+    const supportXs = sign > 0 ? [-21, 21] : [-21, 0, 21];
+    for (const x of supportXs) {
       const support = box(0.42, 12.2, 0.42, '#5b665f', { castShadow: false, metalness: 0.17 });
       support.position.set(x, 6.25, sign * 26.0);
       group.add(support);
@@ -2460,6 +2465,11 @@ function buildStadiumInterior(info, palette) {
     { x: 0, z: -29.0, halfX: 30.0, halfZ: 0.36 },
     { x: -16.5, z: 29.0, halfX: 13.0, halfZ: 0.36 },
     { x: 16.5, z: 29.0, halfX: 13.0, halfZ: 0.36 },
+    { x: -2.25, z: 26.1, halfX: 0.15, halfZ: 2.8 },
+    { x: 2.25, z: 26.1, halfX: 0.15, halfZ: 2.8 },
+    { x: -13, z: 15.0, halfX: 9.0, halfZ: 0.14 },
+    { x: 13, z: 15.0, halfX: 9.0, halfZ: 0.14 },
+    { x: 0, z: -15.0, halfX: 22.0, halfZ: 0.14 },
   ];
   return group;
 }
