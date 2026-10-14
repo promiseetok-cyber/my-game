@@ -312,6 +312,7 @@ function App() {
   const meetingDestinationRef = useRef(null);
   const resolveCampaignMeetingRef = useRef(null);
   const resolvedMeetingsRef = useRef(new Set());
+  const executiveAudienceRequestsRef = useRef(new Set());
   const cloudRestoreAttemptedRef = useRef(false);
   const guestBackupSavedRef = useRef(false);
   activeMeetingRef.current = activeMeeting;
@@ -594,6 +595,27 @@ function App() {
     setFeed((items) => [{ id: `${Date.now()}-${Math.random()}`, title, text, type, time: `DAY ${String(storyDay).padStart(2, '0')}` }, ...items].slice(0, 8));
   };
   const showToast = (message) => setToast(message);
+  const recordExecutiveAudienceRequest = ({ executive, officeTitle, subject }) => {
+    if (!executive?.id || !String(subject || '').trim()) return;
+    const cleanSubject = String(subject).trim().slice(0, 260);
+    const requestKey = `${selectedStateName}/${currentLga?.name || ''}/${currentWard?.name || ''}/${executive.id}`;
+    const alreadyRecorded = executiveAudienceRequestsRef.current.has(requestKey);
+    if (alreadyRecorded) {
+      addFeed(`Follow-up with ${executive.name}`, `${executive.position} · ${officeTitle}. You continued the fictional, typed audience on: “${cleanSubject}”. No additional trust or influence was awarded for a repeat visit.`, 'executive-meeting');
+      showToast(`Follow-up audience recorded for ${executive.name}`);
+      return;
+    }
+    executiveAudienceRequestsRef.current.add(requestKey);
+    setProfile((current) => ({
+      ...current,
+      trust: clamp(current.trust + 2),
+      influence: clamp(current.influence + 1),
+      energy: Math.max(0, current.energy - 2),
+    }));
+    setStoryDay((day) => day + 1);
+    addFeed(`Audience with ${executive.name}`, `${executive.position} · ${officeTitle}. You requested to discuss: “${cleanSubject}”. This was a fictional branch-office roleplay; no real-world appointment was made.`, 'executive-meeting');
+    showToast(`Fictional audience request logged for ${executive.name} · +2 trust`);
+  };
   const saveAvatarAppearance = (appearance) => {
     setProfile((current) => ({ ...current, appearance: normalizeAvatarAppearance(appearance) }));
     setModal(null);
@@ -1117,6 +1139,7 @@ function App() {
 
   const resetGame = () => {
     try { window.localStorage.removeItem(SAVE_KEY); } catch { /* ignore */ }
+    executiveAudienceRequestsRef.current.clear();
     setProfile({ ...defaultProfile }); setStageIndex(0); setMissionProgress(0); setStoryDay(1); setSideStoriesSeen([]); setSelectedStateName('Lagos');
     setDraftAlias(''); setDraftParty(PARTY_OPTIONS[0].name); setDraftMode('political'); setDraftInstitution('election-admin'); setDraftState('Lagos'); setOnboardingOpen(true); setModal(null);
   };
@@ -1126,7 +1149,7 @@ function App() {
     if (page === 'offices') return <OfficesPage />;
     if (page === 'civic') return <CivicPage />;
     if (page === 'atlas') return <AtlasPage query={atlasQuery} setQuery={setAtlasQuery} zone={selectedZone} setZone={setSelectedZone} selected={selectedStateName} onTravel={travelToState} />;
-    return <WorldPage stateInfo={stateInfo} profile={profile} playerId={activeMeeting?.local ? 'local-player' : socketRef.current?.id || 'local-player'} stateWorldProfile={stateWorldProfile} venue={activeVenue} venueName={activeVenueName} focusRequest={venueFocusRequest} locationKey={sceneLocationKey} locality={sceneLocality} localityData={stateLocalities?.state === stateInfo.name ? stateLocalities : null} localityLoading={localityLoading || (!localityError && stateLocalities?.state !== stateInfo.name)} localityError={localityError} selectedLgaName={selectedLgaName} selectedWardKey={selectedWardKey} onSelectLga={selectLga} onSelectWard={selectWardByKey} onSelectVenue={goToVenue} remotePlayers={remotePlayers} onMove={sendMove} playerColor={playerColor} playerAppearance={playerAppearance} onlineCount={onlineCount} networkStatus={networkStatus} onTravel={travelToState} daysToFederal={daysToFederal} daysToState={daysToState} storyDay={storyDay} activeMeeting={activeMeeting} meetingPhase={meetingPhase} meetingParticipants={meetingParticipants} meetingSlot={meetingParticipants.find((person) => person.id === socketRef.current?.id)?.meetingSlot ?? (activeMeeting?.local ? 0 : null)} onMeetingArrival={markMeetingArrived} onEnterMeeting={enterMeetingDiscussion} meetingMessages={meetingMessages} currentParty={currentParty} institutionRole={institutionRole} isInstitutional={isInstitutional} chapter={currentChapter} missionProgress={missionProgress} worldMinute={worldMinute} onOpenCareer={() => setPage('career')} onOpenPhone={openPhonePanel} onNavigate={navigateMobile} onOpenAvatar={() => setModal({ type: 'avatar-customize' })} onExploreSideStory={openSideStory} onJoinPolitical={requestPoliticalSwitch} />;
+    return <WorldPage stateInfo={stateInfo} profile={profile} playerId={activeMeeting?.local ? 'local-player' : socketRef.current?.id || 'local-player'} stateWorldProfile={stateWorldProfile} venue={activeVenue} venueName={activeVenueName} focusRequest={venueFocusRequest} locationKey={sceneLocationKey} locality={sceneLocality} localityData={stateLocalities?.state === stateInfo.name ? stateLocalities : null} localityLoading={localityLoading || (!localityError && stateLocalities?.state !== stateInfo.name)} localityError={localityError} selectedLgaName={selectedLgaName} selectedWardKey={selectedWardKey} onSelectLga={selectLga} onSelectWard={selectWardByKey} onSelectVenue={goToVenue} remotePlayers={remotePlayers} onMove={sendMove} playerColor={playerColor} playerAppearance={playerAppearance} onlineCount={onlineCount} networkStatus={networkStatus} onTravel={travelToState} daysToFederal={daysToFederal} daysToState={daysToState} storyDay={storyDay} activeMeeting={activeMeeting} meetingPhase={meetingPhase} meetingParticipants={meetingParticipants} meetingSlot={meetingParticipants.find((person) => person.id === socketRef.current?.id)?.meetingSlot ?? (activeMeeting?.local ? 0 : null)} onMeetingArrival={markMeetingArrived} onEnterMeeting={enterMeetingDiscussion} meetingMessages={meetingMessages} currentParty={currentParty} institutionRole={institutionRole} isInstitutional={isInstitutional} chapter={currentChapter} missionProgress={missionProgress} worldMinute={worldMinute} onOpenCareer={() => setPage('career')} onOpenPhone={openPhonePanel} onNavigate={navigateMobile} onOpenAvatar={() => setModal({ type: 'avatar-customize' })} onExploreSideStory={openSideStory} onJoinPolitical={requestPoliticalSwitch} onRequestExecutiveAudience={recordExecutiveAudienceRequest} />;
   };
 
   return <div className={`app-shell ${immersiveActive ? 'immersive-shell' : ''} ${navigationOpen ? 'nav-open' : ''} ${phoneOpen ? 'phone-open' : ''}`}>
@@ -1275,17 +1298,89 @@ function PartyDirectory({ parties, branches, activeParty, stateInfo, locality, o
   </section>;
 }
 
-function WorldPage({ stateInfo, profile, playerId, meetingSlot, meetingParticipants, meetingPhase, onMeetingArrival, onEnterMeeting, stateWorldProfile, venue, venueName, focusRequest, locationKey, locality, localityData, localityLoading, localityError, selectedLgaName, selectedWardKey, onSelectLga, onSelectWard, onSelectVenue, remotePlayers, onMove, playerColor, playerAppearance, onlineCount, networkStatus, onTravel, daysToFederal, daysToState, storyDay, worldMinute, activeMeeting, meetingMessages, currentParty, institutionRole, isInstitutional, chapter, missionProgress, onOpenCareer, onOpenPhone, onNavigate, onOpenAvatar, onExploreSideStory, onJoinPolitical }) {
+function WorldPage({ stateInfo, profile, playerId, meetingSlot, meetingParticipants, meetingPhase, onMeetingArrival, onEnterMeeting, stateWorldProfile, venue, venueName, focusRequest, locationKey, locality, localityData, localityLoading, localityError, selectedLgaName, selectedWardKey, onSelectLga, onSelectWard, onSelectVenue, remotePlayers, onMove, playerColor, playerAppearance, onlineCount, networkStatus, onTravel, daysToFederal, daysToState, storyDay, worldMinute, activeMeeting, meetingMessages, currentParty, institutionRole, isInstitutional, chapter, missionProgress, onOpenCareer, onOpenPhone, onNavigate, onOpenAvatar, onExploreSideStory, onJoinPolitical, onRequestExecutiveAudience }) {
   const [venueFilter, setVenueFilter] = useState('ALL');
   const [worldView, setWorldView] = useState('story');
   const [worldPanel, setWorldPanel] = useState(null);
   const [interiorInfo, setInteriorInfo] = useState(null);
+  const [interiorActionStatus, setInteriorActionStatus] = useState('');
+  const [isSeatedInOffice, setIsSeatedInOffice] = useState(false);
+  const [executiveAudience, setExecutiveAudience] = useState(null);
+  const [audienceDraft, setAudienceDraft] = useState('');
   const partyOfficeActionRef = useRef(null);
   const exitInteriorActionRef = useRef(null);
+  const executiveFocusActionRef = useRef(null);
   const minimapMarkerRef = useRef(null);
   const minimapUpdateAtRef = useRef(0);
   const localPartyBranches = createLocalPartyBranches(PARTY_OPTIONS, { state: stateInfo.name, lga: locality?.lga || stateInfo.capital, ward: locality?.ward || 'Capital District', reservedNames: NPCS.map((person) => person.name) });
   const localityVisual = createLocalityVisualProfile(stateInfo, stateWorldProfile, locality);
+  const handleInteriorChange = (nextInterior) => {
+    setInteriorInfo(nextInterior);
+    if (!nextInterior) {
+      setInteriorActionStatus('');
+      setIsSeatedInOffice(false);
+      setExecutiveAudience(null);
+      setAudienceDraft('');
+    }
+  };
+  const handleInteriorAction = (action = {}) => {
+    if (action.type === 'seated') {
+      setIsSeatedInOffice(true);
+      setInteriorActionStatus(`Seated · ${action.seatLabel || 'visitor chair'}`);
+    } else if (action.type === 'stood-up') {
+      setIsSeatedInOffice(false);
+      setInteriorActionStatus('Standing · tap a chair to sit');
+    } else if (action.type === 'executive-ready' && action.executive?.id) {
+      setInteriorActionStatus(`At ${action.executive.name}’s desk`);
+      setExecutiveAudience({ phase: 'request', executive: action.executive, messages: [] });
+      setAudienceDraft('');
+    }
+  };
+  const executiveReply = (executive, body, turn = 0) => {
+    const text = String(body || '').toLowerCase();
+    const topic = /road|water|drain|power|electric|school|clinic|health|security|market|transport/.test(text)
+      ? 'Let us make the next step specific: which street or service point should the ward office review first?'
+      : /budget|money|fund|account|transparent|record|report/.test(text)
+        ? 'A clear record matters. Bring the figures and the people affected; our fictional team can set a public follow-up.'
+        : /party|policy|campaign|candidate|election|vote/.test(text)
+          ? 'Keep the discussion open to different residents. The branch should explain its position and invite practical alternatives.'
+          : 'Thank you for raising that. Let us note who is affected, what evidence is available, and one realistic next action.';
+    return `${turn % 2 ? 'I appreciate the follow-up. ' : ''}${topic}`;
+  };
+  const submitExecutiveAudienceRequest = (event) => {
+    event?.preventDefault?.();
+    const executive = executiveAudience?.executive;
+    const subject = audienceDraft.trim().slice(0, 260);
+    if (!executive || !subject) return;
+    onRequestExecutiveAudience?.({ executive, officeTitle: interiorInfo?.title || 'Simulated ward office', subject });
+    const response = `${executive.name}: Your request is accepted for a brief, fictional in-office audience. ${executiveReply(executive, subject)}`;
+    setExecutiveAudience({ phase: 'conversation', executive, subject, messages: [
+      { id: `player-${Date.now()}`, speaker: 'YOU', body: subject },
+      { id: `npc-${Date.now() + 1}`, speaker: executive.name, body: response },
+    ] });
+    setAudienceDraft('');
+  };
+  const sendExecutiveAudienceMessage = (event) => {
+    event?.preventDefault?.();
+    const body = audienceDraft.trim().slice(0, 260);
+    if (!body || !executiveAudience?.executive) return;
+    const executive = executiveAudience.executive;
+    const turn = executiveAudience.messages.filter((message) => message.speaker === 'YOU').length;
+    const timestamp = Date.now();
+    setExecutiveAudience((current) => current ? ({
+      ...current,
+      messages: [...current.messages,
+        { id: `player-${timestamp}`, speaker: 'YOU', body },
+        { id: `npc-${timestamp + 1}`, speaker: executive.name, body: executiveReply(executive, body, turn) },
+      ].slice(-14),
+    }) : current);
+    setAudienceDraft('');
+  };
+  const endExecutiveAudience = () => {
+    const name = executiveAudience?.executive?.name;
+    setExecutiveAudience(null);
+    setInteriorActionStatus(name ? `Audience ended · ${name}` : 'Standing · tap a chair to sit');
+  };
   const enterPartyOffice = (partyId) => {
     if (worldView === 'story') partyOfficeActionRef.current?.(partyId);
     else {
@@ -1352,14 +1447,15 @@ function WorldPage({ stateInfo, profile, playerId, meetingSlot, meetingParticipa
     <div className="world-topline"><div className="world-live"><span className="pulse-dot" />LOCAL WORLD <b>{(locality?.ward || stateInfo.capital).toUpperCase()}</b><span className="line-sep" />{stateInfo.zone.toUpperCase()}</div><div className={`world-date world-time-${timePhase.toLowerCase().replace(' ', '-')}`}><Clock3 size={13} />{dateLabel(storyDay)} <span>·</span> {worldClock} WAT <span className="weather-dot" /> {timePhase}</div><div className="world-connect"><span className={`network-led ${networkStatus}`} />{networkStatus === 'online' ? `${onlineCount || 1} PLAYERS` : 'LOCAL INSTANCE'}</div><div className="world-mode-tabs" role="tablist" aria-label="Choose map view"><button type="button" role="tab" aria-selected={worldView === 'story'} className={worldView === 'story' ? 'active' : ''} onClick={() => setWorldView('story')}><Move size={12} />3D STORY</button><button type="button" role="tab" aria-selected={worldView === 'map'} className={worldView === 'map' ? 'active' : ''} onClick={() => setWorldView('map')}><Map size={12} />LIVE MAP</button></div></div>
     <div className={`world-view-frame ${worldView === 'map' ? 'map-mode' : ''} ${interiorInfo ? 'inside-interior' : ''}`}>
       {worldView === 'map' ? <Suspense fallback={<div className="maplibre-load-shell"><span className="maplibre-spinner" />Loading MapLibre…</div>}><MapLibreWorld stateInfo={stateInfo} locality={locality} locationKey={locationKey} /></Suspense> : <>
-      <World state={stateInfo.name} locality={locality} locationKey={locationKey} selectedVenueId={venue.id} focusRequest={focusRequest} onVenueSelect={onSelectVenue} onMove={handlePlayerMove} remotePlayers={remotePlayers} playerColor={playerColor} playerAppearance={playerAppearance} worldMinute={safeMinute} meeting={activeMeeting} meetingMessages={meetingMessages} meetingParticipants={meetingParticipants} meetingPhase={meetingPhase} meetingSlot={meetingSlot} playerId={playerId} onMeetingArrival={onMeetingArrival} partyOfficeActionRef={partyOfficeActionRef} exitInteriorActionRef={exitInteriorActionRef} onInteriorChange={setInteriorInfo} /><div className="scene-vignette" />
+      <World state={stateInfo.name} locality={locality} locationKey={locationKey} selectedVenueId={venue.id} focusRequest={focusRequest} onVenueSelect={onSelectVenue} onMove={handlePlayerMove} remotePlayers={remotePlayers} playerColor={playerColor} playerAppearance={playerAppearance} worldMinute={safeMinute} meeting={activeMeeting} meetingMessages={meetingMessages} meetingParticipants={meetingParticipants} meetingPhase={meetingPhase} meetingSlot={meetingSlot} playerId={playerId} onMeetingArrival={onMeetingArrival} partyOfficeActionRef={partyOfficeActionRef} exitInteriorActionRef={exitInteriorActionRef} executiveFocusRef={executiveFocusActionRef} onInteriorChange={handleInteriorChange} onInteriorAction={handleInteriorAction} /><div className="scene-vignette" />
       <div className={`scene-mission-card ${isInstitutional ? 'institutional-mission-hud' : ''}`}>
         <div className="scene-mission-head"><span><i />{activeMeeting ? activeMeeting.status === 'closed' ? 'MEETING RECORD' : ['at-venue', 'discussion'].includes(meetingPhase) ? 'GATHERED AT VENUE' : 'PLAYERS ON THE WAY' : isInstitutional ? 'FICTIONAL ROLEPLAY' : 'ACTIVE MISSION'}</span><b>{activeMeeting ? `${arrivedMeetingPlayers}/${interestedMeetingPlayers} HERE` : isInstitutional ? 'STORY' : `${missionProgress}/3`}</b></div>
         <strong>{activeMeeting?.title || (isInstitutional ? institutionRole?.personnelLabel || 'Institutional story' : chapter?.title || 'Continue your story')}</strong>
         <p>{activeMeeting?.topic || (isInstitutional ? 'Explore a fictional institution story. No employment, appointment or separate office ladder.' : missionProgress >= 3 ? 'Preparations complete. Review the chapter and continue when you are ready.' : chapter?.objectives?.[missionProgress] || chapter?.goal || 'Move through the district and meet your next contact.')}</p>
         {!isInstitutional && <div className="scene-mission-meter"><span style={{ width: `${Math.min(100, (missionProgress / 3) * 100)}%` }} /></div>}
         <button type="button" onClick={activeMeeting ? onEnterMeeting : onOpenCareer} disabled={Boolean(activeMeeting?.status === 'open' && !['at-venue', 'discussion'].includes(meetingPhase))}>{activeMeeting ? activeMeeting.status === 'closed' ? 'VIEW MEETING RECORD' : ['at-venue', 'discussion'].includes(meetingPhase) ? 'OPEN DISCUSSION' : 'GATHERING IN WORLD' : isInstitutional ? 'OPEN STORY RECORD' : 'OPEN MISSION FILE'} <ArrowRight size={12} /></button>
-      </div>{interiorInfo && <div className="interior-overlay"><div className="interior-overlay-top"><div><div className="interior-kicker"><i />{interiorInfo.type === 'party-office' ? 'SIMULATED PARTY BRANCH' : `${interiorInfo.type || 'COMMUNITY'} INTERIOR`}</div><h3>{interiorInfo.title}</h3><p className="interior-locality">{locality ? `${locality.ward} ward · ${locality.lga} LGA · ${stateInfo.name}` : `${stateInfo.capital} · ${stateInfo.name}`}</p></div><button type="button" onClick={() => exitInteriorActionRef.current?.()} aria-label="Exit interior"><X size={13} /></button></div>{interiorInfo.party && <><div className="interior-party-brand"><img src={interiorInfo.party.logo} alt="" /><span><b>{interiorInfo.party.name} ({interiorInfo.party.tag})</b><small>REGISTERED PARTY · NATIONAL DATA FROM INEC</small></span></div><div className="interior-register-note"><strong>INEC REGISTER SNAPSHOT · {interiorInfo.nationalOfficers?.checkedAt}</strong><span>National officers are shown separately from the fictional ward branch below.</span><a href={interiorInfo.nationalOfficers?.source} target="_blank" rel="noreferrer">Open official INEC party register</a></div><div className="interior-national-roster"><span>NATIONAL CHAIR<b>{interiorInfo.nationalOfficers?.chair || 'Not listed in snapshot'}</b></span><span>NATIONAL SECRETARY<b>{interiorInfo.nationalOfficers?.secretary || 'Not listed in snapshot'}</b></span></div><div className="interior-fiction-heading"><span>WARD EXECUTIVE TEAM</span><b>SIMULATED · FICTIONAL</b></div><div className="interior-executive-list">{(interiorInfo.branch || []).map((person) => <div key={person.id}><span>{person.position}</span><b>{person.name}</b></div>)}</div></>}<div className="interior-description">{interiorInfo.type === 'party-office' ? 'This ward office and its local officers are generated for gameplay; they are not verified real premises or real officials.' : interiorInfo.type === 'vehicle' ? 'A stylised vehicle interior for the fictional procedural city. Vehicle availability and placement are game simulation.' : 'A fictional procedural interior built for exploration and story scenes, not a surveyed or official facility.'}</div><button className="interior-exit-button" type="button" onClick={() => exitInteriorActionRef.current?.()}>EXIT TO STREET <span>TAP</span></button></div>}
+      </div>{interiorInfo && <div className="interior-overlay"><div className="interior-overlay-top"><div><div className="interior-kicker"><i />{interiorInfo.type === 'party-office' ? 'SIMULATED PARTY BRANCH' : `${interiorInfo.type || 'COMMUNITY'} INTERIOR`}</div><h3>{interiorInfo.title}</h3><p className="interior-locality">{locality ? `${locality.ward} ward · ${locality.lga} LGA · ${stateInfo.name}` : `${stateInfo.capital} · ${stateInfo.name}`}</p></div><button type="button" onClick={() => exitInteriorActionRef.current?.()} aria-label="Exit interior"><X size={13} /></button></div>{interiorInfo.party && <><div className="interior-party-brand"><img src={interiorInfo.party.logo} alt="" /><span><b>{interiorInfo.party.name} ({interiorInfo.party.tag})</b><small>REGISTERED PARTY · NATIONAL DATA FROM INEC</small></span></div><div className="interior-register-note"><strong>INEC REGISTER SNAPSHOT · {interiorInfo.nationalOfficers?.checkedAt}</strong><span>National officers are shown separately from the fictional ward branch below.</span><a href={interiorInfo.nationalOfficers?.source} target="_blank" rel="noreferrer">Open official INEC party register</a></div><div className="interior-national-roster"><span>NATIONAL CHAIR<b>{interiorInfo.nationalOfficers?.chair || 'Not listed in snapshot'}</b></span><span>NATIONAL SECRETARY<b>{interiorInfo.nationalOfficers?.secretary || 'Not listed in snapshot'}</b></span></div><div className="interior-fiction-heading"><span>WARD EXECUTIVE TEAM</span><b>SIMULATED · FICTIONAL</b></div><div className="interior-executive-list">{(interiorInfo.branch || []).map((person) => <button key={person.id} type="button" onClick={() => executiveFocusActionRef.current?.(person.id)} aria-label={`Walk to ${person.position}, ${person.name}, and request a meeting`}><span>{person.position}</span><b>{person.name}</b><i>MEET</i></button>)}</div></>}<div className="interior-room-help"><span className="interior-seat-indicator">{isSeatedInOffice ? <Check size={12} /> : <Move size={12} />}</span><div><b>{interiorActionStatus || (interiorInfo.type === 'party-office' ? 'TAP A VISITOR CHAIR TO SIT' : 'TAP A CHAIR TO SIT')}</b><small>Tap a chair to sit · tap the floor to stand and walk{interiorInfo.type === 'party-office' ? ' · choose any executive to request an audience.' : '.'}</small></div></div><div className="interior-description">{interiorInfo.type === 'party-office' ? 'This ward office and its local officers are generated for gameplay; they are not verified real premises or real officials.' : interiorInfo.type === 'vehicle' ? 'A stylised vehicle interior for the fictional procedural city. Vehicle availability and placement are game simulation.' : 'A fictional procedural interior built for exploration and story scenes, not a surveyed or official facility.'}</div><button className="interior-exit-button" type="button" onClick={() => exitInteriorActionRef.current?.()}>EXIT TO STREET <span>TAP</span></button></div>}
+      {executiveAudience && <div className="executive-audience-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) endExecutiveAudience(); }}><section className="executive-audience-modal" role="dialog" aria-modal="true" aria-labelledby="executive-audience-title" onMouseDown={(event) => event.stopPropagation()}><header className="executive-audience-header"><span className="executive-audience-icon"><Handshake size={17} /></span><div><small>FICTIONAL BRANCH ROLEPLAY · PRIVATE AUDIENCE</small><h3 id="executive-audience-title">{executiveAudience.phase === 'request' ? 'Request a meeting' : 'Audience in progress'}</h3><p>{executiveAudience.executive.position} · {executiveAudience.executive.name}</p></div><button type="button" onClick={endExecutiveAudience} aria-label="Close audience"><X size={15} /></button></header>{executiveAudience.phase === 'request' ? <><p className="executive-audience-copy">You have reached the executive in the simulated office. Briefly state what you would like to discuss; the request starts a fictional, typed in-game audience.</p><form className="executive-audience-form" onSubmit={submitExecutiveAudienceRequest}><label htmlFor="executive-audience-draft">MEETING REQUEST / AGENDA</label><textarea id="executive-audience-draft" value={audienceDraft} onChange={(event) => setAudienceDraft(event.target.value)} maxLength={260} rows={4} placeholder="What would you like to discuss with this executive?" autoFocus /><div className="executive-audience-form-foot"><span>Do not include real-world contact details or sensitive personal information.</span><b>{audienceDraft.length}/260</b></div><button className="executive-audience-send" type="submit" disabled={!audienceDraft.trim()}>REQUEST & BEGIN AUDIENCE <ArrowRight size={14} /></button></form></> : <><div className="executive-audience-messages" aria-live="polite">{executiveAudience.messages.map((message) => <article key={message.id} className={message.speaker === 'YOU' ? 'from-player' : 'from-executive'}><span>{message.speaker === 'YOU' ? 'YOU' : executiveAudience.executive.position.toUpperCase()}</span><p>{message.body}</p></article>)}</div><form className="executive-audience-reply" onSubmit={sendExecutiveAudienceMessage}><textarea value={audienceDraft} onChange={(event) => setAudienceDraft(event.target.value)} maxLength={260} rows={2} aria-label="Type a message for the executive" placeholder="Type a follow-up…" /><button type="submit" aria-label="Send follow-up" disabled={!audienceDraft.trim()}><Send size={14} /></button></form><button type="button" className="executive-audience-end" onClick={endExecutiveAudience}>END AUDIENCE</button></>}<div className="executive-audience-footnote"><LockKeyhole size={11} /> Dialogue is generated for NIGERIA 2027; it is not a real appointment or official response.</div></section></div>}
       <div className="scene-location-card"><div className="scene-card-kicker"><span className="scene-pin" />{locality ? 'YOUR WARD' : 'STATE CAPITAL'} <span>·</span> {stateInfo.zone.toUpperCase()}</div><h2>{locality?.lga || stateInfo.capital}<span>,</span> {stateInfo.name}</h2><p>{locality ? `${locality.ward} · ${stateWorldProfile.biome}` : `${stateWorldProfile.biome} · ${stateInfo.capital}`} · fictional procedural scene</p><div className="scene-time-chip"><span><Clock3 size={11} />{worldClock} WAT</span><b>{timePhase}</b></div><div className="scene-local-style"><span>LOCAL STREET STYLE</span><b>{localityVisual.label}</b><small>{localityVisual.trafficMix.slice(0, 3).join(' · ')}</small></div><div className="scene-local-landmark"><MapPin size={13} /><span>STATE SIGNATURE</span><b>{stateInfo.landmark}</b></div></div>
       <div className="scene-brief-card"><div className="brief-head"><span className="brief-live"><Radio size={12} /> ELECTION CLOCK</span><span>INEC CALENDAR</span></div><div className="brief-countdown"><div><strong>{Number.isFinite(daysToFederal) ? Math.max(0, daysToFederal) : '—'}</strong><span>DAYS TO FEDERAL</span></div><i /><div><strong>{Number.isFinite(daysToState) ? Math.max(0, daysToState) : '—'}</strong><span>DAYS TO STATE</span></div></div><div className="brief-dates"><span>16 JAN 2027</span><span>06 FEB 2027</span></div></div>
       <div className="mini-map-card"><div className="mini-map-top"><span>{locality ? `${locality.lga.toUpperCase()} GRID` : 'CAPITAL GRID'}</span><span className="map-north">N ↑</span></div><svg viewBox="0 0 150 102" role="img" aria-label="Stylised local street grid with a player marker that tracks your 3D position"><path d="M8 26H138M8 50H138M8 75H138M31 10V92M67 10V92M103 10V92M128 10V92" stroke="rgba(241,240,215,.42)" strokeWidth="3" /><path d="M8 50H138M67 10V92" stroke="#d6f176" strokeWidth="6" /><g ref={minimapMarkerRef} className="minimap-player-marker" transform="translate(63.4 54.8) rotate(180)"><circle r="10" fill="rgba(214,241,118,.18)" stroke="#d6f176" strokeWidth="1.5" /><circle r="4.4" fill="#fff8da" stroke="#152016" strokeWidth="1.4" /><path d="M0 -14 L-4 -5 L0 -7 L4 -5Z" fill="#d6f176" /></g></svg><div className="mini-map-foot"><span><i /> YOU</span><span>NOT TO SCALE</span></div></div>
