@@ -1246,37 +1246,196 @@ function makeStadium(group, material) {
   void material;
 }
 
-function makeVenue(venue, palette, sceneMaterials, stateLabel) {
+function makeAirliner(cabinClass = 'economy', livery = '#1c6b52') {
+  const privateJet = cabinClass === 'private-jet';
+  const regional = cabinClass === 'executive';
+  const group = new THREE.Group();
+  const shellMaterial = new THREE.MeshStandardMaterial({ color: privateJet ? '#f1eee2' : '#e9ebe5', roughness: 0.48, metalness: 0.08 });
+  const liveryMaterial = new THREE.MeshStandardMaterial({ color: livery, roughness: 0.52, metalness: 0.12 });
+  const fuselage = new THREE.Mesh(new THREE.CapsuleGeometry(privateJet ? 0.4 : 0.58, privateJet ? 4.4 : regional ? 6.0 : 7.6, 5, 10), shellMaterial);
+  fuselage.rotation.x = Math.PI / 2;
+  group.add(fuselage);
+  const wingspan = privateJet ? 6.4 : regional ? 9.5 : 12.8;
+  const wing = box(wingspan, 0.16, privateJet ? 1.55 : 2.0, livery, { castShadow: true, metalness: 0.12 });
+  wing.position.set(0, -0.04, -0.25);
+  group.add(wing);
+  const tailPlane = box(privateJet ? 2.4 : 4.2, 0.1, 0.86, livery, { castShadow: false });
+  tailPlane.position.set(0, 0.12, privateJet ? -2.6 : -3.65);
+  group.add(tailPlane);
+  const fin = box(0.18, privateJet ? 1.0 : 1.55, privateJet ? 1.0 : 1.4, livery, { castShadow: true });
+  fin.position.set(0, privateJet ? 0.55 : 0.75, privateJet ? -2.7 : -3.65);
+  group.add(fin);
+  const stripe = box(privateJet ? 0.12 : 0.1, 0.12, privateJet ? 4.1 : 6.5, livery, { castShadow: false });
+  stripe.position.set(privateJet ? 0.37 : 0.54, 0.08, privateJet ? -0.05 : -0.2);
+  group.add(stripe);
+  if (!privateJet) {
+    for (const side of [-1, 1]) {
+      const engine = new THREE.Mesh(new THREE.CylinderGeometry(0.29, 0.36, 1.35, 12), liveryMaterial);
+      engine.rotation.z = Math.PI / 2;
+      engine.position.set(side * (regional ? 1.9 : 2.45), -0.42, -0.1);
+      group.add(engine);
+    }
+  }
+  const windowCount = privateJet ? 7 : regional ? 9 : 13;
+  for (const side of [-1, 1]) {
+    for (let index = 0; index < windowCount; index += 1) {
+      const z = (privateJet ? -1.8 : regional ? -2.7 : -3.75) + index * (privateJet ? 0.55 : regional ? 0.64 : 0.61);
+      const porthole = box(0.045, 0.16, 0.2, '#315964', { castShadow: false, roughness: 0.28, metalness: 0.14 });
+      porthole.position.set(side * (privateJet ? 0.39 : 0.56), 0.18, z);
+      group.add(porthole);
+    }
+  }
+  const windscreen = box(privateJet ? 0.65 : 0.92, 0.32, 0.08, '#2a4d58', { castShadow: false, roughness: 0.25, metalness: 0.15 });
+  windscreen.position.set(0, 0.36, privateJet ? 2.65 : 4.24);
+  group.add(windscreen);
+  const door = box(0.05, privateJet ? 0.82 : 1.05, 0.62, '#46635f', { castShadow: false, roughness: 0.55 });
+  door.position.set(privateJet ? 0.4 : 0.57, -0.02, privateJet ? 1.0 : 1.2);
+  group.add(door);
+  for (const [x, z, scale] of [[0, 0.85, 1], [-1.75, -0.05, 0.85], [1.75, -0.05, 0.85]]) {
+    const strut = box(0.08, 0.52, 0.08, '#65716f', { castShadow: false });
+    strut.position.set(x, -0.73, z);
+    group.add(strut);
+    const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.16 * scale, 0.055, 6, 10), new THREE.MeshStandardMaterial({ color: '#242b2a', roughness: 0.82 }));
+    wheel.rotation.y = Math.PI / 2;
+    wheel.position.set(x, -1.03, z);
+    group.add(wheel);
+  }
+  group.userData.cabinClass = cabinClass;
+  group.userData.isAircraft = true;
+  return group;
+}
+
+function makeCloudCluster() {
+  const cloud = new THREE.Group();
+  const material = new THREE.MeshStandardMaterial({ color: '#f5f8f2', roughness: 1, transparent: true, opacity: 0.9 });
+  const puffs = [[0, 0, 0, 1.25], [0.9, 0.1, 0.2, 0.9], [-0.85, -0.08, -0.1, 0.88], [0.1, 0.42, -0.16, 0.92]];
+  puffs.forEach(([x, y, z, scale]) => {
+    const puff = new THREE.Mesh(new THREE.SphereGeometry(0.75 * scale, 8, 7), material);
+    puff.position.set(x, y, z);
+    puff.scale.set(1.35, 0.72, 1.0);
+    cloud.add(puff);
+  });
+  return cloud;
+}
+
+function makeVenue(venue, palette, sceneMaterials, stateLabel, propertyProfile = null, propertyOwner = 'PLAYER') {
   const g = new THREE.Group();
   const { x, z, type, color } = venue;
   if (type === 'stadium') {
     makeStadium(g, sceneMaterials);
   } else if (type === 'airport') {
-    const runway = box(7.2, 0.07, 2.35, '#4c5551', { castShadow: false });
-    runway.position.y = 0.07;
+    const apron = box(13.2, 0.08, 7.4, '#606965', { castShadow: false, roughness: 0.92 });
+    apron.position.set(0, 0.04, -0.4);
+    g.add(apron);
+    const runway = box(11.0, 0.045, 2.15, '#414b48', { castShadow: false, roughness: 0.94 });
+    runway.position.set(0, 0.095, -1.2);
     g.add(runway);
-    for (let i = 0; i < 7; i += 1) {
-      const dash = box(0.43, 0.025, 0.08, '#ece6c8', { castShadow: false });
-      dash.position.set(-2.5 + i * 0.83, 0.12, 0);
+    for (let i = 0; i < 8; i += 1) {
+      const dash = box(0.54, 0.025, 0.075, '#eee7cd', { castShadow: false });
+      dash.position.set(-4.55 + i * 1.3, 0.13, -1.2);
       g.add(dash);
     }
-    const terminal = box(3.5, 0.9, 1.3, '#d7cfb6');
-    terminal.position.set(0, 0.5, 2.1);
+    for (const x of [-5.6, 5.6]) {
+      const edge = box(0.045, 0.025, 6.8, '#e9dfbf', { castShadow: false });
+      edge.position.set(x, 0.13, -0.4);
+      g.add(edge);
+    }
+    const airportWallColors = palette.houseColors || ['#d5d2c4'];
+    const airportRoofColors = palette.roofColors || ['#4d5d58'];
+    const airportWall = airportWallColors[hash(stateLabel) % airportWallColors.length];
+    const airportRoof = airportRoofColors[(hash(stateLabel) + 1) % airportRoofColors.length];
+    const terminal = box(6.0, 1.22, 2.25, airportWall);
+    terminal.position.set(0, 0.68, 3.3);
     g.add(terminal);
-    const glass = box(2.4, 0.38, 0.07, '#78a8a3', { castShadow: false, metalness: 0.2 });
-    glass.position.set(0, 0.59, 2.78);
-    g.add(glass);
-    const plane = new THREE.Group();
-    const fuselage = new THREE.Mesh(new THREE.CapsuleGeometry(0.25, 1.7, 4, 8), new THREE.MeshStandardMaterial({ color: '#ebe7d9', roughness: 0.48 }));
-    fuselage.rotation.z = Math.PI / 2;
-    fuselage.position.y = 0.9;
-    plane.add(fuselage);
-    const wing = box(0.36, 0.08, 2.5, '#a9b8ad');
-    wing.position.set(0, 0.9, 0);
-    plane.add(wing);
-    plane.position.set(-1.5, 0.4, -0.15);
-    plane.scale.set(0.8, 0.8, 0.8);
-    g.add(plane);
+    const terminalRoof = box(6.35, 0.22, 2.5, airportRoof);
+    terminalRoof.position.set(0, 1.42, 3.3);
+    g.add(terminalRoof);
+    for (const x of [-2.0, 0, 2.0]) {
+      const glass = box(1.65, 0.55, 0.06, '#78a8a3', { castShadow: false, metalness: 0.2, roughness: 0.3 });
+      glass.position.set(x, 0.88, 4.45);
+      g.add(glass);
+    }
+    const controlTower = box(1.0, 2.25, 0.9, '#c8c4b2');
+    controlTower.position.set(4.2, 1.16, 3.35);
+    g.add(controlTower);
+    const controlGlass = box(1.2, 0.55, 1.1, '#6d9aa0', { castShadow: false, roughness: 0.32, metalness: 0.12 });
+    controlGlass.position.set(4.2, 2.02, 3.35);
+    g.add(controlGlass);
+    const parkedFleet = [
+      { cabin: 'economy', color: '#24754f', pos: [-3.85, 0.65, -1.7], scale: 0.35, yaw: -0.14 },
+      { cabin: 'executive', color: '#396c96', pos: [3.75, 0.52, -2.1], scale: 0.28, yaw: 0.13 },
+      { cabin: 'business', color: '#af6b3c', pos: [-1.2, 0.42, -4.3], scale: 0.25, yaw: 0.02 },
+      { cabin: 'private-jet', color: '#454e6d', pos: [1.6, 0.45, 0.1], scale: 0.23, yaw: -0.28 },
+    ];
+    parkedFleet.forEach((item) => {
+      const aircraft = makeAirliner(item.cabin, item.color);
+      aircraft.position.set(...item.pos);
+      aircraft.rotation.y = item.yaw;
+      aircraft.scale.setScalar(item.scale);
+      g.add(aircraft);
+    });
+  } else if (type === 'home') {
+    const houseLevel = clamp(Number(propertyProfile?.houseLevel) || 1, 1, 5);
+    const garageLevel = clamp(Number(propertyProfile?.garageLevel) || 0, 0, 4);
+    const extraPlots = clamp(Number(propertyProfile?.extraPlots) || 0, 0, 3);
+    const yard = new THREE.Mesh(new THREE.PlaneGeometry(7.4, 6.2), new THREE.MeshStandardMaterial({ color: '#73936c', roughness: 0.97, side: THREE.DoubleSide }));
+    yard.rotation.x = -Math.PI / 2;
+    yard.position.y = 0.025;
+    g.add(yard);
+    const plinth = box(4.8, 0.28, 3.7, '#9d8b6e', { castShadow: false });
+    plinth.position.set(0, 0.16, -0.15);
+    g.add(plinth);
+    const wallColors = palette.houseColors || ['#e1d0aa', '#d7c29d'];
+    const roofColors = palette.roofColors || ['#655b49'];
+    const house = box(3.8, 1.75, 3.0, wallColors[hash(stateLabel) % wallColors.length]);
+    house.position.set(-0.15, 1.15, -0.2);
+    g.add(house);
+    const roof = box(4.12, 0.2, 3.35, roofColors[0]);
+    roof.position.set(-0.15, 2.14, -0.2);
+    g.add(roof);
+    if (houseLevel >= 3) {
+      const upperFloor = box(2.55, 1.22, 2.55, wallColors[(hash(stateLabel) + 1) % wallColors.length]);
+      upperFloor.position.set(-0.15, 2.82, -0.25);
+      g.add(upperFloor);
+      const upperRoof = box(2.9, 0.18, 2.9, roofColors[0]);
+      upperRoof.position.set(-0.15, 3.54, -0.25);
+      g.add(upperRoof);
+      const balcony = box(2.85, 0.1, 0.65, '#9b8560');
+      balcony.position.set(-0.15, 2.2, 1.54);
+      g.add(balcony);
+    }
+    const entryDoor = box(0.62, 1.08, 0.05, '#604633', { castShadow: false });
+    entryDoor.position.set(0.68, 0.82, 1.32);
+    g.add(entryDoor);
+    for (const x of [-1.25, 0.88]) {
+      const window = box(0.55, 0.48, 0.05, '#78a8a3', { castShadow: false, roughness: 0.32, metalness: 0.08 });
+      window.position.set(x, 1.3, 1.33);
+      g.add(window);
+    }
+    const garageWidth = garageLevel >= 3 ? 2.1 : 1.45;
+    const garage = box(garageWidth, 1.25, 1.65, garageLevel ? '#596c61' : '#8e836d');
+    garage.position.set(1.82, 0.68, -1.28);
+    g.add(garage);
+    const garageRoof = box(2.25, 0.15, 1.85, roofColors[0]);
+    garageRoof.position.set(1.82, 1.36, -1.28);
+    g.add(garageRoof);
+    for (let line = 0; line < 4; line += 1) {
+      const panel = box(garageWidth - 0.14, 0.045, 0.035, '#d2ccb9', { castShadow: false });
+      panel.position.set(1.82, 0.23 + line * 0.28, -0.43);
+      g.add(panel);
+    }
+    for (let plot = 0; plot < extraPlots; plot += 1) {
+      const planter = box(0.9, 0.3, 0.75, ['#896a4f', '#9a7957', '#6f7153'][plot % 3]);
+      planter.position.set(-2.4 + plot * 1.5, 0.22, 2.25);
+      g.add(planter);
+      const shrub = new THREE.Mesh(new THREE.IcosahedronGeometry(0.28, 0), new THREE.MeshStandardMaterial({ color: '#477c4e', roughness: 0.9 }));
+      shrub.position.set(-2.4 + plot * 1.5, 0.6, 2.25);
+      g.add(shrub);
+    }
+    const ownerLabel = labelSprite(propertyOwner === 'New Candidate' ? 'MY HOME' : `${propertyOwner} HOME`, color);
+    ownerLabel.position.set(-0.1, houseLevel >= 3 ? 5.0 : 4.35, -0.18);
+    ownerLabel.scale.set(2.8, 0.62, 1);
+    g.add(ownerLabel);
   } else if (type === 'court' || type === 'assembly' || type === 'caucus' || type === 'office') {
     const width = type === 'assembly' ? 3.5 : 2.8;
     const main = box(width, type === 'assembly' ? 1.7 : 1.3, 2.35, type === 'court' ? '#d4d2c3' : '#d4bea0');
@@ -1390,7 +1549,20 @@ function makeVenue(venue, palette, sceneMaterials, stateLabel) {
   }
 
   if (type !== 'square') {
-    addDoorPortal(g, { id: `venue-${venue.id}`, title: venue.short || venue.label, type: 'venue', accent: color, x: 0, z: type === 'stadium' ? 3.0 : type === 'airport' ? 2.85 : 1.45, width: 0.82, height: 1.32, metadata: { venueId: venue.id, venueType: type } });
+    addDoorPortal(g, { id: `venue-${venue.id}`, title: venue.short || venue.label, type: 'venue', accent: color, x: type === 'home' ? 0.68 : 0, z: type === 'stadium' ? 3.0 : type === 'airport' ? 4.45 : type === 'home' ? 1.34 : 1.45, width: 0.82, height: 1.32, metadata: { venueId: venue.id, venueType: type } });
+  }
+  if (type === 'airport') {
+    const boardingPoints = [
+      { id: 'economy', cabin: 'economy', x: -3.85, z: -0.06, accent: '#30925e', title: 'ECONOMY GATE' },
+      { id: 'executive', cabin: 'executive', x: -4.25, z: -4.45, accent: '#488a7e', title: 'EXECUTIVE GATE' },
+      { id: 'business', cabin: 'business', x: -1.15, z: -4.0, accent: '#4c78a8', title: 'BUSINESS GATE' },
+      { id: 'first', cabin: 'first', x: 1.72, z: -3.65, accent: '#b9934b', title: 'FIRST CLASS' },
+      { id: 'private-jet', cabin: 'private-jet', x: 3.45, z: -0.16, accent: '#74789e', title: 'PRIVATE JET' },
+    ];
+    boardingPoints.forEach((gate) => addDoorPortal(g, { id: `boarding-${gate.id}`, title: gate.title, type: 'plane', accent: gate.accent, x: gate.x, z: gate.z, width: 0.78, height: 1.18, metadata: { venueType: 'plane', cabinClass: gate.cabin } }));
+  }
+  if (type === 'home') {
+    addDoorPortal(g, { id: 'home-garage', title: 'HOME GARAGE', type: 'garage', accent: '#a7895d', x: 1.82, z: -0.43, width: 0.92, height: 1.22, metadata: { venueType: 'garage' } });
   }
   const pad = new THREE.Mesh(new THREE.CircleGeometry(type === 'stadium' ? 3.1 : 2.45, 30), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.105, depthWrite: false }));
   pad.rotation.x = -Math.PI / 2;
@@ -1416,8 +1588,17 @@ function makeVenue(venue, palette, sceneMaterials, stateLabel) {
   g.add(label);
   if (type === 'airport') {
     g.userData.collisionRects = [
-      { x: 0, z: 2.1, halfX: 1.86, halfZ: 0.74 },
-      { x: -1.5, z: -0.15, halfX: 1.38, halfZ: 1.18 },
+      { x: 0, z: 3.34, halfX: 3.12, halfZ: 1.24 },
+      { x: 4.2, z: 3.35, halfX: 0.64, halfZ: 0.68 },
+    ];
+  } else if (type === 'home') {
+    g.userData.collisionRects = [
+      { x: -0.84, z: 1.32, halfX: 1.21, halfZ: 0.105 },
+      { x: 1.37, z: 1.32, halfX: 0.39, halfZ: 0.105 },
+      { x: -2.05, z: -0.2, halfX: 0.11, halfZ: 1.5 },
+      { x: 1.75, z: -0.2, halfX: 0.11, halfZ: 1.5 },
+      { x: -0.15, z: -1.72, halfX: 1.9, halfZ: 0.11 },
+      { x: 1.82, z: -1.28, halfX: 1.15, halfZ: 0.92 },
     ];
   } else if (['office', 'court', 'assembly', 'caucus'].includes(type)) {
     const compoundWidth = type === 'assembly' ? 5.6 : 4.8;
@@ -2474,9 +2655,651 @@ function buildStadiumInterior(info, palette) {
   return group;
 }
 
+function buildEnclosedInteriorShell(info, palette, { floorColor = '#c6b48d', wallColor = '#e9e1d1', ceilingColor = '#d9d0bd', accent = palette.accent || '#d8f36b', sign = info.title || 'COMMUNITY ROOM' } = {}) {
+  const group = new THREE.Group();
+  group.name = `interior-${info.metadata?.venueType || info.type || 'room'}`;
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(13, 13), new THREE.MeshStandardMaterial({ color: floorColor, roughness: 0.9, side: THREE.DoubleSide }));
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.y = -0.055;
+  floor.receiveShadow = true;
+  group.add(floor);
+  const wallHeight = 4.45;
+  const wallZ = 6.38;
+  const walls = [
+    { size: [13, wallHeight, 0.24], pos: [0, wallHeight / 2, -6.38] },
+    { size: [0.24, wallHeight, 13], pos: [-6.38, wallHeight / 2, 0] },
+    { size: [0.24, wallHeight, 13], pos: [6.38, wallHeight / 2, 0] },
+    { size: [5.55, wallHeight, 0.24], pos: [-3.72, wallHeight / 2, wallZ] },
+    { size: [5.55, wallHeight, 0.24], pos: [3.72, wallHeight / 2, wallZ] },
+    { size: [1.9, 1.82, 0.24], pos: [0, 3.54, wallZ] },
+    { size: [13, 0.18, 13], pos: [0, 4.48, 0], color: ceilingColor },
+  ];
+  walls.forEach(({ size, pos, color }) => {
+    const wall = box(...size, color || wallColor, { castShadow: true, roughness: 0.92 });
+    wall.material.side = THREE.DoubleSide;
+    wall.position.set(...pos);
+    group.add(wall);
+  });
+  group.userData.collisionRects = [
+    { x: 0, z: -6.38, halfX: 6.5, halfZ: 0.14 },
+    { x: -6.38, z: 0, halfX: 0.14, halfZ: 6.5 },
+    { x: 6.38, z: 0, halfX: 0.14, halfZ: 6.5 },
+    { x: -3.72, z: wallZ, halfX: 2.78, halfZ: 0.14 },
+    { x: 3.72, z: wallZ, halfX: 2.78, halfZ: 0.14 },
+  ];
+  for (const z of [-6.18, 6.14]) {
+    const trim = box(12.72, 0.18, 0.12, accent, { castShadow: false, roughness: 0.78 });
+    trim.position.set(0, 0.19, z);
+    group.add(trim);
+  }
+  for (const side of [-1, 1]) {
+    const window = box(0.08, 1.34, 2.25, '#79a7aa', { castShadow: false, roughness: 0.32, metalness: 0.1 });
+    window.position.set(side * 6.21, 2.46, -0.68);
+    group.add(window);
+    const windowBar = box(0.12, 1.36, 0.075, '#e7ddc9', { castShadow: false });
+    windowBar.position.set(side * 6.12, 2.46, -0.68);
+    group.add(windowBar);
+  }
+  group.add(new THREE.AmbientLight('#fff2de', 0.93));
+  const roomLight = new THREE.PointLight('#ffe8ca', 1.9, 20, 1.7);
+  roomLight.position.set(0, 3.82, 0.1);
+  group.add(roomLight);
+  const ceilingLamp = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.12, 0.58), new THREE.MeshStandardMaterial({ color: '#fff2d6', emissive: '#f1c177', emissiveIntensity: 0.38, roughness: 0.48 }));
+  ceilingLamp.position.set(0, 4.32, -0.1);
+  group.add(ceilingLamp);
+  const title = labelSprite(sign, accent);
+  title.position.set(0, 3.55, -6.16);
+  title.scale.set(3.7, 0.78, 1);
+  group.add(title);
+  const interiorVenue = info.metadata?.venueType || info.type;
+  const exitTitle = interiorVenue === 'plane' ? 'RETURN TO TERMINAL' : interiorVenue === 'airport' ? 'EXIT TO AIRPORT APRON' : interiorVenue === 'home' ? 'EXIT TO YARD' : interiorVenue === 'garage' ? 'EXIT TO HOME' : interiorVenue === 'market' ? 'EXIT TO MARKET STREET' : interiorVenue === 'court' ? 'EXIT TO COURT GROUNDS' : interiorVenue === 'assembly' ? 'EXIT TO ASSEMBLY GROUNDS' : 'EXIT TO STREET';
+  const exitDoor = addDoorPortal(group, { id: `exit-${info.id || interiorVenue}`, title: exitTitle, type: 'exit', accent: '#e8c36d', x: 0, z: wallZ - 0.02, width: 1.6, height: 2.3 });
+  exitDoor.userData.interaction = { id: 'exit-interior', title: exitTitle, type: 'exit' };
+  return group;
+}
+
+function addInteriorChair(group, x, z, { color = '#426c58', seatId = `interior-seat-${x}-${z}`, label = 'visitor chair', width = 0.78, rotationY = Math.PI, approachZ = z - 0.92, y = 0.52 } = {}) {
+  const chair = new THREE.Group();
+  chair.position.set(x, 0, z);
+  const cushion = box(width, 0.14, 0.72, color, { castShadow: false, roughness: 0.82 });
+  cushion.position.set(0, y, 0);
+  chair.add(cushion);
+  const back = box(width, 0.74, 0.15, color, { castShadow: false, roughness: 0.86 });
+  back.position.set(0, y + 0.35, 0.29);
+  chair.add(back);
+  for (const side of [-1, 1]) {
+    const arm = box(0.08, 0.29, 0.68, '#75634c', { castShadow: false });
+    arm.position.set(side * (width / 2 + 0.025), y + 0.14, 0.02);
+    chair.add(arm);
+    for (const zLeg of [-0.26, 0.26]) {
+      const leg = box(0.045, 0.48, 0.045, '#58645b', { castShadow: false, metalness: 0.13 });
+      leg.position.set(side * (width / 2 - 0.08), 0.25, zLeg);
+      chair.add(leg);
+    }
+  }
+  group.add(chair);
+  addInteriorSeat(group, { seatId, seatLabel: label, x, z, rotationY, approachPoint: { x, z: approachZ } });
+  return chair;
+}
+
+function addSimulatedMeetingActor(group, { id, name, position, x, z, shirt = '#42785d', skin = '#79513b', accent = '#527867' }) {
+  const anchor = new THREE.Group();
+  anchor.position.set(x, 0, z);
+  anchor.rotation.y = Math.PI;
+  anchor.add(makeMeetingChair());
+  const attendee = makeSeatedAttendee(shirt, skin);
+  attendee.group.rotation.y = Math.PI;
+  attendee.group.position.z = 0.06;
+  anchor.add(attendee.group);
+  const tag = labelSprite(position || 'SIMULATED STAFF', accent);
+  tag.position.set(0, 1.95, 0.08);
+  tag.scale.set(1.72, 0.42, 1);
+  anchor.add(tag);
+  const executive = { id, name, position, fictional: true };
+  const interaction = {
+    id: `executive-${id}`,
+    title: `Meet ${name}`,
+    type: 'executive',
+    executive,
+    targetObject: anchor,
+    approachPoint: { x, z: z + 0.88 },
+  };
+  addInteriorHotspot(anchor, interaction, { y: 1.0, width: 1.2, height: 1.95, depth: 1.0 });
+  group.add(anchor);
+  return interaction;
+}
+
+function buildAirportTerminalInterior(info, palette) {
+  const group = buildEnclosedInteriorShell(info, palette, { floorColor: '#c4c7bc', wallColor: '#e8e7de', ceilingColor: '#cfd6d1', accent: '#4e7683', sign: 'DEPARTURES · CHECK-IN' });
+  group.name = `airport-terminal-${info.metadata?.venueId || info.id}`;
+  const concourse = new THREE.Mesh(new THREE.PlaneGeometry(1.65, 11.4), new THREE.MeshStandardMaterial({ color: '#43565b', roughness: 0.9, side: THREE.DoubleSide }));
+  concourse.rotation.x = -Math.PI / 2;
+  concourse.position.set(0, 0.008, 0.2);
+  group.add(concourse);
+  for (const [index, x] of [-4.0, -1.4, 1.4, 4.0].entries()) {
+    const counter = box(2.05, 0.9, 0.72, index % 2 ? '#67766f' : '#536a6d');
+    counter.position.set(x, 0.54, -3.45);
+    group.add(counter);
+    const deskTop = box(2.18, 0.12, 0.82, '#e6dfca', { castShadow: false });
+    deskTop.position.set(x, 1.02, -3.45);
+    group.add(deskTop);
+    const terminalScreen = box(0.67, 0.45, 0.08, '#263b3d', { castShadow: false });
+    terminalScreen.position.set(x, 1.36, -3.72);
+    group.add(terminalScreen);
+    const counterTag = labelSprite(`CHECK-IN ${String.fromCharCode(65 + index)}`, '#f1d48b');
+    counterTag.position.set(x, 1.75, -3.35);
+    counterTag.scale.set(1.45, 0.36, 1);
+    group.add(counterTag);
+  }
+  const board = box(7.5, 1.48, 0.18, '#152d33', { castShadow: false, roughness: 0.58 });
+  board.position.set(0, 2.55, -6.08);
+  group.add(board);
+  const boardHeader = labelSprite('SIMULATED STATE ROUTES', '#f0d277');
+  boardHeader.position.set(0, 3.12, -5.94);
+  boardHeader.scale.set(2.8, 0.4, 1);
+  group.add(boardHeader);
+  const boardRows = [
+    ['ABV · ABUJA', 'GAME ROUTE'], ['ENU · ENUGU', 'GAME ROUTE'], ['PHC · PORT HARCOURT', 'GAME ROUTE'],
+  ];
+  boardRows.forEach(([destination, status], index) => {
+    const row = labelSprite(`${destination}      ${status}`, index === 1 ? '#c0e7d2' : '#f4f0e3');
+    row.position.set(0, 2.65 - index * 0.38, -5.89);
+    row.scale.set(3.65, 0.3, 1);
+    group.add(row);
+  });
+  for (const x of [-3.7, 3.7]) {
+    const pillar = box(0.42, 3.55, 0.42, '#d3d7cf');
+    pillar.position.set(x, 1.78, 0.25);
+    group.add(pillar);
+  }
+  for (let index = 0; index < 4; index += 1) {
+    const x = -4.35 + index * 2.9;
+    const bench = box(2.15, 0.16, 0.58, '#4a6d70');
+    bench.position.set(x, 0.53, 2.0);
+    group.add(bench);
+    addInteriorChair(group, x, 2.0, { color: '#507677', seatId: `airport-seat-${index}`, label: 'departure lounge seat', width: 1.55, approachZ: 2.95 });
+  }
+  const entrySign = labelSprite('BOARDING GATES · 01—04', '#f6df9d');
+  entrySign.position.set(0, 2.75, 4.9);
+  entrySign.scale.set(2.8, 0.48, 1);
+  group.add(entrySign);
+  return group;
+}
+
+function buildAircraftCabinInterior(info, palette) {
+  const cabinClass = info.metadata?.cabinClass || 'economy';
+  const classData = {
+    economy: { name: 'ECONOMY CABIN', color: '#37644f', rows: [2.55, 1.0, -0.55, -2.1, -3.65], width: 0.68, kind: 'economy' },
+    executive: { name: 'EXECUTIVE CABIN', color: '#446b7c', rows: [2.3, 0.0, -2.3], width: 0.94, kind: 'executive' },
+    business: { name: 'BUSINESS CLASS', color: '#315b4c', rows: [2.4, 0.0, -2.4], width: 1.12, kind: 'business' },
+    first: { name: 'FIRST CLASS SUITES', color: '#8b7046', rows: [2.45, -0.25, -2.95], width: 1.28, kind: 'first' },
+    'private-jet': { name: 'PRIVATE JET CABIN', color: '#4b526d', rows: [1.8, -1.65], width: 1.1, kind: 'private' },
+  }[cabinClass] || { name: 'ECONOMY CABIN', color: '#37644f', rows: [2.55, 1, -0.55, -2.1, -3.65], width: 0.68, kind: 'economy' };
+  const group = buildEnclosedInteriorShell(info, palette, { floorColor: '#b4b8ae', wallColor: '#f0f1eb', ceilingColor: '#e1e5de', accent: classData.color, sign: classData.name });
+  group.name = `aircraft-cabin-${cabinClass}`;
+  const aisle = new THREE.Mesh(new THREE.PlaneGeometry(1.35, 10.6), new THREE.MeshStandardMaterial({ color: cabinClass === 'private-jet' ? '#77707d' : '#63716c', roughness: 0.96, side: THREE.DoubleSide }));
+  aisle.rotation.x = -Math.PI / 2;
+  aisle.position.set(0, 0.008, -0.05);
+  group.add(aisle);
+  for (const side of [-1, 1]) {
+    const overhead = box(1.18, 0.48, 10.55, '#dfe4dd', { castShadow: false, roughness: 0.62 });
+    overhead.position.set(side * 5.37, 2.78, -0.15);
+    group.add(overhead);
+    const overheadLine = box(1.0, 0.05, 10.3, '#aab7b2', { castShadow: false });
+    overheadLine.position.set(side * 5.37, 2.51, -0.15);
+    group.add(overheadLine);
+    for (let row = 0; row < classData.rows.length; row += 1) {
+      const window = box(0.075, 0.57, 0.78, '#6c9cac', { castShadow: false, roughness: 0.3, metalness: 0.08 });
+      window.position.set(side * 6.18, 2.08, classData.rows[row]);
+      group.add(window);
+      const windowFrame = box(0.105, 0.75, 0.93, '#e4e6df', { castShadow: false, roughness: 0.7 });
+      windowFrame.position.set(side * 6.1, 2.08, classData.rows[row]);
+      group.add(windowFrame);
+      window.position.x = side * 6.03;
+    }
+    const luggageTag = labelSprite(side < 0 ? 'BAGGAGE BIN' : 'CABIN LIGHTS', '#d2dbce');
+    luggageTag.position.set(side * 5.25, 3.15, -4.2);
+    luggageTag.scale.set(1.6, 0.35, 1);
+    group.add(luggageTag);
+  }
+  const seatColor = classData.color;
+  const makeCabinSeat = (x, z, rowIndex, seatIndex, wider = false) => {
+    const width = wider ? classData.width + 0.35 : classData.width;
+    const seat = new THREE.Group();
+    seat.position.set(x, 0, z);
+    const cushion = box(width, 0.2, wider ? 1.0 : 0.78, seatColor, { castShadow: true, roughness: 0.85 });
+    cushion.position.set(0, 0.61, 0);
+    seat.add(cushion);
+    const back = box(width, wider ? 1.0 : 0.8, 0.18, seatColor, { castShadow: true, roughness: 0.83 });
+    back.position.set(0, wider ? 1.14 : 1.03, 0.31);
+    seat.add(back);
+    const headrest = box(width * 0.72, 0.28, 0.17, cabinClass === 'first' || cabinClass === 'private-jet' ? '#c8ad73' : '#d1d8d1', { castShadow: false });
+    headrest.position.set(0, wider ? 1.7 : 1.53, 0.32);
+    seat.add(headrest);
+    for (const side of [-1, 1]) {
+      const arm = box(0.09, 0.23, 0.69, '#9ba39b', { castShadow: false, roughness: 0.7 });
+      arm.position.set(side * (width / 2 + 0.04), 0.75, 0);
+      seat.add(arm);
+      const support = box(0.08, 0.52, 0.08, '#606a64', { castShadow: false });
+      support.position.set(side * (width / 2 - 0.07), 0.27, 0.03);
+      seat.add(support);
+    }
+    group.add(seat);
+    addInteriorSeat(group, { seatId: `cabin-${cabinClass}-${rowIndex}-${seatIndex}`, seatLabel: `${classData.name.toLowerCase()} seat`, x, z, rotationY: Math.PI, approachPoint: { x, z: z - 0.94 } });
+    const belt = box(width * 0.72, 0.045, 0.06, '#e5d7a3', { castShadow: false });
+    belt.position.set(x, 0.76, z - 0.04);
+    group.add(belt);
+  };
+  if (classData.kind === 'economy') {
+    classData.rows.forEach((z, row) => [...[-2.6, -1.8, -1.0, 1.0, 1.8, 2.6]].forEach((x, seat) => makeCabinSeat(x, z, row, seat)));
+  } else if (classData.kind === 'executive') {
+    classData.rows.forEach((z, row) => [-1.8, -0.95, 0.95, 1.8].forEach((x, seat) => makeCabinSeat(x, z, row, seat, true)));
+  } else if (classData.kind === 'business') {
+    classData.rows.forEach((z, row) => [-2.05, -0.95, 0.95, 2.05].forEach((x, seat) => makeCabinSeat(x, z, row, seat, true)));
+  } else if (classData.kind === 'first') {
+    classData.rows.forEach((z, row) => [-2.15, 2.15].forEach((x, seat) => {
+      makeCabinSeat(x, z, row, seat, true);
+      const suiteDivider = box(0.11, 1.25, 1.45, '#d9d4c6', { castShadow: false, roughness: 0.76 });
+      suiteDivider.position.set(x + (x < 0 ? 0.92 : -0.92), 1.0, z + 0.1);
+      group.add(suiteDivider);
+    }));
+  } else {
+    classData.rows.forEach((z, row) => [-2.3, 2.3].forEach((x, seat) => makeCabinSeat(x, z, row, seat, true)));
+    const meetingTable = box(1.7, 0.15, 1.25, '#8a744f');
+    meetingTable.position.set(0, 0.78, -0.05);
+    group.add(meetingTable);
+    const tableTop = box(1.74, 0.06, 1.29, '#c1a767', { castShadow: false });
+    tableTop.position.set(0, 0.89, -0.05);
+    group.add(tableTop);
+    const lounge = labelSprite('PRIVATE CHARTER · QUIET CABIN', '#f2d886');
+    lounge.position.set(0, 2.0, -4.8);
+    lounge.scale.set(2.85, 0.48, 1);
+    group.add(lounge);
+  }
+  for (let index = 0; index < Math.min(classData.rows.length, 5); index += 1) {
+    const rowMark = labelSprite(String(index + 1).padStart(2, '0'), '#eef0e8');
+    rowMark.position.set(-0.74, 1.02, classData.rows[index]);
+    rowMark.scale.set(0.3, 0.26, 1);
+    group.add(rowMark);
+  }
+  const safetyCard = box(1.35, 0.13, 0.58, '#f2ead7', { castShadow: false });
+  safetyCard.position.set(0, 2.05, 4.8);
+  group.add(safetyCard);
+  const cabinTag = labelSprite('CLEAN CABIN · BOARDING COMPLETE', '#426b5d');
+  cabinTag.position.set(0, 2.33, 4.68);
+  cabinTag.scale.set(2.95, 0.45, 1);
+  group.add(cabinTag);
+  return group;
+}
+
+function buildHomeInterior(info, palette) {
+  const property = info.propertyProfile || {};
+  const level = clamp(Number(property.houseLevel) || 1, 1, 5);
+  const garageLevel = clamp(Number(property.garageLevel) || 0, 0, 4);
+  const owner = String(info.propertyOwner || 'PLAYER').slice(0, 24).toUpperCase();
+  const group = buildEnclosedInteriorShell(info, palette, { floorColor: '#c6ac83', wallColor: '#eee1cd', ceilingColor: '#e0d4c0', accent: palette.accent || '#d8f36b', sign: `${owner}'S HOME` });
+  group.name = `player-home-level-${level}`;
+  const rug = new THREE.Mesh(new THREE.PlaneGeometry(level >= 3 ? 7.0 : 5.6, 3.5), new THREE.MeshStandardMaterial({ color: level >= 4 ? '#7e5558' : '#537259', roughness: 0.95, side: THREE.DoubleSide }));
+  rug.rotation.x = -Math.PI / 2;
+  rug.position.set(0, 0.014, 2.15);
+  group.add(rug);
+  const sofa = box(level >= 3 ? 4.4 : 3.4, 0.58, 0.9, level >= 4 ? '#76566a' : '#4b7964');
+  sofa.position.set(0, 0.57, 3.48);
+  group.add(sofa);
+  const sofaBack = box(level >= 3 ? 4.4 : 3.4, 0.7, 0.23, level >= 4 ? '#76566a' : '#4b7964');
+  sofaBack.position.set(0, 1.15, 3.78);
+  group.add(sofaBack);
+  addInteriorSeat(group, { seatId: 'home-sofa', seatLabel: 'living room sofa', x: 0, z: 3.43, rotationY: Math.PI, approachPoint: { x: 0, z: 2.45 } });
+  const coffeeTable = box(2.35, 0.16, 1.05, '#8b6747');
+  coffeeTable.position.set(0, 0.5, 1.35);
+  group.add(coffeeTable);
+  for (const x of [-0.62, 0.62]) {
+    const tableLeg = box(0.11, 0.42, 0.11, '#644b38', { castShadow: false });
+    tableLeg.position.set(x, 0.24, 1.35);
+    group.add(tableLeg);
+  }
+  const vase = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.19, 0.37, 10), new THREE.MeshStandardMaterial({ color: '#d2a557', roughness: 0.6 }));
+  vase.position.set(0.65, 0.77, 1.35);
+  group.add(vase);
+  const kitchenCabinet = box(3.45, 0.8, 0.58, '#8a775e');
+  kitchenCabinet.position.set(-3.45, 0.5, -3.85);
+  group.add(kitchenCabinet);
+  const kitchenCounter = box(3.65, 0.14, 0.7, '#d3c4aa');
+  kitchenCounter.position.set(-3.45, 0.98, -3.85);
+  group.add(kitchenCounter);
+  const fridge = box(0.82, 1.95, 0.82, '#d9ddd8');
+  fridge.position.set(-5.45, 1.02, -4.75);
+  group.add(fridge);
+  const fridgeHandle = box(0.045, 0.68, 0.06, '#6a746d', { castShadow: false });
+  fridgeHandle.position.set(-5.03, 1.04, -4.72);
+  group.add(fridgeHandle);
+  const pictureFrame = box(1.55, 1.02, 0.08, '#745b3e', { castShadow: false });
+  pictureFrame.position.set(0, 2.55, -6.08);
+  group.add(pictureFrame);
+  const framedArt = box(1.31, 0.79, 0.025, '#93a988', { castShadow: false, roughness: 0.94 });
+  framedArt.position.set(0, 2.55, -6.01);
+  group.add(framedArt);
+  const bedroomScreen = box(0.14, 2.3, 3.2, '#ddcfb8');
+  bedroomScreen.position.set(3.35, 1.2, -3.65);
+  group.add(bedroomScreen);
+  const bed = box(2.15, 0.42, 2.2, level >= 4 ? '#d8d0c3' : '#c4b4a0');
+  bed.position.set(4.35, 0.47, -3.55);
+  group.add(bed);
+  const bedding = box(2.0, 0.16, 1.55, level >= 4 ? '#65788d' : '#ede2cf', { castShadow: false });
+  bedding.position.set(4.35, 0.75, -3.8);
+  group.add(bedding);
+  for (let cushion = 0; cushion < 2; cushion += 1) {
+    const pillow = box(0.62, 0.16, 0.42, '#f3efe4', { castShadow: false });
+    pillow.position.set(3.8 + cushion * 1.1, 0.86, -4.2);
+    group.add(pillow);
+  }
+  if (level >= 3) {
+    const upperMark = labelSprite('UPSTAIRS · FAMILY ROOMS', '#735b3e');
+    upperMark.position.set(3.9, 2.4, -2.0);
+    upperMark.scale.set(1.9, 0.42, 1);
+    group.add(upperMark);
+    for (const x of [-5.1, 5.1]) {
+      const sideChair = makeMeetingChair();
+      sideChair.position.set(x, 0, 2.5);
+      group.add(sideChair);
+      addInteriorSeat(group, { seatId: `home-chair-${x}`, seatLabel: 'home lounge chair', x, z: 2.5, rotationY: Math.PI, approachPoint: { x, z: 1.55 } });
+    }
+  }
+  if (garageLevel >= 2) {
+    const toolShelf = box(1.7, 1.55, 0.36, '#77664e');
+    toolShelf.position.set(5.65, 0.84, 1.0);
+    group.add(toolShelf);
+    const tools = box(1.4, 0.18, 0.24, '#b09563', { castShadow: false });
+    tools.position.set(5.65, 1.32, 0.77);
+    group.add(tools);
+  }
+  const homeNote = labelSprite(`HOUSE LEVEL ${level} · PERSONAL SAVE`, '#736044');
+  homeNote.position.set(0, 2.05, 5.88);
+  homeNote.scale.set(2.6, 0.42, 1);
+  group.add(homeNote);
+  return group;
+}
+
+function buildHomeGarageInterior(info, palette) {
+  const property = info.propertyProfile || {};
+  const garageLevel = clamp(Number(property.garageLevel) || 0, 0, 4);
+  const group = buildEnclosedInteriorShell(info, palette, { floorColor: '#555c56', wallColor: '#d3d1c7', ceilingColor: '#bdc2ba', accent: '#ba955f', sign: 'HOME GARAGE · SAFE VEHICLE BAY' });
+  group.name = `player-garage-level-${garageLevel}`;
+  for (let bay = -1; bay <= (garageLevel >= 3 ? 1 : 0); bay += 2) {
+    const yellowLine = box(0.07, 0.015, 10.6, '#dbbb4e', { castShadow: false });
+    yellowLine.position.set(bay * 2.55, 0.015, 0.05);
+    group.add(yellowLine);
+  }
+  const car = makeCar('#e4bd43', 'sedan', '#1b6348');
+  car.position.set(-2.15, 0, -0.7);
+  car.rotation.y = Math.PI;
+  car.scale.setScalar(0.62);
+  group.add(car);
+  if (garageLevel >= 3) {
+    const secondCar = makeCar('#637f9b', 'compact', '#c0d5c9');
+    secondCar.position.set(2.35, 0, -0.65);
+    secondCar.rotation.y = Math.PI;
+    secondCar.scale.setScalar(0.57);
+    group.add(secondCar);
+  }
+  const workbench = box(2.45, 0.86, 0.7, '#805d3e');
+  workbench.position.set(-4.3, 0.55, -4.1);
+  group.add(workbench);
+  for (let tool = 0; tool < 5; tool += 1) {
+    const toolShape = box(0.12, 0.6 + (tool % 2) * 0.22, 0.08, ['#c8aa67', '#657a69', '#a86a4b'][tool % 3], { castShadow: false });
+    toolShape.position.set(-5.15 + tool * 0.38, 1.7, -5.97);
+    group.add(toolShape);
+  }
+  const shelf = box(1.0, 1.7, 0.45, '#7d715e');
+  shelf.position.set(5.3, 0.92, -3.5);
+  group.add(shelf);
+  const garageTitle = labelSprite(garageLevel ? `GARAGE TIER ${garageLevel}` : 'STARTER PARKING BAY', '#66543b');
+  garageTitle.position.set(0, 2.0, 5.84);
+  garageTitle.scale.set(2.6, 0.44, 1);
+  group.add(garageTitle);
+  addInteriorChair(group, 4.3, 2.9, { color: '#8b7652', seatId: 'garage-stool', label: 'garage workshop stool', width: 0.65, approachZ: 2.0 });
+  return group;
+}
+
+function buildMarketHallInterior(info, palette) {
+  const group = buildEnclosedInteriorShell(info, palette, { floorColor: '#b9a277', wallColor: '#e5d2ae', ceilingColor: '#d6c29d', accent: '#bd6d43', sign: 'COMMUNITY MARKET · TRADING HALL' });
+  group.name = `market-hall-${info.metadata?.venueId || info.id}`;
+  const aisle = new THREE.Mesh(new THREE.PlaneGeometry(2.0, 11.2), new THREE.MeshStandardMaterial({ color: '#cbb990', roughness: 0.96, side: THREE.DoubleSide }));
+  aisle.rotation.x = -Math.PI / 2;
+  aisle.position.set(0, 0.01, 0.15);
+  group.add(aisle);
+  const stallNames = ['GRAINS & BEANS', 'FRESH PRODUCE', 'FABRIC & PRINT', 'SPICES & TEA'];
+  const crateColors = ['#d99e43', '#d45c45', '#619160', '#8064a0', '#c3a950', '#57788b'];
+  for (let stall = 0; stall < 4; stall += 1) {
+    const side = stall < 2 ? -1 : 1;
+    const row = stall % 2;
+    const x = side * 4.05;
+    const z = row ? -2.55 : 2.0;
+    const counter = box(3.5, 0.83, 1.45, stall % 2 ? '#725640' : '#8a6546');
+    counter.position.set(x, 0.54, z);
+    group.add(counter);
+    const awning = box(3.72, 0.13, 1.78, ['#bd6d43', '#4f8a6b', '#ae844a', '#735c8d'][stall]);
+    awning.position.set(x, 2.22, z - 0.05);
+    group.add(awning);
+    const name = labelSprite(stallNames[stall], '#f4e5c9');
+    name.position.set(x, 1.96, z + 0.84);
+    name.scale.set(1.95, 0.39, 1);
+    group.add(name);
+    for (let crate = 0; crate < 5; crate += 1) {
+      const produce = box(0.48, 0.4 + (crate % 2) * 0.14, 0.48, crateColors[(stall + crate) % crateColors.length], { castShadow: false, roughness: 0.85 });
+      produce.position.set(x - 1.25 + (crate % 3) * 0.62, 1.2 + (crate % 2) * 0.1, z - 0.1 + Math.floor(crate / 3) * 0.58);
+      group.add(produce);
+    }
+    const vendor = makeSeatedAttendee(['#c97855', '#406d56', '#bd7f4b', '#596f87'][stall], '#764a35');
+    vendor.group.position.set(x, 0, z + (side < 0 ? 1.05 : -1.05));
+    vendor.group.rotation.y = side < 0 ? Math.PI : 0;
+    vendor.group.scale.setScalar(0.78);
+    group.add(vendor.group);
+    addInteriorChair(group, x, z + (side < 0 ? 1.05 : -1.05), { color: '#806346', seatId: `market-seat-${stall}`, label: 'market waiting seat', width: 0.62, approachZ: z + (side < 0 ? 1.95 : -0.1) });
+  }
+  for (const x of [-5.8, 5.8]) {
+    const pillar = box(0.34, 4.15, 0.34, '#9e8762');
+    pillar.position.set(x, 2.05, 0);
+    group.add(pillar);
+  }
+  const marketNote = labelSprite('LOCAL TRADERS · MANY VOICES', '#704f37');
+  marketNote.position.set(0, 2.1, 5.87);
+  marketNote.scale.set(2.85, 0.42, 1);
+  group.add(marketNote);
+  return group;
+}
+
+function buildCourtInterior(info, palette) {
+  const group = buildEnclosedInteriorShell(info, palette, { floorColor: '#7e715d', wallColor: '#e5e0d3', ceilingColor: '#d3c7af', accent: '#4b6379', sign: 'ELECTION PETITION COURT' });
+  group.name = `courtroom-${info.metadata?.venueId || info.id}`;
+  const raisedBench = box(7.6, 0.4, 2.15, '#5c4534');
+  raisedBench.position.set(0, 0.33, -4.25);
+  group.add(raisedBench);
+  const judgeDesk = box(5.4, 0.92, 1.05, '#714e37');
+  judgeDesk.position.set(0, 0.98, -4.25);
+  group.add(judgeDesk);
+  const deskTop = box(5.65, 0.14, 1.18, '#aa7c52', { castShadow: false });
+  deskTop.position.set(0, 1.47, -4.25);
+  group.add(deskTop);
+  const courtSeal = new THREE.Mesh(new THREE.CircleGeometry(0.68, 24), new THREE.MeshStandardMaterial({ color: '#d5bd77', roughness: 0.62 }));
+  courtSeal.position.set(0, 2.35, -6.12);
+  group.add(courtSeal);
+  const sealText = labelSprite('JUSTICE · EVIDENCE · DUE PROCESS', '#213a44');
+  sealText.position.set(0, 2.33, -6.0);
+  sealText.scale.set(2.6, 0.45, 1);
+  group.add(sealText);
+  for (const x of [-4.0, 4.0]) {
+    const table = box(2.65, 0.16, 1.2, '#79573f');
+    table.position.set(x, 0.96, -0.9);
+    group.add(table);
+    for (const seatX of [x - 0.72, x + 0.72]) addInteriorChair(group, seatX, 0.2, { color: '#425c65', seatId: `court-seat-${seatX}`, label: 'court visitor chair', width: 0.7, approachZ: -0.78 });
+  }
+  const witnessStand = box(1.45, 1.15, 1.25, '#74533c');
+  witnessStand.position.set(0, 0.68, 1.65);
+  group.add(witnessStand);
+  const witnessLabel = labelSprite('WITNESS BOX', '#d8c393');
+  witnessLabel.position.set(0, 1.65, 1.64);
+  witnessLabel.scale.set(1.55, 0.35, 1);
+  group.add(witnessLabel);
+  addSimulatedMeetingActor(group, { id: 'sim-court-clerk', name: 'Fictional Court Clerk', position: 'Simulated Court Clerk', x: -2.05, z: -2.45, shirt: '#58728e', skin: '#754d3b', accent: '#627d95' });
+  addSimulatedMeetingActor(group, { id: 'sim-court-facilitator', name: 'Fictional Hearing Facilitator', position: 'Simulated Hearing Facilitator', x: 2.05, z: -2.45, shirt: '#7a6351', skin: '#916242', accent: '#627d95' });
+  const courtRoomNote = labelSprite('SIMULATED HEARING · FICTIONAL PROCEEDINGS', '#263c46');
+  courtRoomNote.position.set(0, 2.1, 5.84);
+  courtRoomNote.scale.set(2.95, 0.42, 1);
+  group.add(courtRoomNote);
+  return group;
+}
+
+function buildAssemblyInterior(info, palette) {
+  const group = buildEnclosedInteriorShell(info, palette, { floorColor: '#8c8b78', wallColor: '#e2ddce', ceilingColor: '#d1cbb8', accent: '#367466', sign: 'STATE ASSEMBLY CHAMBER' });
+  group.name = `assembly-chamber-${info.metadata?.venueId || info.id}`;
+  const dais = box(8.4, 0.42, 2.15, '#59746a');
+  dais.position.set(0, 0.36, -4.3);
+  group.add(dais);
+  const podium = box(3.25, 1.1, 0.92, '#785a3e');
+  podium.position.set(0, 1.1, -4.25);
+  group.add(podium);
+  const podiumTop = box(3.55, 0.16, 1.15, '#c4a665');
+  podiumTop.position.set(0, 1.7, -4.25);
+  group.add(podiumTop);
+  const seal = new THREE.Mesh(new THREE.CircleGeometry(0.55, 24), new THREE.MeshStandardMaterial({ color: '#d5b95c', roughness: 0.56 }));
+  seal.position.set(0, 2.55, -6.08);
+  group.add(seal);
+  for (const side of [-1, 1]) {
+    const lectern = box(0.9, 1.18, 0.7, side < 0 ? '#387254' : '#e1e1ce');
+    lectern.position.set(side * 4.4, 0.98, -4.5);
+    group.add(lectern);
+  }
+  const chamberRows = [
+    { z: -1.8, y: 0.45, xs: [-4.6, -2.8, -0.95, 0.95, 2.8, 4.6] },
+    { z: 0.2, y: 0.78, xs: [-4.6, -2.8, -0.95, 0.95, 2.8, 4.6] },
+    { z: 2.2, y: 1.1, xs: [-4.6, -2.8, -0.95, 0.95, 2.8, 4.6] },
+  ];
+  chamberRows.forEach((row, rowIndex) => {
+    const bench = box(10.2, 0.16, 0.68, rowIndex % 2 ? '#516f64' : '#46685e');
+    bench.position.set(0, row.y + 0.24, row.z);
+    group.add(bench);
+    row.xs.forEach((x, seatIndex) => {
+      const chair = makeMeetingChair();
+      chair.position.set(x, row.y, row.z);
+      chair.rotation.y = Math.PI;
+      group.add(chair);
+      addInteriorSeat(group, { seatId: `assembly-seat-${rowIndex}-${seatIndex}`, seatLabel: 'assembly gallery chair', x, z: row.z, rotationY: Math.PI, approachPoint: { x, z: row.z + 0.8 } });
+    });
+  });
+  addSimulatedMeetingActor(group, { id: 'sim-assembly-clerk', name: 'Fictional Committee Clerk', position: 'Simulated Committee Clerk', x: -3.15, z: -3.05, shirt: '#3b735b', skin: '#734b36', accent: '#3d776b' });
+  addSimulatedMeetingActor(group, { id: 'sim-assembly-facilitator', name: 'Fictional Hearing Facilitator', position: 'Simulated Hearing Facilitator', x: 3.15, z: -3.05, shirt: '#8c7652', skin: '#936145', accent: '#3d776b' });
+  const chamberNote = labelSprite('PUBLIC HEARING · OVERSIGHT · LAWMAKING', '#3f5d52');
+  chamberNote.position.set(0, 2.1, 5.84);
+  chamberNote.scale.set(3.0, 0.42, 1);
+  group.add(chamberNote);
+  return group;
+}
+
+function buildInstitutionOfficeInterior(info, palette) {
+  const venueId = String(info.metadata?.venueId || info.id || 'office');
+  const isInec = venueId.includes('inec');
+  const isSiec = venueId.includes('siec');
+  const isCbn = venueId.includes('cbn');
+  const sectionTitle = isInec ? 'ELECTION ADMINISTRATION DESK' : isSiec ? 'STATE ELECTION OPERATIONS' : isCbn ? 'MONETARY POLICY BRIEFING' : venueId.includes('ward') ? 'WARD COMMUNITY OFFICE' : 'PUBLIC SERVICE OFFICE';
+  const accent = isCbn ? '#527094' : isInec || isSiec ? '#237b56' : palette.accent || '#527866';
+  const group = buildEnclosedInteriorShell(info, palette, { floorColor: isCbn ? '#a9b2b6' : '#b9ad91', wallColor: '#e8e2d2', ceilingColor: '#d5d2c5', accent, sign: sectionTitle });
+  group.name = `institution-office-${venueId}`;
+  const desk = box(isInec || isSiec ? 5.25 : 4.4, 0.84, 1.0, isCbn ? '#405b72' : '#75573d');
+  desk.position.set(0, 0.55, -3.35);
+  group.add(desk);
+  const deskSurface = box(isInec || isSiec ? 5.55 : 4.7, 0.13, 1.12, '#c1ac84', { castShadow: false });
+  deskSurface.position.set(0, 1.03, -3.35);
+  group.add(deskSurface);
+  for (const x of [-1.55, 0, 1.55]) {
+    const screen = box(0.7, 0.53, 0.08, '#23383a', { castShadow: false });
+    screen.position.set(x, 1.38, -3.7);
+    group.add(screen);
+  }
+  if (isInec || isSiec) {
+    const ballotBox = box(0.95, 1.2, 0.82, '#dedfd5');
+    ballotBox.position.set(-4.6, 0.63, -0.4);
+    group.add(ballotBox);
+    const ballotSlot = box(0.48, 0.05, 0.06, '#324e42', { castShadow: false });
+    ballotSlot.position.set(-4.6, 1.25, -0.4);
+    group.add(ballotSlot);
+    const privacyScreen = box(1.1, 2.0, 0.12, '#c7d1c6');
+    privacyScreen.position.set(4.6, 1.0, -1.0);
+    group.add(privacyScreen);
+    const boxLabel = labelSprite(isInec ? 'BALLOT & RESULTS DESK' : 'LOCAL ELECTIONS DESK', '#315d49');
+    boxLabel.position.set(0, 2.0, 5.85);
+    boxLabel.scale.set(2.75, 0.44, 1);
+    group.add(boxLabel);
+  } else if (isCbn) {
+    const chart = box(4.4, 1.65, 0.14, '#253f50', { castShadow: false });
+    chart.position.set(0, 2.35, -6.08);
+    group.add(chart);
+    for (let index = 0; index < 6; index += 1) {
+      const bar = box(0.34, 0.35 + index * 0.15, 0.05, ['#66a696', '#d6ba72', '#83a7c4'][index % 3], { castShadow: false });
+      bar.position.set(-1.45 + index * 0.58, 1.8 + index * 0.075, -5.96);
+      group.add(bar);
+    }
+  } else {
+    const communityDesk = box(2.25, 0.1, 1.1, '#8b7355');
+    communityDesk.position.set(0, 0.92, 1.5);
+    group.add(communityDesk);
+  }
+  for (const [index, x] of [-3.9, -1.3, 1.3, 3.9].entries()) {
+    addInteriorChair(group, x, 0.65, { color: isCbn ? '#526b83' : '#3f7156', seatId: `office-public-seat-${index}`, label: 'public service visitor chair', width: 0.76, approachZ: 1.52 });
+  }
+  const officePeople = isInec
+    ? [['sim-inec-desk-lead', 'Fictional Desk Lead', 'Simulated election-service lead'], ['sim-inec-operations', 'Fictional Operations Officer', 'Simulated operations officer'], ['sim-inec-community', 'Fictional Community Liaison', 'Simulated community liaison']]
+    : isSiec
+      ? [['sim-siec-desk-lead', 'Fictional State Desk Lead', 'Simulated state-election lead'], ['sim-siec-operations', 'Fictional Field Coordinator', 'Simulated field coordinator'], ['sim-siec-community', 'Fictional Service Liaison', 'Simulated service liaison']]
+      : isCbn
+        ? [['sim-cbn-policy-lead', 'Fictional Policy Lead', 'Simulated policy facilitator'], ['sim-cbn-research', 'Fictional Research Officer', 'Simulated research officer'], ['sim-cbn-community', 'Fictional Public Liaison', 'Simulated public liaison']]
+        : [['sim-office-coordinator', 'Fictional Office Coordinator', 'Simulated office coordinator'], ['sim-office-service', 'Fictional Service Officer', 'Simulated service officer'], ['sim-office-community', 'Fictional Community Liaison', 'Simulated community liaison']];
+  officePeople.forEach(([id, name, position], index) => addSimulatedMeetingActor(group, {
+    id, name, position, x: -3.15 + index * 3.15, z: -1.6,
+    shirt: ['#377353', '#bc8355', '#52779a'][index], skin: ['#79513b', '#996a49', '#684332'][index], accent,
+  }));
+  const disclaimer = labelSprite('SIMULATED PUBLIC SERVICE · NO OFFICIAL BUSINESS', '#4f5a4d');
+  disclaimer.position.set(0, 2.02, 5.86);
+  disclaimer.scale.set(3.25, 0.44, 1);
+  group.add(disclaimer);
+  return group;
+}
+
+function buildCommunityHallInterior(info, palette) {
+  const group = buildEnclosedInteriorShell(info, palette, { floorColor: '#bba57f', wallColor: '#e9dec8', ceilingColor: '#d4c8ad', accent: palette.accent || '#bd8051', sign: info.title || 'COMMUNITY HALL' });
+  group.name = `community-hall-${info.metadata?.venueType || info.type}`;
+  const roundTable = new THREE.Mesh(new THREE.CylinderGeometry(1.65, 1.65, 0.16, 32), new THREE.MeshStandardMaterial({ color: '#815e40', roughness: 0.79 }));
+  roundTable.position.set(0, 0.86, -0.6);
+  group.add(roundTable);
+  const tableStem = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.28, 0.86, 10), new THREE.MeshStandardMaterial({ color: '#6d503b', roughness: 0.76 }));
+  tableStem.position.set(0, 0.42, -0.6);
+  group.add(tableStem);
+  for (let index = 0; index < 8; index += 1) {
+    const angle = (index / 8) * Math.PI * 2;
+    const x = Math.cos(angle) * 3.1;
+    const z = -0.6 + Math.sin(angle) * 3.1;
+    addInteriorChair(group, x, z, { color: index % 2 ? '#4d765b' : '#b48352', seatId: `community-seat-${index}`, label: 'community meeting chair', rotationY: Math.atan2(-x, -z), approachZ: z + Math.sign(z || 1) * 0.9 });
+  }
+  const hallNote = labelSprite('OPEN COMMUNITY MEETING · TYPE YOUR REPLIES', '#644e37');
+  hallNote.position.set(0, 2.12, 5.86);
+  hallNote.scale.set(3.1, 0.42, 1);
+  group.add(hallNote);
+  return group;
+}
+
 function buildInteriorRoom(info, palette, playerColor) {
   if (info.type === 'party-office') return buildPartyOfficeInterior(info, palette, playerColor);
-  if (info.metadata?.venueType === 'stadium') return buildStadiumInterior(info, palette);
+  const venueType = info.metadata?.venueType || info.type;
+  if (venueType === 'stadium') return buildStadiumInterior(info, palette);
+  if (venueType === 'airport') return buildAirportTerminalInterior(info, palette);
+  if (venueType === 'plane') return buildAircraftCabinInterior(info, palette);
+  if (venueType === 'home') return buildHomeInterior(info, palette);
+  if (venueType === 'garage') return buildHomeGarageInterior(info, palette);
+  if (venueType === 'market') return buildMarketHallInterior(info, palette);
+  if (venueType === 'court') return buildCourtInterior(info, palette);
+  if (venueType === 'assembly') return buildAssemblyInterior(info, palette);
+  if (venueType === 'office') return buildInstitutionOfficeInterior(info, palette);
+  if (venueType === 'caucus' || venueType === 'square') return buildCommunityHallInterior(info, palette);
   const group = new THREE.Group();
   group.name = `interior-${info.id || info.type}`;
   const wallMaterial = '#e3d8bf';
@@ -2609,7 +3432,7 @@ function buildInteriorRoom(info, palette, playerColor) {
   return group;
 }
 
-function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, playerColor, playerAppearance, worldMinuteRef, meetingRef, meetingMessagesRef, meetingContextRef, meetingTravelRef, focusRef, partyFocusRef, exitInteriorRef, interiorChangeRef, executiveFocusRef, interiorActionRef) {
+function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, playerColor, playerAppearance, worldMinuteRef, meetingRef, meetingMessagesRef, meetingContextRef, meetingTravelRef, focusRef, partyFocusRef, exitInteriorRef, interiorChangeRef, executiveFocusRef, interiorActionRef, planeBoardActionRef, flightActionRef, propertyProfileRef, propertyOwnerRef, flightPhaseRef, flightCompleteRef) {
   const stateInfo = STATES.find((item) => item.name === state) || STATES[0];
   const profile = STATE_WORLD_PROFILES[stateInfo.name] || STATE_WORLD_PROFILES.Lagos;
   const localityStyle = createLocalityVisualProfile(stateInfo, profile, locality);
@@ -2807,6 +3630,7 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
         const offsetZ = (rand() - 0.5) * 2.0;
         const candidateX = xBlock + offsetX;
         const candidateZ = zBlock + offsetZ;
+        if (Math.hypot(candidateX - 16, candidateZ - 17) < 6.2) { buildingIndex += 1; continue; }
         const building = makeBuilding(rand, candidateX, candidateZ, buildingIndex, palette, localityStyle);
         const s = 0.75 + rand() * 0.35;
         building.scale.setScalar(s);
@@ -2825,7 +3649,7 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     const x = (rand() - 0.5) * 31;
     const z = (rand() - 0.5) * 31;
     if (Math.abs(x) < 5.5 || Math.abs(z) < 5.5) continue;
-    if (Math.abs(z + 10.5) < 4.5 || Math.hypot(x + 17.6, z - 17.6) < 5.2 || Math.hypot(x - 17.5, z + 17.5) < 5.2) continue;
+    if (Math.abs(z + 10.5) < 4.5 || Math.hypot(x + 17.6, z - 17.6) < 5.2 || Math.hypot(x - 17.5, z + 17.5) < 5.2 || Math.hypot(x - 16, z - 17) < 6.2) continue;
     const building = makeBuilding(rand, x, z, buildingIndex++, palette, localityStyle);
     const halfX = (building.userData.collisionRects || []).reduce((extent, rect) => Math.max(extent, Math.abs(rect.x) + rect.halfX), 0);
     const halfZ = (building.userData.collisionRects || []).reduce((extent, rect) => Math.max(extent, Math.abs(rect.z) + rect.halfZ), 0);
@@ -2840,7 +3664,7 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     const x = (rand() - 0.5) * 37;
     const z = (rand() - 0.5) * 37;
     if (Math.abs(x) < 4.6 || Math.abs(z) < 4.6 || Math.abs(z + 10.5) < 3.1) continue;
-    if (Math.abs(x) > 22 || Math.abs(z) > 22 || Math.hypot(x + 17.6, z - 17.6) < 4.2 || Math.hypot(x - 17.5, z + 17.5) < 4.2) continue;
+    if (Math.abs(x) > 22 || Math.abs(z) > 22 || Math.hypot(x + 17.6, z - 17.6) < 4.2 || Math.hypot(x - 17.5, z + 17.5) < 4.2 || Math.hypot(x - 16, z - 17) < 6.2) continue;
     const tree = makeRegionalTree(x, z, 2.3 + rand() * 2.0, palette, sceneMaterials, rand);
     tree.scale.setScalar(0.73 + rand() * 0.42);
     scene.add(tree);
@@ -2860,9 +3684,13 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
   scene.add(stateSignature);
   registerGroupColliders(stateSignature);
   for (const venue of WORLD_VENUES) {
-    const venueGroup = makeVenue(venue, palette, sceneMaterials, stateInfo.name);
+    const venueGroup = makeVenue(venue, palette, sceneMaterials, stateInfo.name, propertyProfileRef?.current, propertyOwnerRef?.current);
     scene.add(venueGroup);
     registerGroupColliders(venueGroup);
+    venueGroup.traverse((object) => {
+      const interaction = object.userData?.interaction;
+      if (interaction?.type === 'plane' && interaction.metadata?.cabinClass) planeBoardingDoors.set(interaction.metadata.cabinClass, object);
+    });
   }
 
   const safeMeetingPoint = (meetingId, venueId, playerId, slot) => {
@@ -2939,6 +3767,7 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     reservedNames: NPCS.map((person) => person.name),
   });
   const partyOfficeDoors = new Map();
+  const planeBoardingDoors = new Map();
   const partyStreetMaterial = new THREE.MeshStandardMaterial({ color: '#424a45', roughness: 0.9 });
   for (const row of [-1, 1]) {
     const street = new THREE.Mesh(new THREE.PlaneGeometry(58, 3.9), partyStreetMaterial);
@@ -3142,6 +3971,7 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
   let movementWaypointIndex = 0;
   let interiorActive = false;
   let interiorGroup = null;
+  let activeFlight = null;
   const interiorColliders = [];
   const activeCollisionRects = () => (interiorActive ? interiorColliders : getWorldActorColliders());
   const activeWorldBounds = () => (interiorActive
@@ -3245,7 +4075,7 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     if (notify) notifyInteriorAction({ type: 'stood-up' });
   };
   const exitInterior = () => {
-    if (!interiorActive) return;
+    if (!interiorActive || activeFlight) return;
     standFromSeat(false);
     interiorExecutiveTargets.clear();
     if (executiveFocusRef) executiveFocusRef.current = null;
@@ -3306,11 +4136,16 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
       ...interaction,
       title: office ? `${office.tag} · ${office.name}` : interaction.title || 'Community space',
       branch: interaction.metadata?.branch || [],
+      propertyProfile: propertyProfileRef?.current || {},
+      propertyOwner: propertyOwnerRef?.current || 'PLAYER',
       party: office || null,
       nationalOfficers: office ? { chair: office.chair, secretary: office.secretary, checkedAt: PARTY_REGISTER_CHECKED_AT, source: PARTY_REGISTER_SOURCE } : null,
       fictional: interaction.type === 'party-office' || interaction.type === 'building' || interaction.type === 'landmark',
     };
     interiorGroup = buildInteriorRoom(info, palette, playerColor);
+    interiorGroup.userData.venueType = info.metadata?.venueType || info.type;
+    interiorGroup.userData.cabinClass = info.metadata?.cabinClass || null;
+    interiorGroup.userData.interiorInfo = info;
     interiorColliders.length = 0;
     registerGroupColliders(interiorGroup, interiorColliders);
     // Isolate the enclosed room from the street scene; no roads, trees, traffic or exterior lights render through it.
@@ -3371,6 +4206,204 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
       if (action) beginDoorInteraction(action, action.targetObject);
     };
     interiorChangeRef?.current?.(info);
+  };
+  const announceFlightPhase = (phase, progress, request) => {
+    flightPhaseRef?.current?.({ phase, progress: clamp(progress, 0, 1), origin: request.origin, destination: request.destination, cabinClass: request.cabinClass });
+  };
+  const placeArrivalScene = (flight) => {
+    if (flight.stage) {
+      scene.remove(flight.stage);
+      disposeGroup(flight.stage);
+    }
+    const stage = new THREE.Group();
+    stage.name = 'arrival-deplaning-stage';
+    stage.add(new THREE.HemisphereLight('#eef8ed', '#59635a', 1.75));
+    const arrivalSun = new THREE.DirectionalLight('#fff0c9', 2.35);
+    arrivalSun.position.set(-12, 20, 11);
+    stage.add(arrivalSun);
+    const apron = box(75, 0.12, 75, '#636a66', { castShadow: false, roughness: 0.95 });
+    apron.position.set(0, -0.12, 0);
+    stage.add(apron);
+    const runway = box(65, 0.035, 5.6, '#444b49', { castShadow: false, roughness: 0.95 });
+    runway.position.set(0, -0.045, -8.5);
+    stage.add(runway);
+    for (let dash = -9; dash <= 9; dash += 1) {
+      const mark = box(1.05, 0.025, 0.12, '#ede4ca', { castShadow: false });
+      mark.position.set(dash * 3.0, -0.01, -8.5);
+      stage.add(mark);
+    }
+    const terminal = box(20, 4.15, 2.0, '#d2d4cb');
+    terminal.position.set(0, 2.02, -12.0);
+    stage.add(terminal);
+    const terminalGlass = box(15.5, 1.55, 0.06, '#6b99a2', { castShadow: false, roughness: 0.35, metalness: 0.1 });
+    terminalGlass.position.set(0, 2.6, -10.95);
+    stage.add(terminalGlass);
+    const airportName = labelSprite(`${flight.request.destination.toUpperCase()} · ARRIVALS`, '#f2d886');
+    airportName.position.set(0, 4.0, -10.84);
+    airportName.scale.set(3.8, 0.74, 1);
+    stage.add(airportName);
+    const aircraft = makeAirliner(flight.request.cabinClass, '#196a54');
+    aircraft.position.set(-1.35, 1.08, -1.25);
+    aircraft.rotation.y = -0.06;
+    aircraft.scale.setScalar(0.78);
+    stage.add(aircraft);
+    const stairX = -0.9;
+    for (let step = 0; step < 9; step += 1) {
+      const tread = box(0.92, 0.1, 0.42, step % 2 ? '#9f9d91' : '#b3afa0', { castShadow: false, roughness: 0.83 });
+      tread.position.set(stairX, 0.91 - step * 0.1, 0.15 + step * 0.42);
+      stage.add(tread);
+      const railPost = box(0.07, 0.62, 0.07, '#667774', { castShadow: false, metalness: 0.15 });
+      railPost.position.set(stairX + (step % 2 ? 0.55 : -0.55), 1.16 - step * 0.1, 0.15 + step * 0.42);
+      stage.add(railPost);
+    }
+    for (const side of [-1, 1]) {
+      const rail = box(0.07, 0.08, 3.75, '#6f827b', { castShadow: false, metalness: 0.14 });
+      rail.rotation.x = -0.22;
+      rail.position.set(stairX + side * 0.55, 1.18, 1.9);
+      stage.add(rail);
+    }
+    const redCarpet = box(0.66, 0.04, 3.85, '#a84b3c', { castShadow: false, roughness: 0.92 });
+    redCarpet.position.set(stairX, 1.0, 1.8);
+    stage.add(redCarpet);
+    const baggageCart = box(1.4, 0.62, 0.7, '#a18d64');
+    baggageCart.position.set(3.8, 0.34, 1.2);
+    stage.add(baggageCart);
+    const cartWheel = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.065, 6, 12), new THREE.MeshStandardMaterial({ color: '#242b2a', roughness: 0.8 }));
+    for (const x of [3.3, 4.3]) {
+      const wheel = cartWheel.clone();
+      wheel.position.set(x, 0.2, 1.5);
+      stage.add(wheel);
+    }
+    flight.stage = stage;
+    flight.plane = aircraft;
+    flight.clouds = [];
+    flight.arrivalStage = true;
+    scene.add(stage);
+    if (interiorGroup) interiorGroup.visible = false;
+    if (player.parent) player.parent.remove(player);
+    stage.add(player);
+    player.visible = true;
+    player.position.set(stairX, 0.98, 0.05);
+    player.rotation.y = 0;
+    flight.avatarStart = player.position.clone();
+    flight.avatarEnd = new THREE.Vector3(stairX, 0, 3.8);
+    scene.background = new THREE.Color('#a4c5c5');
+    scene.fog = null;
+    camera.position.set(10.5, 8.1, 10.7);
+    controls.target.set(-0.9, 1.15, 1.2);
+    camera.fov = 46;
+    camera.updateProjectionMatrix();
+    controls.minDistance = 7;
+    controls.maxDistance = 22;
+    controls.minPolarAngle = 0.62;
+    controls.maxPolarAngle = 1.48;
+    controls.update();
+  };
+  const finishFlightSequence = (flight) => {
+    if (flight.stage) {
+      flight.stage.remove(player);
+      scene.remove(flight.stage);
+      disposeGroup(flight.stage);
+    }
+    if (interiorGroup) {
+      interiorGroup.add(player);
+      interiorGroup.visible = false;
+    } else scene.add(player);
+    player.visible = false;
+    player.position.set(0, 0, 4.9);
+    player.rotation.y = Math.PI;
+    scene.background = flight.savedBackground || interiorBackdrop;
+    scene.fog = flight.savedFog;
+    if (flight.savedCameraPosition) camera.position.copy(flight.savedCameraPosition);
+    if (flight.savedCameraTarget) controls.target.copy(flight.savedCameraTarget);
+    camera.fov = flight.savedCameraFov || camera.fov;
+    camera.updateProjectionMatrix();
+    controls.minDistance = 2.8;
+    controls.maxDistance = 6.7;
+    controls.minPolarAngle = 1.12;
+    controls.maxPolarAngle = 1.6;
+    controls.update();
+    activeFlight = null;
+    flightCompleteRef?.current?.(flight.request);
+  };
+  const startPlaneTrip = (rawRequest) => {
+    if (activeFlight || !interiorActive || interiorGroup?.userData.venueType !== 'plane') return;
+    const request = {
+      ...rawRequest,
+      origin: rawRequest.origin || stateInfo.name,
+      cabinClass: rawRequest.cabinClass || interiorGroup.userData.cabinClass || 'economy',
+    };
+    const stage = new THREE.Group();
+    stage.name = 'in-flight-aircraft-exterior';
+    stage.add(new THREE.HemisphereLight('#effaff', '#6b7985', 2.0));
+    const flightSun = new THREE.DirectionalLight('#fff4da', 2.65);
+    flightSun.position.set(-14, 21, 12);
+    stage.add(flightSun);
+    const clouds = [];
+    const cloudDeck = new THREE.Mesh(new THREE.PlaneGeometry(120, 90), new THREE.MeshStandardMaterial({ color: '#b7d9df', roughness: 1, side: THREE.DoubleSide }));
+    cloudDeck.rotation.x = -Math.PI / 2;
+    cloudDeck.position.y = -3.0;
+    stage.add(cloudDeck);
+    const sunGlow = new THREE.Mesh(new THREE.SphereGeometry(1.15, 12, 10), new THREE.MeshBasicMaterial({ color: '#fff0c7' }));
+    sunGlow.position.set(-15, 15, -24);
+    stage.add(sunGlow);
+    const aircraft = makeAirliner(request.cabinClass, '#176c53');
+    aircraft.position.set(0, 5.3, 0);
+    aircraft.rotation.y = 0.28;
+    aircraft.scale.setScalar(request.cabinClass === 'private-jet' ? 1.3 : 1.18);
+    stage.add(aircraft);
+    for (let index = 0; index < 7; index += 1) {
+      const cloud = makeCloudCluster();
+      cloud.scale.setScalar(1.15 + (index % 3) * 0.35);
+      cloud.position.set(-21 + index * 7.0, 2.3 + (index % 2) * 2.5, -15 + (index % 4) * 8.0);
+      clouds.push(cloud);
+      stage.add(cloud);
+    }
+    activeFlight = {
+      request,
+      stage,
+      plane: aircraft,
+      clouds,
+      startedAt: performance.now() / 1000,
+      phaseStartedAt: performance.now() / 1000,
+      phase: 'takeoff',
+      statusUpdatedAt: 0,
+      savedBackground: scene.background?.clone?.() || new THREE.Color('#d8c9ad'),
+      savedFog: scene.fog,
+      savedCameraPosition: camera.position.clone(),
+      savedCameraTarget: controls.target.clone(),
+      savedCameraFov: camera.fov,
+      arrivalStage: false,
+      deboardDuration: 3.2,
+    };
+    scene.add(stage);
+    if (interiorGroup) interiorGroup.visible = false;
+    isMoving = false;
+    movementWaypoints = [];
+    movementWaypointIndex = 0;
+    keyState.clear();
+    player.visible = false;
+    scene.background = new THREE.Color('#86c5e3');
+    scene.fog = new THREE.Fog('#c9e3e6', 52, 125);
+    camera.position.set(11.5, 9.5, 17.5);
+    controls.target.set(0, 5.2, 0);
+    camera.fov = 48;
+    camera.updateProjectionMatrix();
+    controls.minDistance = 8;
+    controls.maxDistance = 34;
+    controls.minPolarAngle = 0.4;
+    controls.maxPolarAngle = 1.48;
+    controls.update();
+    announceFlightPhase('takeoff', 0, request);
+  };
+  if (flightActionRef) flightActionRef.current = startPlaneTrip;
+  if (planeBoardActionRef) planeBoardActionRef.current = (cabinClass) => {
+    if (!interiorActive || interiorGroup?.userData.venueType !== 'airport') return;
+    const door = planeBoardingDoors.get(cabinClass) || planeBoardingDoors.get('economy');
+    const interaction = door?.userData?.interaction;
+    if (!interaction) return;
+    exitInterior();
+    enterInterior(interaction);
   };
   const sitAtInteriorSeat = (interaction) => {
     const target = interaction?.targetObject;
@@ -3508,6 +4541,7 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
   }
 
   const setTargetFromEvent = (event) => {
+    if (activeFlight) return;
     const bounds = renderer.domElement.getBoundingClientRect();
     pointer.x = ((event.clientX - bounds.left) / bounds.width) * 2 - 1;
     pointer.y = -((event.clientY - bounds.top) / bounds.height) * 2 + 1;
@@ -3568,7 +4602,7 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
   };
   const keyState = new Set();
   const onKeyDown = (event) => {
-    if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
+    if (activeFlight || ['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
     if (event.key === 'Escape' && interiorActive) { exitInterior(); return; }
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'w', 'a', 's', 'd'].includes(event.key)) {
       keyState.add(event.key.toLowerCase());
@@ -3586,7 +4620,8 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     const width = root.clientWidth || 1;
     const height = root.clientHeight || 1;
     camera.aspect = width / height;
-    if (interiorActive) fitInteriorCameraFov();
+    if (activeFlight) camera.updateProjectionMatrix();
+    else if (interiorActive) fitInteriorCameraFov();
     else camera.updateProjectionMatrix();
     renderer.setSize(width, height);
   };
@@ -3621,7 +4656,9 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
       currentSky.lerp(skyDusk, twilight * 0.63);
       currentFog.lerp(fogDusk, twilight * 0.45);
     }
-    if (interiorActive) {
+    if (activeFlight) {
+      // The flight cutscene owns its sky and horizon while the character is in transit.
+    } else if (interiorActive) {
       scene.background.copy(activeInteriorBackdrop);
     } else {
       scene.background.copy(currentSky);
@@ -3639,12 +4676,75 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
       bulb.emissiveIntensity = lampPower * 1.2;
     });
   };
+  const updateFlightSequence = (delta, now = performance.now() / 1000) => {
+    const flight = activeFlight;
+    if (!flight) return;
+    const takeoffDuration = 2.35;
+    const cruiseDuration = 4.15;
+    const landingDuration = 2.35;
+    const totalBeforeDeboard = takeoffDuration + cruiseDuration + landingDuration;
+    const elapsed = now - flight.startedAt;
+    const totalDuration = totalBeforeDeboard + flight.deboardDuration;
+    const phase = elapsed < takeoffDuration ? 'takeoff'
+      : elapsed < takeoffDuration + cruiseDuration ? 'cruise'
+        : elapsed < totalBeforeDeboard ? 'landing' : 'deboarding';
+    if (phase !== flight.phase) {
+      flight.phase = phase;
+      flight.phaseStartedAt = now;
+      if (phase === 'deboarding') placeArrivalScene(flight);
+      announceFlightPhase(phase, elapsed / totalDuration, flight.request);
+      flight.statusUpdatedAt = now;
+    }
+    const progress = clamp(elapsed / totalDuration, 0, 1);
+    if (phase === 'takeoff' && !flight.arrivalStage) {
+      const t = clamp(elapsed / takeoffDuration, 0, 1);
+      flight.plane.position.set(Math.sin(elapsed * 0.52) * 0.42, 4.8 + t * 1.15, Math.sin(elapsed * 0.3) * 0.3);
+      flight.plane.rotation.x = -0.08 - t * 0.07;
+      flight.plane.rotation.y = 0.28 + Math.sin(elapsed * 0.7) * 0.04;
+      flight.plane.rotation.z = Math.sin(elapsed * 0.55) * 0.025;
+    } else if (phase === 'cruise' && !flight.arrivalStage) {
+      flight.plane.position.set(Math.sin(elapsed * 0.24) * 0.78, 6.0 + Math.sin(elapsed * 0.9) * 0.12, Math.sin(elapsed * 0.18) * 0.5);
+      flight.plane.rotation.x = Math.sin(elapsed * 0.55) * 0.012;
+      flight.plane.rotation.y = 0.28 + Math.sin(elapsed * 0.35) * 0.035;
+      flight.plane.rotation.z = Math.sin(elapsed * 0.42) * 0.025;
+    } else if (phase === 'landing' && !flight.arrivalStage) {
+      const t = clamp((elapsed - takeoffDuration - cruiseDuration) / landingDuration, 0, 1);
+      flight.plane.position.set(Math.sin(elapsed * 0.35) * 0.5, 6.0 - t * 1.2, Math.cos(elapsed * 0.35) * 0.4);
+      flight.plane.rotation.x = 0.035 + t * 0.055;
+      flight.plane.rotation.y = 0.28 - t * 0.08;
+      flight.plane.rotation.z = Math.sin(elapsed * 0.4) * 0.018;
+    } else if (phase === 'deboarding' && flight.arrivalStage) {
+      const t = clamp((now - flight.phaseStartedAt) / flight.deboardDuration, 0, 1);
+      const eased = t * t * (3 - 2 * t);
+      player.position.lerpVectors(flight.avatarStart, flight.avatarEnd, eased);
+      player.rotation.y = t > 0.58 ? Math.sin(t * Math.PI) * 0.08 : 0;
+      flight.walking = t > 0.035 && t < 0.98;
+      if (t >= 1) {
+        flight.walking = false;
+        finishFlightSequence(flight);
+        return;
+      }
+    }
+    if (!flight.arrivalStage) {
+      flight.clouds.forEach((cloud, index) => {
+        cloud.position.x += delta * (0.8 + (index % 3) * 0.15);
+        cloud.position.z -= delta * 0.12;
+        if (cloud.position.x > 25) cloud.position.x = -25;
+        if (cloud.position.z < -24) cloud.position.z = 24;
+      });
+    }
+    if (now - flight.statusUpdatedAt > 0.55) {
+      announceFlightPhase(phase, progress, flight.request);
+      flight.statusUpdatedAt = now;
+    }
+  };
   const animate = () => {
     frame = requestAnimationFrame(animate);
     const delta = Math.min(clock.getDelta(), 0.04);
     const elapsed = clock.elapsedTime;
     updateTimeOfDay();
-    if (interiorActive && interiorGroup?.userData.officeFan) interiorGroup.userData.officeFan.rotation.y += delta * 2.7;
+    updateFlightSequence(delta);
+    if (interiorActive && !activeFlight && interiorGroup?.userData.officeFan) interiorGroup.userData.officeFan.rotation.y += delta * 2.7;
     for (const item of traffic) {
       const { x: currentX, z: currentZ } = item.object.position;
       let nextX = currentX;
@@ -3791,7 +4891,7 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
       player.rotation.y = Math.atan2(venue.x - player.position.x, venue.z - player.position.z);
       meetingContextRef.current?.onMeetingArrival?.(activeMeetingRoute.meetingId);
     }
-    const walkingNow = playerMoved;
+    const walkingNow = playerMoved || Boolean(activeFlight?.walking);
     // Meeting attendance can outlive a movement update; only use the seated pose while physically at that attendee's chair.
     const playerSeatedAtMeeting = Boolean(!walkingNow && !isMoving && meetingParticipantIsAtSeat(player, currentMeeting));
     const playerSeatedInOffice = Boolean(interiorActive && seatedInteriorSeatId);
@@ -3858,6 +4958,8 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     if (partyFocusRef) partyFocusRef.current = null;
     if (exitInteriorRef) exitInteriorRef.current = null;
     if (executiveFocusRef) executiveFocusRef.current = null;
+    if (planeBoardActionRef) planeBoardActionRef.current = null;
+    if (flightActionRef) flightActionRef.current = null;
     interiorChangeRef?.current?.(null);
     renderer.domElement.removeEventListener('pointerdown', onPointerDown);
     renderer.domElement.removeEventListener('pointerup', onPointerUp);
@@ -3880,7 +4982,7 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
   };
 }
 
-export default function World({ state, locality = null, locationKey = 'state-capital', selectedVenueId = 'square', focusRequest = 0, onVenueSelect, onMove, remotePlayers = [], playerColor = '#d8f36b', playerAppearance = {}, worldMinute = 942, meeting = null, meetingMessages = [], meetingParticipants = [], meetingPhase = 'idle', meetingSlot = null, playerId = 'local-player', onMeetingArrival, partyOfficeActionRef, exitInteriorActionRef, executiveFocusRef, onInteriorChange, onInteriorAction }) {
+export default function World({ state, locality = null, locationKey = 'state-capital', selectedVenueId = 'square', focusRequest = 0, onVenueSelect, onMove, remotePlayers = [], playerColor = '#d8f36b', playerAppearance = {}, propertyProfile = {}, propertyOwner = 'PLAYER', worldMinute = 942, meeting = null, meetingMessages = [], meetingParticipants = [], meetingPhase = 'idle', meetingSlot = null, playerId = 'local-player', onMeetingArrival, partyOfficeActionRef, planeBoardActionRef, exitInteriorActionRef, executiveFocusRef, onInteriorChange, onInteriorAction, flightCommand = null, onFlightPhase, onFlightComplete }) {
   const mountRef = useRef(null);
   const positionRef = useRef({ x: -5.8, z: 3.5, heading: 0 });
   const worldMinuteRef = useRef(worldMinute);
@@ -3896,6 +4998,12 @@ export default function World({ state, locality = null, locationKey = 'state-cap
   const hasMountedFocusRef = useRef(false);
   const interiorChangeRef = useRef(onInteriorChange);
   const interiorActionRef = useRef(onInteriorAction);
+  const flightActionRef = useRef(null);
+  const flightPhaseRef = useRef(onFlightPhase);
+  const flightCompleteRef = useRef(onFlightComplete);
+  const propertyProfileRef = useRef(propertyProfile);
+  const propertyOwnerRef = useRef(propertyOwner);
+  const lastFlightCommandIdRef = useRef(null);
   const [worldError, setWorldError] = useState(false);
   remoteRef.current = remotePlayers;
   moveCallbackRef.current = onMove;
@@ -3905,6 +5013,10 @@ export default function World({ state, locality = null, locationKey = 'state-cap
   meetingContextRef.current = { playerId, meetingSlot, meetingPhase, meetingParticipants, onMeetingArrival };
   interiorChangeRef.current = onInteriorChange;
   interiorActionRef.current = onInteriorAction;
+  flightPhaseRef.current = onFlightPhase;
+  flightCompleteRef.current = onFlightComplete;
+  propertyProfileRef.current = propertyProfile;
+  propertyOwnerRef.current = propertyOwner;
 
   useEffect(() => {
     if (!mountRef.current) return undefined;
@@ -3930,6 +5042,12 @@ export default function World({ state, locality = null, locationKey = 'state-cap
         interiorChangeRef,
         executiveFocusRef,
         interiorActionRef,
+        planeBoardActionRef,
+        flightActionRef,
+        propertyProfileRef,
+        propertyOwnerRef,
+        flightPhaseRef,
+        flightCompleteRef,
       );
       return cleanup;
     } catch (error) {
@@ -3938,6 +5056,13 @@ export default function World({ state, locality = null, locationKey = 'state-cap
       return undefined;
     }
   }, [state, playerColor, playerAppearance?.skinTone, playerAppearance?.headStyle, playerAppearance?.outfitColor, locationKey]);
+
+  useEffect(() => {
+    if (!flightCommand?.id) { lastFlightCommandIdRef.current = null; return; }
+    if (lastFlightCommandIdRef.current === flightCommand.id) return;
+    lastFlightCommandIdRef.current = flightCommand.id;
+    flightActionRef.current?.(flightCommand);
+  }, [flightCommand?.id]);
 
   useEffect(() => {
     if (!hasMountedFocusRef.current) { hasMountedFocusRef.current = true; return; }

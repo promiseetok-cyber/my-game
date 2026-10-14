@@ -319,9 +319,10 @@ export const WORLD_VENUES = [
   { id: 'market', short: 'MARKET', label: 'Market Street', type: 'market', x: 7, z: 5, color: '#ff9c75', desc: 'A busy trading district. Hear different concerns; no single group speaks for everyone.' },
   { id: 'court', short: 'COURT', label: 'Election Petition Court', type: 'court', x: 10, z: -3, color: '#8cb9ff', desc: 'Learn about evidence, deadlines, and lawful election petitions.' },
   { id: 'stadium', short: 'STADIUM', label: 'Unity Stadium', type: 'stadium', x: 1, z: 9, color: '#9ef09d', desc: 'A rally venue, sports ground, and public-event space.' },
-  { id: 'airport', short: 'AIRPORT', label: 'Airport Terminal', type: 'airport', x: -11, z: -8, color: '#c8b8ff', desc: 'Travel hub: plan a state visit and meet regional organisers.' },
+  { id: 'airport', short: 'AIRPORT', label: 'Airport Terminal', type: 'airport', x: -11, z: -8, color: '#c8b8ff', desc: 'Board fictional state-to-state flights in economy, executive, business, first class or a private jet.' },
   { id: 'assembly', short: 'ASSEMBLY', label: 'Assembly Complex', type: 'assembly', x: 10, z: -9, color: '#8fe2dc', desc: 'Legislation, oversight, caucuses, and public hearings.' },
   { id: 'caucus', short: 'CAUCUS', label: 'Party & Caucus House', type: 'caucus', x: -1, z: 2, color: '#f5a1cc', desc: 'Consult a senior figure. Their demand may be a public-service pledge, not a private favour.' },
+  { id: 'home', short: 'MY HOME', label: 'Player Residence', type: 'home', x: 16, z: 17, color: '#d8f36b', desc: 'Your fictional starter residence, garage and upgradeable property. Property ownership is saved in your local game profile.' },
 ];
 
 export const NPCS = [

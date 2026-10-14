@@ -6,7 +6,7 @@ import {
   Map, MapPin, Megaphone, MessageCircle, Move, Plane, Radio, Scale, Search,
   Send, Shield, ShieldAlert, Sparkles, TrendingUp, UserRound, Users, Wallet,
   X, Zap, Briefcase, Crown, BadgeCheck, CircleHelp, Eye, ScrollText, LockKeyhole,
-  Compass, Menu, Smartphone, Maximize2, Minimize2, Shirt,
+  Compass, Menu, Smartphone, Maximize2, Minimize2, Shirt, Home, Building2, CarFront, PackagePlus,
 } from 'lucide-react';
 import World from './World.jsx';
 import { createLocalPartyBranches } from './partyBranches.js';
@@ -82,6 +82,32 @@ const focusWorldOnMobile = (block = 'center') => {
     window.setTimeout(() => document.querySelector('.world-view-frame')?.scrollIntoView({ behavior: 'smooth', block }), 80);
   }
 };
+const FLIGHT_CLASSES = [
+  { id: 'economy', label: 'Economy', fare: 18_000, detail: 'Clean, comfortable short-haul seat' },
+  { id: 'executive', label: 'Executive', fare: 42_000, detail: 'Extra legroom and priority boarding' },
+  { id: 'business', label: 'Business class', fare: 78_000, detail: 'Wide recliner, quiet cabin and lounge service' },
+  { id: 'first', label: 'First class', fare: 145_000, detail: 'Private suite, lie-flat seat and premium service' },
+  { id: 'private-jet', label: 'Private jet', fare: 360_000, detail: 'Charter flight with a small private cabin' },
+];
+const PROPERTY_UPGRADES = {
+  house: [
+    { level: 2, cost: 120_000, label: 'Add a bedroom', detail: 'A bigger family home and second bedroom' },
+    { level: 3, cost: 210_000, label: 'Build the upper floor', detail: 'A two-storey residence with a balcony' },
+    { level: 4, cost: 340_000, label: 'Finish the home', detail: 'Improved rooms, kitchen and living space' },
+    { level: 5, cost: 480_000, label: 'Estate residence', detail: 'The largest house tier in this demo' },
+  ],
+  garage: [
+    { level: 1, cost: 80_000, label: 'Single-bay garage', detail: 'Covered parking for one vehicle' },
+    { level: 2, cost: 150_000, label: 'Workshop garage', detail: 'Garage bay plus a small workshop' },
+    { level: 3, cost: 260_000, label: 'Double garage', detail: 'Two covered vehicle spaces' },
+    { level: 4, cost: 390_000, label: 'Motor court', detail: 'Expanded parking and a secured entry' },
+  ],
+  plots: [
+    { level: 1, cost: 220_000, label: 'Garden plot', detail: 'A planted yard beside your home' },
+    { level: 2, cost: 360_000, label: 'Second property plot', detail: 'An additional small residential lot' },
+    { level: 3, cost: 520_000, label: 'Rental compound', detail: 'A second fictional property parcel' },
+  ],
+};
 const defaultProfile = {
   started: false, roleMode: 'political', institution: null,
   alias: 'New Candidate', party: PARTY_OPTIONS[0].name, partyId: PARTY_OPTIONS[0].id,
@@ -89,15 +115,27 @@ const defaultProfile = {
   cash: 1_000_000, trust: 32, influence: 12, integrity: 78,
   coalition: 1, energy: 88, scandals: 0, evidence: 0, wins: 0,
   currentOffice: null, lastContest: null, legalBoost: false, completed: false,
+  property: { homeState: null, houseLevel: 1, garageLevel: 0, extraPlots: 0 },
   appearance: DEFAULT_AVATAR_APPEARANCE,
 };
+
+function normalizePropertyProfile(value = {}) {
+  const source = value && typeof value === 'object' ? value : {};
+  const boundedLevel = (number, min, max, fallback) => Number.isFinite(Number(number)) ? clamp(Math.floor(Number(number)), min, max) : fallback;
+  return {
+    homeState: STATES.some((item) => item.name === source.homeState) ? source.homeState : null,
+    houseLevel: boundedLevel(source.houseLevel, 1, PROPERTY_UPGRADES.house.length + 1, 1),
+    garageLevel: boundedLevel(source.garageLevel, 0, PROPERTY_UPGRADES.garage.length, 0),
+    extraPlots: boundedLevel(source.extraPlots, 0, PROPERTY_UPGRADES.plots.length, 0),
+  };
+}
 
 function migrateProfile(stored = {}) {
   const party = PARTY_OPTIONS.find((item) => item.id === stored.partyId || item.name === stored.party) || PARTY_OPTIONS[0];
   const cash = Number.isFinite(stored.cash) ? Math.max(0, Math.floor(stored.cash)) : defaultProfile.cash;
   const role = INSTITUTION_ROLES.find((item) => item.id === stored.institution);
   const institutional = stored.roleMode === 'institutional' && Boolean(role);
-  const base = { ...defaultProfile, ...stored, cash };
+  const base = { ...defaultProfile, ...stored, cash, property: normalizePropertyProfile(stored.property) };
   if (institutional) return {
     ...base, roleMode: 'institutional', institution: role.id, party: null, partyId: null, partyTag: null,
     color: role.color, currentOffice: null, appearance: normalizeAvatarAppearance(stored.appearance),
@@ -132,6 +170,7 @@ function dateLabel(day) {
 
 const NAV_ITEMS = [
   { id: 'world', label: 'Live world', icon: Globe2 },
+  { id: 'property', label: 'Home & property', icon: Home },
   { id: 'career', label: 'Career path', icon: TrendingUp },
   { id: 'offices', label: 'Political offices', icon: Landmark },
   { id: 'civic', label: 'Civic desk', icon: BookOpen },
@@ -247,11 +286,17 @@ function App() {
   const boot = bootRef.current;
   const bootStateName = STATES.some((item) => item.name === boot?.state) ? boot.state : 'Lagos';
   const initialParty = PARTY_OPTIONS.find((item) => item.id === boot?.profile?.partyId || item.name === boot?.profile?.party) || PARTY_OPTIONS[0];
-  const [profile, setProfile] = useState(() => migrateProfile(boot?.profile || {}));
+  const [profile, setProfile] = useState(() => {
+    const restored = migrateProfile(boot?.profile || {});
+    return restored.started && !restored.property.homeState
+      ? { ...restored, property: { ...restored.property, homeState: bootStateName } }
+      : restored;
+  });
   const [stageIndex, setStageIndex] = useState(Number.isInteger(boot?.stageIndex) ? clamp(boot.stageIndex, 0, CHAPTERS.length - 1) : 0);
   const [missionProgress, setMissionProgress] = useState(Number.isFinite(boot?.missionProgress) ? clamp(boot.missionProgress, 0, 3) : 0);
   const [storyDay, setStoryDay] = useState(Number.isFinite(boot?.storyDay) ? Math.max(1, boot.storyDay) : 1);
   const [worldMinute, setWorldMinute] = useState(15 * 60 + 42);
+  const [flightCommand, setFlightCommand] = useState(null);
   const [selectedStateName, setSelectedStateName] = useState(bootStateName);
   const [stateLocalities, setStateLocalities] = useState(null);
   const [localityLoading, setLocalityLoading] = useState(true);
@@ -664,7 +709,11 @@ function App() {
       try { window.localStorage.setItem(`${SAVE_KEY}-before-account-link`, JSON.stringify({ profile, stageIndex, missionProgress, storyDay, state: selectedStateName, sideStoriesSeen })); guestBackupSavedRef.current = true; }
       catch { /* A local backup is best-effort. */ }
     }
-    const restoredProfile = migrateProfile({ ...(save.profile || {}), started: true });
+    const restoredState = STATES.some((item) => item.name === save.state) ? save.state : 'Lagos';
+    const migratedProfile = migrateProfile({ ...(save.profile || {}), started: true });
+    const restoredProfile = migratedProfile.property.homeState
+      ? migratedProfile
+      : { ...migratedProfile, property: { ...migratedProfile.property, homeState: restoredState } };
     setProfile(restoredProfile);
     setDraftParty(restoredProfile.party || PARTY_OPTIONS[0].name);
     setDraftMode(restoredProfile.roleMode === 'institutional' ? 'institutional' : 'political');
@@ -673,7 +722,6 @@ function App() {
     setMissionProgress(clamp(Number.isInteger(save.missionProgress) ? save.missionProgress : 0, 0, 3));
     setSideStoriesSeen(Array.isArray(save.sideStoriesSeen) ? save.sideStoriesSeen : []);
     setStoryDay(Math.max(1, Number(save.storyDay) || 1));
-    const restoredState = STATES.some((item) => item.name === save.state) ? save.state : 'Lagos';
     setSelectedStateName(restoredState);
     if (restoredProfile.roleMode === 'institutional') {
       setActiveVenueId(getInstitutionStartVenue(restoredProfile.institution, restoredState));
@@ -747,6 +795,7 @@ function App() {
       color: roleMode === 'political' ? party.color : role.color,
       currentOffice: null,
       cash: 1_000_000,
+      property: { ...defaultProfile.property, homeState: draftState },
     });
     setStageIndex(0); setMissionProgress(0); setSideStoriesSeen([]); setStoryDay(1);
     setSelectedStateName(draftState); setActiveVenueId(venueId); setVenueFocusRequest((request) => request + 1);
@@ -1070,6 +1119,68 @@ function App() {
     focusWorldOnMobile();
   };
 
+  const startPlaneTrip = ({ destination, cabinClass } = {}) => {
+    const route = STATES.find((item) => item.name === destination);
+    const fareClass = FLIGHT_CLASSES.find((item) => item.id === cabinClass);
+    if (!route || !fareClass) { showToast('Choose a valid destination and cabin class.'); return; }
+    if (route.name === selectedStateName) { showToast('Choose another state for this flight.'); return; }
+    if (flightCommand) { showToast('A flight is already in progress.'); return; }
+    if (profile.cash < fareClass.fare) { showToast(`Not enough fictional funds for ${fareClass.label} · ₦${money(fareClass.fare)} required.`); return; }
+    const request = { id: Date.now(), origin: selectedStateName, destination: route.name, cabinClass, fare: fareClass.fare };
+    setProfile((current) => ({ ...current, cash: current.cash - fareClass.fare }));
+    closeWorldPanels();
+    setFlightCommand(request);
+    addFeed(`Flight booked · ${route.name}`, `${fareClass.label} departure from ${stateInfo.capital} to ${route.capital}. Fare ₦${money(fareClass.fare)} deducted from fictional in-game funds.`, 'travel');
+    setToast(`Boarding ${fareClass.label} service to ${route.capital}…`);
+  };
+
+  const completePlaneTrip = (request) => {
+    const destination = STATES.find((item) => item.name === request?.destination);
+    if (!destination) { setFlightCommand(null); return; }
+    setFlightCommand(null);
+    setSelectedStateName(destination.name);
+    setSelectedLgaName('');
+    setSelectedWardKey('');
+    setActiveVenueId('airport');
+    setVenueFocusRequest((value) => value + 1);
+    setCommunityFocusRequest((value) => value + 1);
+    setPage('world');
+    addFeed(`Landed in ${destination.name}`, `Your ${FLIGHT_CLASSES.find((item) => item.id === request.cabinClass)?.label || 'flight'} touched down in ${destination.capital}. The arrival and airport scene are fictional game imagery.`, 'travel');
+    setToast(`Welcome to ${destination.capital}, ${destination.name} · arrival complete`);
+    focusWorldOnMobile();
+  };
+
+  const purchasePropertyUpgrade = (kind) => {
+    const property = normalizePropertyProfile(profile.property);
+    const currentLevel = kind === 'house' ? property.houseLevel : kind === 'garage' ? property.garageLevel : property.extraPlots;
+    const tier = PROPERTY_UPGRADES[kind]?.find((upgrade) => upgrade.level === currentLevel + 1);
+    if (!tier) { showToast('This property line is fully upgraded in the demo.'); return; }
+    if (profile.cash < tier.cost) { showToast(`Not enough fictional funds · ₦${money(tier.cost)} required.`); return; }
+    const field = kind === 'house' ? 'houseLevel' : kind === 'garage' ? 'garageLevel' : 'extraPlots';
+    setProfile((current) => ({
+      ...current,
+      cash: current.cash - tier.cost,
+      property: { ...normalizePropertyProfile(current.property), [field]: tier.level },
+    }));
+    addFeed(`${tier.label} complete`, `${tier.detail}. ₦${money(tier.cost)} in fictional funds spent; the residence is stored on this game profile.`, 'property');
+    showToast(`${tier.label} added · ₦${money(tier.cost)} fictional funds`);
+  };
+
+  const visitPlayerHome = () => {
+    const homeState = profile.property?.homeState || selectedStateName;
+    if (homeState !== selectedStateName) {
+      setSelectedStateName(homeState);
+      setSelectedLgaName('');
+      setSelectedWardKey('');
+      setCommunityFocusRequest((value) => value + 1);
+    }
+    setActiveVenueId('home');
+    setVenueFocusRequest((value) => value + 1);
+    setPage('world');
+    showToast(homeState === selectedStateName ? 'Heading to your home and garage' : `Returning to your home in ${homeState}`);
+    focusWorldOnMobile();
+  };
+
   const travelToWard = (ward, lgaName = selectedLgaName) => {
     if (!ward || !lgaName) return;
     setSelectedLgaName(lgaName); setSelectedWardKey(wardKey(ward)); setActiveVenueId('square');
@@ -1169,14 +1280,15 @@ function App() {
   };
 
   const renderMainPage = () => {
+    if (page === 'property') return <PropertyPage profile={profile} homeState={profile.property?.homeState || selectedStateName} onUpgrade={purchasePropertyUpgrade} onVisitHome={visitPlayerHome} />;
     if (page === 'career') return <CareerPage stageIndex={stageIndex} progress={missionProgress} profile={profile} onJump={setPage} onContinue={continueCareer} onExploreSideStory={openSideStory} sideStoriesSeen={sideStoriesSeen} onJoinPolitical={requestPoliticalSwitch} />;
     if (page === 'offices') return <OfficesPage />;
     if (page === 'civic') return <CivicPage />;
     if (page === 'atlas') return <AtlasPage query={atlasQuery} setQuery={setAtlasQuery} zone={selectedZone} setZone={setSelectedZone} selected={selectedStateName} onTravel={travelToState} />;
-    return <WorldPage stateInfo={stateInfo} profile={profile} playerId={activeMeeting?.local ? 'local-player' : socketRef.current?.id || 'local-player'} stateWorldProfile={stateWorldProfile} venue={activeVenue} venueName={activeVenueName} focusRequest={venueFocusRequest} locationKey={sceneLocationKey} locality={sceneLocality} localityData={stateLocalities?.state === stateInfo.name ? stateLocalities : null} localityLoading={localityLoading || (!localityError && stateLocalities?.state !== stateInfo.name)} localityError={localityError} selectedLgaName={selectedLgaName} selectedWardKey={selectedWardKey} onSelectLga={selectLga} onSelectWard={selectWardByKey} onSelectVenue={goToVenue} remotePlayers={remotePlayers} onMove={sendMove} playerColor={playerColor} playerAppearance={playerAppearance} onlineCount={onlineCount} networkStatus={networkStatus} onTravel={travelToState} daysToFederal={daysToFederal} daysToState={daysToState} storyDay={storyDay} activeMeeting={activeMeeting} meetingPhase={meetingPhase} meetingParticipants={meetingParticipants} meetingSlot={meetingParticipants.find((person) => person.id === socketRef.current?.id)?.meetingSlot ?? (activeMeeting?.local ? 0 : null)} onMeetingArrival={markMeetingArrived} onEnterMeeting={enterMeetingDiscussion} meetingMessages={meetingMessages} currentParty={currentParty} institutionRole={institutionRole} isInstitutional={isInstitutional} chapter={currentChapter} missionProgress={missionProgress} worldMinute={worldMinute} onOpenCareer={() => setPage('career')} onOpenPhone={openPhonePanel} onNavigate={navigateMobile} onOpenAvatar={() => setModal({ type: 'avatar-customize' })} onExploreSideStory={openSideStory} onJoinPolitical={requestPoliticalSwitch} onRequestExecutiveAudience={recordExecutiveAudienceRequest} onOfficeActivity={recordOfficeActivity} />;
+    return <WorldPage stateInfo={stateInfo} profile={profile} playerId={activeMeeting?.local ? 'local-player' : socketRef.current?.id || 'local-player'} stateWorldProfile={stateWorldProfile} venue={activeVenue} venueName={activeVenueName} focusRequest={venueFocusRequest} locationKey={sceneLocationKey} locality={sceneLocality} localityData={stateLocalities?.state === stateInfo.name ? stateLocalities : null} localityLoading={localityLoading || (!localityError && stateLocalities?.state !== stateInfo.name)} localityError={localityError} selectedLgaName={selectedLgaName} selectedWardKey={selectedWardKey} onSelectLga={selectLga} onSelectWard={selectWardByKey} onSelectVenue={goToVenue} remotePlayers={remotePlayers} onMove={sendMove} playerColor={playerColor} playerAppearance={playerAppearance} onlineCount={onlineCount} networkStatus={networkStatus} onTravel={travelToState} daysToFederal={daysToFederal} daysToState={daysToState} storyDay={storyDay} activeMeeting={activeMeeting} meetingPhase={meetingPhase} meetingParticipants={meetingParticipants} meetingSlot={meetingParticipants.find((person) => person.id === socketRef.current?.id)?.meetingSlot ?? (activeMeeting?.local ? 0 : null)} onMeetingArrival={markMeetingArrived} onEnterMeeting={enterMeetingDiscussion} meetingMessages={meetingMessages} currentParty={currentParty} institutionRole={institutionRole} isInstitutional={isInstitutional} chapter={currentChapter} missionProgress={missionProgress} worldMinute={worldMinute} onOpenCareer={() => setPage('career')} onOpenPhone={openPhonePanel} onNavigate={navigateMobile} onOpenAvatar={() => setModal({ type: 'avatar-customize' })} onExploreSideStory={openSideStory} onJoinPolitical={requestPoliticalSwitch} onRequestExecutiveAudience={recordExecutiveAudienceRequest} onOfficeActivity={recordOfficeActivity} flightCommand={flightCommand} onStartFlight={startPlaneTrip} onFlightComplete={completePlaneTrip} onUpgradeProperty={purchasePropertyUpgrade} onVisitHome={visitPlayerHome} />;
   };
 
-  return <div className={`app-shell ${immersiveActive ? 'immersive-shell' : ''} ${navigationOpen ? 'nav-open' : ''} ${phoneOpen ? 'phone-open' : ''}`}>
+  return <div className={`app-shell ${immersiveActive ? 'immersive-shell' : ''} ${flightCommand ? 'in-flight' : ''} ${navigationOpen ? 'nav-open' : ''} ${phoneOpen ? 'phone-open' : ''}`}>
     <header className="topbar">
       <div className="brand-lockup"><div className="brand-mark"><span /><i /></div><div className="brand-type"><strong>NIGERIA <b>2027</b></strong><small>A LIFE IN PUBLIC OFFICE</small></div></div>
       <div className="topbar-middle"><div className="season-pill"><span className="season-dot" /> STORY MODE <span className="season-divider" /> {isInstitutional ? 'INSTITUTIONAL ROLEPLAY' : 'POLITICAL LADDER'}</div><div className="election-clock"><CalendarDays size={14} /><span>FEDERAL <b>16 JAN 2027</b></span><i /> <span>STATE <b>06 FEB 2027</b></span></div></div>
@@ -1208,7 +1320,7 @@ function App() {
         <div className="sidebar-bottom"><div className="live-server-card"><div className="server-card-head"><span>REALTIME PROTOTYPE</span><span className={`server-led ${networkStatus}`} /></div><div className="server-card-status"><Radio size={14} /><b>{networkStatus === 'online' ? 'World link active' : networkStatus === 'connecting' ? 'Connecting to world' : 'Offline · local play'}</b></div><small>{authConfig.persistenceEnabled ? 'Account identity · persistent story records enabled' : 'Guest preview · rooms/messages are temporary until database setup'}</small></div><button className="sidebar-reset" onClick={() => setModal({ type: 'reset' })}><Sparkles size={15} />Start a new story</button></div>
       </aside>
       <main className="main-content">
-        <div className="main-heading-row"><div><div className="eyebrow"><span className="eyebrow-line" />{page === 'world' ? 'LIVE SIMULATION' : page === 'career' ? isInstitutional ? 'INSTITUTIONAL STORY RECORD' : 'CAMPAIGN JOURNAL' : page === 'offices' ? 'CIVIC STRUCTURE' : page === 'civic' ? 'RESEARCH & CONTEXT' : 'NATIONAL ATLAS'} <span className="heading-season">/ STORY 2027</span></div><h1>{page === 'world' ? 'The Republic is in motion.' : page === 'career' ? isInstitutional ? 'A story role, not another ladder.' : 'Every office has a route.' : page === 'offices' ? 'Know the titles. Know the route.' : page === 'civic' ? 'Politics, with the context intact.' : 'One federation. 37 capital stops.'}</h1><p>{page === 'world' ? isInstitutional ? 'Explore a fictional non-partisan institution story; switch into the political ladder only if you choose.' : 'Build a public life one conversation, one decision, one mandate at a time.' : page === 'career' ? isInstitutional ? 'Your institutional role has no promotions or office contests. Explore its story encounters or voluntarily join the existing political ladder.' : 'From ward work to the national ticket, your next move is earned in public.' : page === 'offices' ? 'Elected, internal party, appointed, and legislative leadership roles—kept distinct.' : page === 'civic' ? 'A researched, non-partisan desk for the realities behind this fictional public-life story.' : 'Select a state to travel into its capital district and continue your story.'}</p></div><div className="heading-location"><span className="heading-location-icon"><MapPin size={17} /></span><div><small>CURRENT STOP</small><strong>{stateInfo.capital}, {stateInfo.name}</strong><span>{stateInfo.zone.toUpperCase()}</span></div><button onClick={() => setPage('atlas')} aria-label="Choose a state"><ChevronDown size={15} /></button></div></div>
+        <div className="main-heading-row"><div><div className="eyebrow"><span className="eyebrow-line" />{page === 'world' ? 'LIVE SIMULATION' : page === 'property' ? 'HOME & PROPERTY' : page === 'career' ? isInstitutional ? 'INSTITUTIONAL STORY RECORD' : 'CAMPAIGN JOURNAL' : page === 'offices' ? 'CIVIC STRUCTURE' : page === 'civic' ? 'RESEARCH & CONTEXT' : 'NATIONAL ATLAS'} <span className="heading-season">/ STORY 2027</span></div><h1>{page === 'world' ? 'The Republic is in motion.' : page === 'property' ? 'A home of your own.' : page === 'career' ? isInstitutional ? 'A story role, not another ladder.' : 'Every office has a route.' : page === 'offices' ? 'Know the titles. Know the route.' : page === 'civic' ? 'Politics, with the context intact.' : 'One federation. 37 capital stops.'}</h1><p>{page === 'world' ? isInstitutional ? 'Explore a fictional non-partisan institution story; switch into the political ladder only if you choose.' : 'Build a public life one conversation, one decision, one mandate at a time.' : page === 'property' ? 'Your starter house is included. Use fictional funds to grow your home, garage and property plots.' : page === 'career' ? isInstitutional ? 'Your institutional role has no promotions or office contests. Explore its story encounters or voluntarily join the existing political ladder.' : 'From ward work to the national ticket, your next move is earned in public.' : page === 'offices' ? 'Elected, internal party, appointed, and legislative leadership roles—kept distinct.' : page === 'civic' ? 'A researched, non-partisan desk for the realities behind this fictional public-life story.' : 'Select a state to travel into its capital district and continue your story.'}</p></div><div className="heading-location"><span className="heading-location-icon"><MapPin size={17} /></span><div><small>CURRENT STOP</small><strong>{stateInfo.capital}, {stateInfo.name}</strong><span>{stateInfo.zone.toUpperCase()}</span></div><button onClick={() => setPage('atlas')} aria-label="Choose a state"><ChevronDown size={15} /></button></div></div>
         {renderMainPage()}
       </main>
       <aside className="right-rail">
@@ -1221,7 +1333,8 @@ function App() {
       </aside>
     </div>
     <nav className="mobile-bottom-nav" aria-label="Mobile game navigation">
-      <button className={page === 'world' ? 'active' : ''} onClick={openMobileWorld} aria-current={page === 'world' ? 'page' : undefined} aria-label="World home" title="World home"><Globe2 size={18} /><span>Home</span></button>
+      <button className={page === 'world' ? 'active' : ''} onClick={openMobileWorld} aria-current={page === 'world' ? 'page' : undefined} aria-label="Live world" title="World"><Globe2 size={18} /><span>World</span></button>
+      <button className={page === 'property' ? 'active' : ''} onClick={() => navigateMobile('property')} aria-current={page === 'property' ? 'page' : undefined} aria-label="Home and property upgrades" title="Property"><Home size={18} /><span>Home</span></button>
       <button className={page === 'career' ? 'active' : ''} onClick={() => navigateMobile('career')} aria-current={page === 'career' ? 'page' : undefined} aria-label="Political story and career" title="Story"><TrendingUp size={18} /><span>Story</span></button>
       <button className={page === 'atlas' ? 'active' : ''} onClick={() => navigateMobile('atlas')} aria-current={page === 'atlas' ? 'page' : undefined} aria-label="State atlas" title="Atlas"><Map size={18} /><span>Atlas</span></button>
       <button className={phoneOpen ? 'active' : ''} onClick={() => { if (phoneOpen) closeWorldPanels(); else openPhonePanel(); }} aria-pressed={phoneOpen} aria-label="Phone, messages and meetings" title="Phone"><Smartphone size={18} /><span>Phone</span></button>
@@ -1235,6 +1348,35 @@ function App() {
     {modal?.type === 'avatar-customize' && <AvatarCustomizer appearance={playerAppearance} playerColor={playerColor} onClose={() => setModal(null)} onSave={saveAvatarAppearance} />}
     {modal && !['story-action', 'side-story', 'account', 'avatar-customize'].includes(modal.type) && <GameModal modal={modal} onClose={() => setModal(null)} onAcceptMeetingInvite={acceptMeetingInvite} onIllegalConfirm={attemptVoteBuying} onPrepareEvidence={prepareEvidence} onFilePetition={filePetition} onReset={resetGame} onContestConfirm={() => runContest(true)} onJoinPolitical={joinPoliticalLadder} profile={profile} />}
   </div>;
+}
+
+function PropertyPage({ profile, homeState, onUpgrade, onVisitHome }) {
+  const property = normalizePropertyProfile(profile.property);
+  const houseTier = PROPERTY_UPGRADES.house.find((item) => item.level === property.houseLevel + 1);
+  const garageTier = PROPERTY_UPGRADES.garage.find((item) => item.level === property.garageLevel + 1);
+  const plotTier = PROPERTY_UPGRADES.plots.find((item) => item.level === property.extraPlots + 1);
+  const ownedCount = 1 + property.extraPlots;
+  const garageSpaces = property.garageLevel >= 4 ? 3 : property.garageLevel === 3 ? 2 : property.garageLevel > 0 ? 1 : 0;
+  const cards = [
+    { id: 'house', title: 'HOME & ROOMS', icon: Home, level: property.houseLevel, levelText: `LEVEL ${property.houseLevel} / 5`, description: property.houseLevel === 1 ? 'Your free starter home is already yours.' : 'Expand and finish your personal residence.', next: houseTier },
+    { id: 'garage', title: 'GARAGE', icon: CarFront, level: property.garageLevel, levelText: property.garageLevel ? `${property.garageLevel} UPGRADE${property.garageLevel > 1 ? 'S' : ''}` : 'NOT BUILT', description: property.garageLevel ? `${garageSpaces} covered vehicle space${garageSpaces > 1 ? 's' : ''} in this demo.` : 'Add secure covered parking to your home.', next: garageTier },
+    { id: 'plots', title: 'PROPERTY PLOTS', icon: Building2, level: property.extraPlots, levelText: `${ownedCount} PARCEL${ownedCount > 1 ? 'S' : ''}`, description: property.extraPlots ? 'Your additional fictional lots are part of this save.' : 'Grow your property portfolio with additional lots.', next: plotTier },
+  ];
+  return <main className="property-page">
+    <div className="property-hero">
+      <div className="property-hero-copy"><span className="property-kicker"><Home size={13} /> PLAYER PROPERTY · FICTIONAL GAME ASSETS</span><h1>{profile.alias || 'Your character'}’s home</h1><p>A starter residence is included for every player. Build its rooms, garage and surrounding plots with fictional in-game funds.</p><div className="property-hero-tags"><span><Shield size={12} /> OWNED BY THIS CHARACTER</span><span><MapPin size={12} /> {homeState}</span><span><Wallet size={12} /> ₦{money(profile.cash)} AVAILABLE</span></div></div>
+      <div className="property-hero-art" aria-hidden="true"><div className="property-art-sky" /><div className="property-art-home"><span className="property-art-roof" /><span className="property-art-wall" /><span className="property-art-window one" /><span className="property-art-window two" /><span className="property-art-door" /><span className="property-art-garage" /></div><div className="property-art-yard" /><div className="property-art-tree" /></div>
+      <button type="button" className="property-visit-button" onClick={onVisitHome}>VISIT MY HOME IN 3D <ArrowRight size={14} /></button>
+    </div>
+    <div className="property-summary-row"><div><span>OWNED PROPERTY</span><strong>{ownedCount}</strong></div><div><span>HOUSE TIER</span><strong>{property.houseLevel}<small> / 5</small></strong></div><div><span>GARAGE</span><strong>{garageSpaces ? <>{garageSpaces}<small> bays</small></> : '—'}</strong></div><div><span>HOME STATE</span><strong>{homeState}</strong></div></div>
+    <div className="property-section-heading"><div><span className="eyebrow-line" />UPGRADE YOUR PLACE</div><small>All purchases use fictional funds only</small></div>
+    <div className="property-upgrade-grid">{cards.map((card) => { const Icon = card.icon; const canAfford = Boolean(card.next && profile.cash >= card.next.cost); return <section className="property-upgrade-card" key={card.id}>
+      <div className="property-upgrade-top"><span className={`property-upgrade-icon property-${card.id}`}><Icon size={18} /></span><span className="property-level-chip">{card.levelText}</span></div>
+      <h2>{card.title}</h2><p>{card.description}</p>
+      {card.next ? <><div className="property-next-tier"><strong>{card.next.label}</strong><span>{card.next.detail}</span></div><button type="button" className="property-upgrade-button" onClick={() => onUpgrade(card.id)} disabled={!canAfford}><span>{canAfford ? 'UPGRADE' : 'NEED MORE FUNDS'}</span><b>₦{money(card.next.cost)}</b><ArrowRight size={14} /></button></> : <div className="property-complete-chip"><Check size={13} /> MAXIMUM DEMO TIER REACHED</div>}
+    </section>; })}</div>
+    <div className="property-note"><PackagePlus size={15} /><span><strong>YOUR PROPERTY SAVE</strong> House and garage upgrades are saved with this game profile on this device. Cloud persistence depends on account setup. This is a fictional open-world simulation, not real estate, a real deed, or a financial product.</span></div>
+  </main>;
 }
 
 function InstitutionalRolePanel({ role }) {
@@ -1322,7 +1464,7 @@ function PartyDirectory({ parties, branches, activeParty, stateInfo, locality, o
   </section>;
 }
 
-function WorldPage({ stateInfo, profile, playerId, meetingSlot, meetingParticipants, meetingPhase, onMeetingArrival, onEnterMeeting, stateWorldProfile, venue, venueName, focusRequest, locationKey, locality, localityData, localityLoading, localityError, selectedLgaName, selectedWardKey, onSelectLga, onSelectWard, onSelectVenue, remotePlayers, onMove, playerColor, playerAppearance, onlineCount, networkStatus, onTravel, daysToFederal, daysToState, storyDay, worldMinute, activeMeeting, meetingMessages, currentParty, institutionRole, isInstitutional, chapter, missionProgress, onOpenCareer, onOpenPhone, onNavigate, onOpenAvatar, onExploreSideStory, onJoinPolitical, onRequestExecutiveAudience, onOfficeActivity }) {
+function WorldPage({ stateInfo, profile, playerId, meetingSlot, meetingParticipants, meetingPhase, onMeetingArrival, onEnterMeeting, stateWorldProfile, venue, venueName, focusRequest, locationKey, locality, localityData, localityLoading, localityError, selectedLgaName, selectedWardKey, onSelectLga, onSelectWard, onSelectVenue, remotePlayers, onMove, playerColor, playerAppearance, onlineCount, networkStatus, onTravel, daysToFederal, daysToState, storyDay, worldMinute, activeMeeting, meetingMessages, currentParty, institutionRole, isInstitutional, chapter, missionProgress, onOpenCareer, onOpenPhone, onNavigate, onOpenAvatar, onExploreSideStory, onJoinPolitical, onRequestExecutiveAudience, onOfficeActivity, flightCommand, onStartFlight, onFlightComplete }) {
   const [venueFilter, setVenueFilter] = useState('ALL');
   const [worldView, setWorldView] = useState('story');
   const [worldPanel, setWorldPanel] = useState(null);
@@ -1334,6 +1476,11 @@ function WorldPage({ stateInfo, profile, playerId, meetingSlot, meetingParticipa
   const [audienceDraft, setAudienceDraft] = useState('');
   const [interiorActivity, setInteriorActivity] = useState(null);
   const [interiorActivityDraft, setInteriorActivityDraft] = useState('');
+  const [flightPanelOpen, setFlightPanelOpen] = useState(false);
+  const [flightClass, setFlightClass] = useState('economy');
+  const [flightDestination, setFlightDestination] = useState(() => STATES.find((item) => item.name !== stateInfo.name)?.name || stateInfo.name);
+  const [flightStatus, setFlightStatus] = useState(null);
+  const planeBoardActionRef = useRef(null);
   const partyOfficeActionRef = useRef(null);
   const exitInteriorActionRef = useRef(null);
   const executiveFocusActionRef = useRef(null);
@@ -1343,7 +1490,15 @@ function WorldPage({ stateInfo, profile, playerId, meetingSlot, meetingParticipa
   const localityVisual = createLocalityVisualProfile(stateInfo, stateWorldProfile, locality);
   const handleInteriorChange = (nextInterior) => {
     setInteriorInfo(nextInterior);
+    if (nextInterior?.metadata?.venueType === 'plane') {
+      setFlightClass(nextInterior.metadata.cabinClass || 'economy');
+      setFlightPanelOpen(false);
+    }
+    if (nextInterior?.metadata?.venueType === 'airport' && flightDestination === stateInfo.name) {
+      setFlightDestination(STATES.find((item) => item.name !== stateInfo.name)?.name || stateInfo.name);
+    }
     if (!nextInterior) {
+      setFlightPanelOpen(false);
       setInteriorMenuOpen(false);
       setInteriorActionStatus('');
       setIsSeatedInOffice(false);
@@ -1370,6 +1525,12 @@ function WorldPage({ stateInfo, profile, playerId, meetingSlot, meetingParticipa
       setInteriorActivity({ ...action.activity, recordType: '' });
       setInteriorActivityDraft('');
     }
+  };
+  const handleFlightPhase = (status) => setFlightStatus(status);
+  const handleFlightArrival = (request) => {
+    setFlightStatus(null);
+    setFlightPanelOpen(false);
+    onFlightComplete?.(request);
   };
   const executiveReply = (executive, body, turn = 0) => {
     const text = String(body || '').toLowerCase();
@@ -1433,7 +1594,7 @@ function WorldPage({ stateInfo, profile, playerId, meetingSlot, meetingParticipa
       window.setTimeout(() => partyOfficeActionRef.current?.(partyId), 220);
     }
   };
-  const venueTypes = ['ALL', 'PUBLIC', 'POLITICS', 'TRAVEL'];
+  const venueTypes = ['ALL', 'PUBLIC', 'POLITICS', 'TRAVEL', 'HOME'];
   const safeMinute = ((Number(worldMinute) || 0) % 1440 + 1440) % 1440;
   const clockHour = Math.floor(safeMinute / 60);
   const clockMinute = safeMinute % 60;
@@ -1449,7 +1610,13 @@ function WorldPage({ stateInfo, profile, playerId, meetingSlot, meetingParticipa
     const heading = ((Number(position.heading) || 0) * (180 / Math.PI)) + 180;
     minimapMarkerRef.current.setAttribute('transform', `translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${heading.toFixed(1)})`);
   };
-  const visibleVenues = WORLD_VENUES.filter((item) => venueFilter === 'ALL' || (venueFilter === 'PUBLIC' && ['square', 'market', 'stadium'].includes(item.type)) || (venueFilter === 'POLITICS' && ['office', 'court', 'assembly', 'caucus'].includes(item.type)) || (venueFilter === 'TRAVEL' && item.type === 'airport'));
+  const visibleVenues = WORLD_VENUES.filter((item) => venueFilter === 'ALL' || (venueFilter === 'PUBLIC' && ['square', 'market', 'stadium'].includes(item.type)) || (venueFilter === 'POLITICS' && ['office', 'court', 'assembly', 'caucus'].includes(item.type)) || (venueFilter === 'TRAVEL' && item.type === 'airport') || (venueFilter === 'HOME' && item.type === 'home'));
+  const interiorKind = interiorInfo?.metadata?.venueType || interiorInfo?.type;
+  const interiorKindLabel = ({ airport: 'AIRPORT TERMINAL', plane: 'AIRCRAFT CABIN', home: 'PLAYER RESIDENCE', garage: 'HOME GARAGE', market: 'COMMUNITY MARKET', court: 'ELECTION PETITION COURT', assembly: 'STATE ASSEMBLY CHAMBER', office: 'PUBLIC INSTITUTION', square: 'CIVIC MEETING HALL', caucus: 'PARTY & CAUCUS HOUSE', stadium: 'UNITY STADIUM', vehicle: 'NIGERIAN VEHICLE' })[interiorKind] || `${interiorKind || 'COMMUNITY'} INTERIOR`;
+  const interiorKindDescription = ({ airport: 'Fictional state-capital airport terminal. Choose a destination, select your cabin class, and board one of the parked aircraft.', plane: 'Clean, enclosed aircraft cabin for this fictional fare class. Use the flight-plan control to choose a Nigerian state and depart.', home: 'This is your fictional starter residence. Your house tier, garage and property plots come from your character save.', garage: 'Your fictional home garage and workshop. Upgrades are purchased in Home & Property with in-game funds.', market: 'A simulated indoor market with produce, textiles and several independent stalls; no single trader speaks for everyone.', court: 'A fictional courtroom built for learning about evidence, deadlines and lawful petitions. No real case or court is represented.', assembly: 'A fictional legislative chamber for roleplay, oversight and public-hearing scenes; it is not an official session.', office: 'A simulated, non-partisan public-service interior. Game encounters do not represent real appointments or official decisions.', square: 'An enclosed community meeting hall for open-ended fictional gatherings and dialogue.', caucus: 'A fictional caucus and consultation venue for your political story.', stadium: 'A standard fictional stadium bowl with stands, aisles and visible fans.' })[interiorKind] || 'A fictional, enclosed venue interior built for exploration and open-ended gameplay.';
+  const isAirportInterior = interiorKind === 'airport';
+  const isPlaneInterior = interiorKind === 'plane';
+  const activeFlightClass = FLIGHT_CLASSES.find((item) => item.id === flightClass) || FLIGHT_CLASSES[0];
   const arrivedMeetingPlayers = (meetingParticipants || []).filter((person) => ['at-venue', 'in-session'].includes(person.meetingStatus)).length;
   const travellingMeetingPlayers = (meetingParticipants || []).filter((person) => person.meetingStatus === 'en-route').length;
   const interestedMeetingPlayers = Math.max((meetingParticipants || []).length, Number(activeMeeting?.interested || activeMeeting?.participants) || 0);
@@ -1468,7 +1635,7 @@ function WorldPage({ stateInfo, profile, playerId, meetingSlot, meetingParticipa
       <div className="mobile-status-item mobile-status-network"><Users size={14} /><span><b>{networkStatus === 'online' ? `${onlineCount || 1} PLAYERS` : 'LOCAL PLAY'}</b><small>{networkStatus === 'online' ? 'WORLD LINK ACTIVE' : 'GUEST PREVIEW'}</small></span></div>
     </div>
     <div className="mobile-world-shortcuts" aria-label="Quick world actions">
-      <button type="button" className={worldView === 'story' ? 'active' : ''} onClick={() => setWorldView('story')} aria-label="Return to 3D story view" title="3D Story"><Move size={17} /><span>WALK</span></button>
+      <button type="button" className={worldView === 'story' ? 'active' : ''} onClick={() => setWorldView('story')} disabled={Boolean(flightCommand)} aria-label="Return to 3D story view" title="3D Story"><Move size={17} /><span>WALK</span></button>
       <button type="button" className={worldView === 'map' ? 'active' : ''} onClick={() => setWorldView('map')} aria-label="Open live map" title="Live map"><Map size={17} /><span>LIVE MAP</span></button>
       <button type="button" onClick={() => setWorldPanel('places')} aria-label="Browse places in the world" title="Places"><Landmark size={17} /><span>PLACES</span></button>
       {!institutionRole && <button type="button" onClick={() => setWorldPanel('parties')} aria-label="Open registered party directory" title="INEC party directory"><Flag size={17} /><span>PARTIES</span></button>}
@@ -1492,7 +1659,7 @@ function WorldPage({ stateInfo, profile, playerId, meetingSlot, meetingParticipa
     <div className="world-topline"><div className="world-live"><span className="pulse-dot" />LOCAL WORLD <b>{(locality?.ward || stateInfo.capital).toUpperCase()}</b><span className="line-sep" />{stateInfo.zone.toUpperCase()}</div><div className={`world-date world-time-${timePhase.toLowerCase().replace(' ', '-')}`}><Clock3 size={13} />{dateLabel(storyDay)} <span>·</span> {worldClock} WAT <span className="weather-dot" /> {timePhase}</div><div className="world-connect"><span className={`network-led ${networkStatus}`} />{networkStatus === 'online' ? `${onlineCount || 1} PLAYERS` : 'LOCAL INSTANCE'}</div><div className="world-mode-tabs" role="tablist" aria-label="Choose map view"><button type="button" role="tab" aria-selected={worldView === 'story'} className={worldView === 'story' ? 'active' : ''} onClick={() => setWorldView('story')}><Move size={12} />3D STORY</button><button type="button" role="tab" aria-selected={worldView === 'map'} className={worldView === 'map' ? 'active' : ''} onClick={() => setWorldView('map')}><Map size={12} />LIVE MAP</button></div></div>
     <div className={`world-view-frame ${worldView === 'map' ? 'map-mode' : ''} ${interiorInfo ? 'inside-interior' : ''}`}>
       {worldView === 'map' ? <Suspense fallback={<div className="maplibre-load-shell"><span className="maplibre-spinner" />Loading MapLibre…</div>}><MapLibreWorld stateInfo={stateInfo} locality={locality} locationKey={locationKey} /></Suspense> : <>
-      <World state={stateInfo.name} locality={locality} locationKey={locationKey} selectedVenueId={venue.id} focusRequest={focusRequest} onVenueSelect={onSelectVenue} onMove={handlePlayerMove} remotePlayers={remotePlayers} playerColor={playerColor} playerAppearance={playerAppearance} worldMinute={safeMinute} meeting={activeMeeting} meetingMessages={meetingMessages} meetingParticipants={meetingParticipants} meetingPhase={meetingPhase} meetingSlot={meetingSlot} playerId={playerId} onMeetingArrival={onMeetingArrival} partyOfficeActionRef={partyOfficeActionRef} exitInteriorActionRef={exitInteriorActionRef} executiveFocusRef={executiveFocusActionRef} onInteriorChange={handleInteriorChange} onInteriorAction={handleInteriorAction} /><div className="scene-vignette" />
+      <World state={stateInfo.name} locality={locality} locationKey={locationKey} selectedVenueId={venue.id} focusRequest={focusRequest} onVenueSelect={onSelectVenue} onMove={handlePlayerMove} remotePlayers={remotePlayers} playerColor={playerColor} playerAppearance={playerAppearance} propertyProfile={profile.property} propertyOwner={profile.alias} worldMinute={safeMinute} meeting={activeMeeting} meetingMessages={meetingMessages} meetingParticipants={meetingParticipants} meetingPhase={meetingPhase} meetingSlot={meetingSlot} playerId={playerId} onMeetingArrival={onMeetingArrival} partyOfficeActionRef={partyOfficeActionRef} planeBoardActionRef={planeBoardActionRef} exitInteriorActionRef={exitInteriorActionRef} executiveFocusRef={executiveFocusActionRef} flightCommand={flightCommand} onFlightPhase={handleFlightPhase} onFlightComplete={handleFlightArrival} onInteriorChange={handleInteriorChange} onInteriorAction={handleInteriorAction} /><div className="scene-vignette" />
       <div className={`scene-mission-card ${isInstitutional ? 'institutional-mission-hud' : ''}`}>
         <div className="scene-mission-head"><span><i />{activeMeeting ? activeMeeting.status === 'closed' ? 'MEETING RECORD' : ['at-venue', 'discussion'].includes(meetingPhase) ? 'GATHERED AT VENUE' : 'PLAYERS ON THE WAY' : isInstitutional ? 'FICTIONAL ROLEPLAY' : 'ACTIVE MISSION'}</span><b>{activeMeeting ? `${arrivedMeetingPlayers}/${interestedMeetingPlayers} HERE` : isInstitutional ? 'STORY' : `${missionProgress}/3`}</b></div>
         <strong>{activeMeeting?.title || (isInstitutional ? institutionRole?.personnelLabel || 'Institutional story' : chapter?.title || 'Continue your story')}</strong>
@@ -1502,16 +1669,24 @@ function WorldPage({ stateInfo, profile, playerId, meetingSlot, meetingParticipa
       </div>{interiorInfo && <div className={`interior-overlay ${interiorMenuOpen ? 'is-open' : ''}`}>
         <div className="interior-quickbar" role="toolbar" aria-label="Interior controls">
           <button type="button" className="interior-quick-button" onClick={() => setInteriorMenuOpen((open) => !open)} aria-expanded={interiorMenuOpen} aria-label={interiorMenuOpen ? 'Close interior details' : 'Open interior details and interactions'} title="Interior details and interactions"><CircleHelp size={15} /></button>
+          {(isAirportInterior || isPlaneInterior) && <button type="button" className="interior-quick-button flight-quick-button" onClick={() => setFlightPanelOpen((open) => !open)} aria-expanded={flightPanelOpen} aria-label="Open flight plan" title="Flight plan and cabin options"><Plane size={15} /></button>}
           <button type="button" className="interior-quick-button interior-exit-icon" onClick={() => exitInteriorActionRef.current?.()} aria-label="Exit interior" title="Exit interior"><X size={15} /></button>
         </div>
         {interiorMenuOpen && <section className="interior-details-panel" aria-label="Interior details and interactions">
-          <div className="interior-overlay-top"><div><div className="interior-kicker"><i />{interiorInfo.type === 'party-office' ? 'SIMULATED PARTY BRANCH' : `${interiorInfo.type || 'COMMUNITY'} INTERIOR`}</div><h3>{interiorInfo.title}</h3><p className="interior-locality">{locality ? `${locality.ward} ward · ${locality.lga} LGA · ${stateInfo.name}` : `${stateInfo.capital} · ${stateInfo.name}`}</p></div><button type="button" onClick={() => setInteriorMenuOpen(false)} aria-label="Close interior details"><X size={13} /></button></div>
+          <div className="interior-overlay-top"><div><div className="interior-kicker"><i />{interiorInfo.type === 'party-office' ? 'SIMULATED PARTY BRANCH' : interiorKindLabel}</div><h3>{interiorInfo.title}</h3><p className="interior-locality">{locality ? `${locality.ward} ward · ${locality.lga} LGA · ${stateInfo.name}` : `${stateInfo.capital} · ${stateInfo.name}`}</p></div><button type="button" onClick={() => setInteriorMenuOpen(false)} aria-label="Close interior details"><X size={13} /></button></div>
           {interiorInfo.party && <><div className="interior-party-brand"><img src={interiorInfo.party.logo} alt="" /><span><b>{interiorInfo.party.name} ({interiorInfo.party.tag})</b><small>REGISTERED PARTY · NATIONAL DATA FROM INEC</small></span></div><div className="interior-register-note"><strong>INEC REGISTER SNAPSHOT · {interiorInfo.nationalOfficers?.checkedAt}</strong><span>National officers are shown separately from the fictional ward branch below.</span><a href={interiorInfo.nationalOfficers?.source} target="_blank" rel="noreferrer">Open official INEC party register</a></div><div className="interior-national-roster"><span>NATIONAL CHAIR<b>{interiorInfo.nationalOfficers?.chair || 'Not listed in snapshot'}</b></span><span>NATIONAL SECRETARY<b>{interiorInfo.nationalOfficers?.secretary || 'Not listed in snapshot'}</b></span></div><div className="interior-fiction-heading"><span>WARD EXECUTIVE TEAM</span><b>SIMULATED · FICTIONAL</b></div><div className="interior-executive-list">{(interiorInfo.branch || []).map((person) => <button key={person.id} type="button" onClick={() => { setInteriorMenuOpen(false); executiveFocusActionRef.current?.(person.id); }} aria-label={`Walk to ${person.position}, ${person.name}, and request a meeting`}><span>{person.position}</span><b>{person.name}</b><i>MEET</i></button>)}</div></>}
           <div className="interior-room-help"><span className="interior-seat-indicator">{isSeatedInOffice ? <Check size={12} /> : <Move size={12} />}</span><div><b>{interiorActionStatus || (interiorInfo.type === 'party-office' ? 'TAP A VISITOR CHAIR TO SIT' : 'TAP A CHAIR TO SIT')}</b><small>Tap a chair to sit · tap the floor to stand and walk{interiorInfo.type === 'party-office' ? ' · tap an executive to request an audience · use the board, files or water station for activities.' : '.'}</small></div></div>
-          <div className="interior-description">{interiorInfo.type === 'party-office' ? 'This ward office and its local officers are generated for gameplay; they are not verified real premises or real officials.' : interiorInfo.type === 'vehicle' ? 'A stylised vehicle interior for the fictional procedural city. Vehicle availability and placement are game simulation.' : 'A fictional procedural interior built for exploration and story scenes, not a surveyed or official facility.'}</div>
+          <div className="interior-description">{interiorInfo.type === 'party-office' ? 'This ward office and its local officers are generated for gameplay; they are not verified real premises or real officials.' : interiorKindDescription}</div>
           <button className="interior-exit-button" type="button" onClick={() => exitInteriorActionRef.current?.()}>EXIT TO STREET <span>TAP</span></button>
         </section>}
       </div>}
+      {flightPanelOpen && (isAirportInterior || isPlaneInterior) && <div className="flight-panel-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setFlightPanelOpen(false); }}><section className="flight-panel-card" role="dialog" aria-modal="true" aria-labelledby="flight-panel-title" onMouseDown={(event) => event.stopPropagation()}>
+        <header className="flight-panel-head"><span className="flight-panel-icon"><Plane size={17} /></span><div><small>{isAirportInterior ? 'AIRPORT CHECK-IN · FICTIONAL FARES' : 'ONBOARD AIRCRAFT · FLIGHT PLAN'}</small><h2 id="flight-panel-title">{isAirportInterior ? 'Choose your cabin' : 'Where are you flying?'}</h2><p>{isAirportInterior ? 'Select a cabin, then walk to its boarding gate.' : `${activeFlightClass.label} cabin · ${stateInfo.capital} departure`}</p></div><button type="button" onClick={() => setFlightPanelOpen(false)} aria-label="Close flight plan"><X size={15} /></button></header>
+        <label className="flight-destination-label" htmlFor="flight-destination">DESTINATION STATE</label><div className="flight-select-wrap"><select id="flight-destination" value={flightDestination} onChange={(event) => setFlightDestination(event.target.value)}>{STATES.filter((item) => item.name !== stateInfo.name).map((item) => <option key={item.name} value={item.name}>{item.name} · {item.capital}</option>)}</select><ChevronDown size={15} /></div>
+        {isAirportInterior ? <><div className="flight-class-grid">{FLIGHT_CLASSES.map((item) => <button key={item.id} type="button" className={`flight-class-option ${flightClass === item.id ? 'selected' : ''}`} onClick={() => setFlightClass(item.id)}><span><b>{item.label}</b><small>{item.detail}</small></span><strong>₦{money(item.fare)}</strong></button>)}</div><button type="button" className="flight-action-button" onClick={() => { planeBoardActionRef.current?.(flightClass); setFlightPanelOpen(false); }}>BOARD {activeFlightClass.label.toUpperCase()} CABIN <ArrowRight size={14} /></button></> : <><div className="flight-confirm-summary"><span>ARRIVAL AIRPORT<b>{STATES.find((item) => item.name === flightDestination)?.capital || 'Select a state'}</b></span><span>FICTIONAL ONE-WAY FARE<b>₦{money(activeFlightClass.fare)}</b></span></div><button type="button" className="flight-action-button" disabled={Boolean(flightCommand)} onClick={() => { onStartFlight?.({ destination: flightDestination, cabinClass: flightClass }); setFlightPanelOpen(false); }}>PAY FARE & TAKE OFF <ArrowRight size={14} /></button></>}
+        <p className="flight-panel-note">All routes and fares are fictional game simulation. No real airline ticket is booked and no real money is charged.</p>
+      </section></div>}
+      {flightStatus && <div className="flight-cinematic-hud" role="status"><span className="flight-hud-plane"><Plane size={17} /></span><div><small>{flightStatus.phase === 'deboarding' ? 'ARRIVAL' : 'FLIGHT IN PROGRESS'}</small><strong>{flightStatus.phase === 'takeoff' ? 'TAKING OFF' : flightStatus.phase === 'landing' ? 'APPROACHING THE RUNWAY' : flightStatus.phase === 'deboarding' ? 'WALKING DOWN THE STAIRS' : 'CRUISING ABOVE THE CLOUDS'}</strong><span>{flightStatus.origin || stateInfo.name} → {flightStatus.destination}</span></div><div className="flight-progress"><i style={{ width: `${Math.round((flightStatus.progress || 0) * 100)}%` }} /></div></div>}
       {executiveAudience && <div className="executive-audience-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) endExecutiveAudience(); }}><section className="executive-audience-modal" role="dialog" aria-modal="true" aria-labelledby="executive-audience-title" onMouseDown={(event) => event.stopPropagation()}><header className="executive-audience-header"><span className="executive-audience-icon"><Handshake size={17} /></span><div><small>FICTIONAL BRANCH ROLEPLAY · PRIVATE AUDIENCE</small><h3 id="executive-audience-title">{executiveAudience.phase === 'request' ? 'Request a meeting' : 'Audience in progress'}</h3><p>{executiveAudience.executive.position} · {executiveAudience.executive.name}</p></div><button type="button" onClick={endExecutiveAudience} aria-label="Close audience"><X size={15} /></button></header>{executiveAudience.phase === 'request' ? <><p className="executive-audience-copy">You have reached the executive in the simulated office. Briefly state what you would like to discuss; the request starts a fictional, typed in-game audience.</p><form className="executive-audience-form" onSubmit={submitExecutiveAudienceRequest}><label htmlFor="executive-audience-draft">MEETING REQUEST / AGENDA</label><textarea id="executive-audience-draft" value={audienceDraft} onChange={(event) => setAudienceDraft(event.target.value)} maxLength={260} rows={4} placeholder="What would you like to discuss with this executive?" autoFocus /><div className="executive-audience-form-foot"><span>Do not include real-world contact details or sensitive personal information.</span><b>{audienceDraft.length}/260</b></div><button className="executive-audience-send" type="submit" disabled={!audienceDraft.trim()}>REQUEST & BEGIN AUDIENCE <ArrowRight size={14} /></button></form></> : <><div className="executive-audience-messages" aria-live="polite">{executiveAudience.messages.map((message) => <article key={message.id} className={message.speaker === 'YOU' ? 'from-player' : 'from-executive'}><span>{message.speaker === 'YOU' ? 'YOU' : executiveAudience.executive.position.toUpperCase()}</span><p>{message.body}</p></article>)}</div><form className="executive-audience-reply" onSubmit={sendExecutiveAudienceMessage}><textarea value={audienceDraft} onChange={(event) => setAudienceDraft(event.target.value)} maxLength={260} rows={2} aria-label="Type a message for the executive" placeholder="Type a follow-up…" /><button type="submit" aria-label="Send follow-up" disabled={!audienceDraft.trim()}><Send size={14} /></button></form><button type="button" className="executive-audience-end" onClick={endExecutiveAudience}>END AUDIENCE</button></>}<div className="executive-audience-footnote"><LockKeyhole size={11} /> Dialogue is generated for NIGERIA 2027; it is not a real appointment or official response.</div></section></div>}
       {interiorActivity && <div className="executive-audience-backdrop interior-activity-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) dismissInteriorActivity(); }}><section className="executive-audience-modal interior-activity-modal" role="dialog" aria-modal="true" aria-labelledby="office-activity-title" onMouseDown={(event) => event.stopPropagation()}><header className="executive-audience-header"><span className="executive-audience-icon">{interiorActivity.id === 'water-break' ? <Zap size={17} /> : <BookOpen size={17} />}</span><div><small>FICTIONAL OFFICE ACTIVITY</small><h3 id="office-activity-title">{interiorActivity.title}</h3><p>{interiorInfo?.title || 'Simulated ward office'}</p></div><button type="button" onClick={dismissInteriorActivity} aria-label="Close activity"><X size={15} /></button></header>
         {interiorActivity.id === 'noticeboard' && <><p className="executive-audience-copy">A fictional branch notice invites residents to add a road, drainage, market-access, school, clinic, or safety issue to the next ward agenda.</p><form className="executive-audience-form" onSubmit={(event) => { event.preventDefault(); finishInteriorActivity(); }}><label htmlFor="office-activity-note">ADD A SHORT AGENDA NOTE (OPTIONAL)</label><textarea id="office-activity-note" value={interiorActivityDraft} onChange={(event) => setInteriorActivityDraft(event.target.value)} maxLength={220} rows={3} placeholder="What should the branch discuss next?" /><div className="executive-audience-form-foot"><span>Use fictional gameplay details only; no contact or sensitive personal data.</span><b>{interiorActivityDraft.length}/220</b></div><button className="executive-audience-send" type="submit">REVIEW NOTICE <ArrowRight size={14} /></button></form></>}
