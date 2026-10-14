@@ -2079,8 +2079,394 @@ function buildPartyOfficeInterior(info, palette, playerColor) {
   return group;
 }
 
+function addStadiumInstancedBoxes(group, dimensions, entries) {
+  if (!entries.length) return null;
+  const mesh = new THREE.InstancedMesh(
+    new THREE.BoxGeometry(...dimensions),
+    new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.86 }),
+    entries.length,
+  );
+  const transform = new THREE.Object3D();
+  entries.forEach((entry, index) => {
+    transform.position.set(entry.x, entry.y, entry.z);
+    transform.rotation.set(0, entry.rotationY || 0, 0);
+    transform.scale.set(1, 1, 1);
+    transform.updateMatrix();
+    mesh.setMatrixAt(index, transform.matrix);
+    mesh.setColorAt(index, new THREE.Color(entry.color || '#557365'));
+  });
+  mesh.instanceMatrix.needsUpdate = true;
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  mesh.castShadow = false;
+  mesh.receiveShadow = false;
+  group.add(mesh);
+  return mesh;
+}
+
+function addStadiumCrowd(group, fans) {
+  if (!fans.length) return;
+  const torso = new THREE.InstancedMesh(
+    new THREE.CapsuleGeometry(0.15, 0.24, 2, 6),
+    new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.9 }),
+    fans.length,
+  );
+  const heads = new THREE.InstancedMesh(
+    new THREE.SphereGeometry(0.13, 8, 6),
+    new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.92 }),
+    fans.length,
+  );
+  const arms = new THREE.InstancedMesh(
+    new THREE.CapsuleGeometry(0.048, 0.22, 2, 5),
+    new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.9 }),
+    fans.length * 2,
+  );
+  const transform = new THREE.Object3D();
+  fans.forEach((fan, index) => {
+    transform.position.set(fan.x, fan.baseY + 0.36, fan.z);
+    transform.rotation.set(0, fan.facing, 0);
+    transform.scale.set(1, 1, 1);
+    transform.updateMatrix();
+    torso.setMatrixAt(index, transform.matrix);
+    torso.setColorAt(index, new THREE.Color(fan.shirt));
+    transform.position.set(fan.x, fan.baseY + 0.77, fan.z);
+    transform.updateMatrix();
+    heads.setMatrixAt(index, transform.matrix);
+    heads.setColorAt(index, new THREE.Color(fan.skin));
+    for (const side of [-1, 1]) {
+      const armIndex = index * 2 + (side > 0 ? 1 : 0);
+      const offsetX = side * 0.205 * Math.cos(fan.facing);
+      const offsetZ = -side * 0.205 * Math.sin(fan.facing);
+      transform.position.set(fan.x + offsetX, fan.baseY + (fan.cheering ? 0.54 : 0.42), fan.z + offsetZ);
+      transform.rotation.set(0, fan.facing, side * (fan.cheering ? -0.85 : 0.22));
+      transform.updateMatrix();
+      arms.setMatrixAt(armIndex, transform.matrix);
+      arms.setColorAt(armIndex, new THREE.Color(fan.shirt));
+    }
+  });
+  for (const mesh of [torso, heads, arms]) {
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    group.add(mesh);
+  }
+}
+
+function buildStadiumInterior(info, palette) {
+  const group = new THREE.Group();
+  group.name = `interior-${info.id || 'unity-stadium'}`;
+  group.userData.interiorKind = 'stadium';
+  group.userData.interiorBounds = { minX: -29.2, maxX: 29.2, minZ: -27.8, maxZ: 27.4 };
+  const accent = palette.accent || '#d8f36b';
+  const standGrey = '#7a827c';
+  const seatColors = [accent, '#f3f0df', '#19734d', '#d5b04b', '#3f7896', '#b95c46'];
+  const shirtColors = ['#17844d', '#f4f0df', '#d9b64d', '#396e8c', '#c15a43', '#74609a', '#34775c', accent];
+  const skinColors = ['#4f3025', '#633d2b', '#795039', '#8c5d40', '#a36c49', '#b67e58'];
+  const rand = seeded(hash(`${info.id || 'unity-stadium'}:${accent}:crowd`));
+
+  const concourseFloor = new THREE.Mesh(
+    new THREE.PlaneGeometry(64, 61),
+    new THREE.MeshStandardMaterial({ color: '#68736d', roughness: 0.94, side: THREE.DoubleSide }),
+  );
+  concourseFloor.rotation.x = -Math.PI / 2;
+  concourseFloor.position.y = -0.08;
+  group.add(concourseFloor);
+
+  const runningTrack = new THREE.Mesh(
+    new THREE.PlaneGeometry(44, 32),
+    new THREE.MeshStandardMaterial({ color: '#974f43', roughness: 0.92, side: THREE.DoubleSide }),
+  );
+  runningTrack.rotation.x = -Math.PI / 2;
+  runningTrack.position.y = 0.015;
+  group.add(runningTrack);
+  const trackLine = (width, depth, x, z) => {
+    const line = box(width, 0.025, depth, '#e5d9c5', { castShadow: false, roughness: 0.8 });
+    line.position.set(x, 0.045, z);
+    group.add(line);
+  };
+  for (const z of [-15.3, -13.9, -12.5, 12.5, 13.9, 15.3]) trackLine(42, 0.055, 0, z);
+  for (const x of [-21, -19.6, -18.2, 18.2, 19.6, 21]) trackLine(0.055, 29, x, 0);
+
+  const pitch = new THREE.Mesh(
+    new THREE.PlaneGeometry(34, 20),
+    new THREE.MeshStandardMaterial({ color: '#347b47', roughness: 0.96, side: THREE.DoubleSide }),
+  );
+  pitch.rotation.x = -Math.PI / 2;
+  pitch.position.y = 0.065;
+  group.add(pitch);
+  for (let stripe = 0; stripe < 8; stripe += 1) {
+    const grassStripe = new THREE.Mesh(
+      new THREE.PlaneGeometry(34, 2.5),
+      new THREE.MeshStandardMaterial({ color: stripe % 2 ? '#39834a' : '#2f7341', roughness: 0.96, side: THREE.DoubleSide }),
+    );
+    grassStripe.rotation.x = -Math.PI / 2;
+    grassStripe.position.set(0, 0.075, -8.75 + stripe * 2.5);
+    group.add(grassStripe);
+  }
+  const fieldLine = (width, depth, x, z) => {
+    const line = box(width, 0.026, depth, '#f1f0df', { castShadow: false, roughness: 0.8 });
+    line.position.set(x, 0.105, z);
+    group.add(line);
+  };
+  fieldLine(34, 0.075, 0, -9.95);
+  fieldLine(34, 0.075, 0, 9.95);
+  fieldLine(0.075, 20, -16.95, 0);
+  fieldLine(0.075, 20, 16.95, 0);
+  fieldLine(0.06, 19.8, 0, 0);
+  const centerCircle = new THREE.Mesh(
+    new THREE.RingGeometry(2.62, 2.7, 56),
+    new THREE.MeshStandardMaterial({ color: '#f1f0df', side: THREE.DoubleSide, roughness: 0.8 }),
+  );
+  centerCircle.rotation.x = -Math.PI / 2;
+  centerCircle.position.y = 0.11;
+  group.add(centerCircle);
+  const centerSpot = new THREE.Mesh(new THREE.CircleGeometry(0.12, 16), new THREE.MeshStandardMaterial({ color: '#f1f0df' }));
+  centerSpot.rotation.x = -Math.PI / 2;
+  centerSpot.position.y = 0.112;
+  group.add(centerSpot);
+  for (const sign of [-1, 1]) {
+    fieldLine(4.4, 0.065, sign * 14.75, 0);
+    fieldLine(0.065, 13.1, sign * 14.75, 0);
+    fieldLine(4.4, 0.065, sign * 14.75, -6.52);
+    fieldLine(4.4, 0.065, sign * 14.75, 6.52);
+    fieldLine(2.0, 0.055, sign * 16.0, 0);
+    fieldLine(0.055, 6.5, sign * 16.0, 0);
+    fieldLine(2.0, 0.055, sign * 16.0, -3.25);
+    fieldLine(2.0, 0.055, sign * 16.0, 3.25);
+    const penaltySpot = new THREE.Mesh(new THREE.CircleGeometry(0.1, 12), new THREE.MeshStandardMaterial({ color: '#f1f0df' }));
+    penaltySpot.rotation.x = -Math.PI / 2;
+    penaltySpot.position.set(sign * 12.2, 0.112, 0);
+    group.add(penaltySpot);
+
+    for (const z of [-3.66, 3.66]) {
+      const post = box(0.14, 2.44, 0.14, '#f3f0df', { castShadow: false, roughness: 0.62 });
+      post.position.set(sign * 17.05, 1.25, z);
+      group.add(post);
+    }
+    const crossbar = box(0.14, 0.14, 7.42, '#f3f0df', { castShadow: false, roughness: 0.62 });
+    crossbar.position.set(sign * 17.05, 2.47, 0);
+    group.add(crossbar);
+    const rearFrame = box(0.08, 2.3, 7.35, '#d9e0d2', { castShadow: false });
+    rearFrame.position.set(sign * 18.25, 1.18, 0);
+    group.add(rearFrame);
+    const netTop = box(1.2, 0.07, 7.35, '#d8ded2', { castShadow: false });
+    netTop.position.set(sign * 17.65, 2.33, 0);
+    group.add(netTop);
+    for (const z of [-3.66, 3.66]) {
+      const netSide = box(1.2, 2.3, 0.07, '#d8ded2', { castShadow: false });
+      netSide.position.set(sign * 17.65, 1.18, z);
+      group.add(netSide);
+    }
+  }
+  for (const x of [-16.65, 16.65]) {
+    for (const z of [-9.55, 9.55]) {
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.035, 1.35, 7), new THREE.MeshStandardMaterial({ color: '#ece6d5', roughness: 0.72 }));
+      pole.position.set(x, 0.7, z);
+      group.add(pole);
+      const flag = box(0.42, 0.25, 0.035, '#d3b44f', { castShadow: false });
+      flag.position.set(x + (x > 0 ? -0.2 : 0.2), 1.18, z);
+      group.add(flag);
+    }
+  }
+
+  const rowSpecs = [];
+  for (let row = 0; row < 18; row += 1) {
+    if (row < 10) rowSpecs.push({ y: 0.5 + row * 0.4, distance: 15.45 + row * 0.47 });
+    else rowSpecs.push({ y: 5.05 + (row - 10) * 0.42, distance: 21.0 + (row - 10) * 0.47 });
+  }
+  const seatBasesSide = [];
+  const seatBacksSide = [];
+  const seatBasesEnd = [];
+  const seatBacksEnd = [];
+  const fans = [];
+  for (const sign of [-1, 1]) {
+    rowSpecs.forEach((row, rowIndex) => {
+      const deck = box(47, 0.32, 0.66, rowIndex % 2 ? '#626f68' : standGrey, { castShadow: false });
+      deck.position.set(0, row.y, sign * row.distance);
+      group.add(deck);
+      for (let section = 0, x = -19.6; x <= 19.6; section += 1, x += 2.8) {
+        if (sign > 0 && Math.abs(x) < 2.6) continue;
+        const seatColor = seatColors[(section + rowIndex + (sign > 0 ? 1 : 0)) % seatColors.length];
+        seatBasesSide.push({ x, y: row.y + 0.23, z: sign * (row.distance - 0.13), color: seatColor });
+        seatBacksSide.push({ x, y: row.y + 0.43, z: sign * (row.distance + 0.12), color: seatColor });
+      }
+      for (let index = 0, x = -20.0; x <= 20.0; index += 1, x += 2.35) {
+        if (sign > 0 && Math.abs(x) < 2.9) continue;
+        if (rand() < 0.17) continue;
+        fans.push({
+          x,
+          baseY: row.y + 0.18,
+          z: sign * (row.distance - 0.08),
+          facing: sign > 0 ? Math.PI : 0,
+          cheering: rand() > 0.73,
+          shirt: shirtColors[Math.floor(rand() * shirtColors.length)],
+          skin: skinColors[Math.floor(rand() * skinColors.length)],
+        });
+      }
+    });
+  }
+  rowSpecs.slice(0, 16).forEach((row, rowIndex) => {
+    for (const sign of [-1, 1]) {
+      const distance = rowIndex < 10 ? 21.1 + rowIndex * 0.43 : 25.7 + (rowIndex - 10) * 0.44;
+      const deck = box(0.66, 0.32, 27.0, rowIndex % 2 ? '#626f68' : standGrey, { castShadow: false });
+      deck.position.set(sign * distance, row.y, 0);
+      group.add(deck);
+      for (let section = 0, z = -11.2; z <= 11.2; section += 1, z += 2.8) {
+        const seatColor = seatColors[(section + rowIndex + (sign > 0 ? 2 : 0)) % seatColors.length];
+        seatBasesEnd.push({ x: sign * (distance - 0.13), y: row.y + 0.23, z, color: seatColor });
+        seatBacksEnd.push({ x: sign * (distance + 0.12), y: row.y + 0.43, z, color: seatColor });
+      }
+      for (let index = 0, z = -11.2; z <= 11.2; index += 1, z += 2.65) {
+        if (rand() < 0.19) continue;
+        fans.push({
+          x: sign * (distance - 0.08),
+          baseY: row.y + 0.18,
+          z,
+          facing: sign > 0 ? -Math.PI / 2 : Math.PI / 2,
+          cheering: rand() > 0.72,
+          shirt: shirtColors[Math.floor(rand() * shirtColors.length)],
+          skin: skinColors[Math.floor(rand() * skinColors.length)],
+        });
+      }
+    }
+  });
+  for (const sign of [-1, 1]) {
+    const lowerWalkway = box(47, 0.25, 1.0, '#535e57', { castShadow: false });
+    lowerWalkway.position.set(0, 4.83, sign * 20.45);
+    group.add(lowerWalkway);
+    const endWalkway = box(1.0, 0.25, 27.0, '#535e57', { castShadow: false });
+    endWalkway.position.set(sign * 25.3, 4.83, 0);
+    group.add(endWalkway);
+  }
+  addStadiumInstancedBoxes(group, [2.45, 0.13, 0.38], seatBasesSide);
+  addStadiumInstancedBoxes(group, [2.45, 0.32, 0.1], seatBacksSide);
+  addStadiumInstancedBoxes(group, [0.38, 0.13, 2.35], seatBasesEnd);
+  addStadiumInstancedBoxes(group, [0.1, 0.32, 2.35], seatBacksEnd);
+  addStadiumCrowd(group, fans);
+
+  let sidelineSeatIndex = 0;
+  for (const sign of [-1, 1]) {
+    for (const x of [-6, -2, 2, 6]) {
+      const z = sign * 12.0;
+      const rotationY = sign > 0 ? Math.PI : 0;
+      const chair = makeMeetingChair();
+      chair.position.set(x, 0, z);
+      chair.rotation.y = rotationY;
+      group.add(chair);
+      addInteriorSeat(group, {
+        seatId: `stadium-seat-${sidelineSeatIndex + 1}`,
+        seatLabel: 'sideline seat',
+        x,
+        z,
+        rotationY,
+        approachPoint: { x, z: z + sign * 0.9 },
+      });
+      sidelineSeatIndex += 1;
+    }
+  }
+
+  for (const sign of [-1, 1]) {
+    const sideAd = box(44, 0.72, 0.22, sign > 0 ? '#20513c' : '#244c60', { castShadow: false });
+    sideAd.position.set(0, 0.56, sign * 15.0);
+    group.add(sideAd);
+    const sideAdText = labelSprite(sign > 0 ? 'UNITY • SPORT • COMMUNITY' : 'GAME DAY • UNITY STADIUM', accent);
+    sideAdText.position.set(0, 0.95, sign * 14.82);
+    sideAdText.scale.set(7.8, 0.9, 1);
+    group.add(sideAdText);
+  }
+
+  const wallColor = '#626b65';
+  for (const sign of [-1, 1]) {
+    const endWall = box(0.72, 13.4, 56, wallColor, { castShadow: false });
+    endWall.position.set(sign * 30.0, 6.65, 0);
+    group.add(endWall);
+    const canopy = box(54, 0.48, 5.4, '#46524c', { castShadow: false, roughness: 0.72, metalness: 0.12 });
+    canopy.position.set(0, 13.45, sign * 23.25);
+    group.add(canopy);
+    const canopyBeam = box(54, 0.42, 0.42, '#a7b0a5', { castShadow: false, metalness: 0.24 });
+    canopyBeam.position.set(0, 13.0, sign * 20.85);
+    group.add(canopyBeam);
+    const endCanopy = box(5.4, 0.48, 46, '#46524c', { castShadow: false, roughness: 0.72, metalness: 0.12 });
+    endCanopy.position.set(sign * 26.9, 13.45, 0);
+    group.add(endCanopy);
+    for (const x of [-21, 0, 21]) {
+      const support = box(0.42, 12.2, 0.42, '#5b665f', { castShadow: false, metalness: 0.17 });
+      support.position.set(x, 6.25, sign * 26.0);
+      group.add(support);
+    }
+  }
+  const northWall = box(59, 13.4, 0.72, wallColor, { castShadow: false });
+  northWall.position.set(0, 6.65, -29.0);
+  group.add(northWall);
+  for (const centerX of [-16.5, 16.5]) {
+    const entryWall = box(26, 13.4, 0.72, wallColor, { castShadow: false });
+    entryWall.position.set(centerX, 6.65, 29.0);
+    group.add(entryWall);
+  }
+
+  const tunnelColor = '#49554e';
+  for (const sign of [-1, 1]) {
+    const tunnelSide = box(0.3, 4.2, 5.6, tunnelColor, { castShadow: false });
+    tunnelSide.position.set(sign * 2.25, 2.1, 26.1);
+    group.add(tunnelSide);
+  }
+  const tunnelRoof = box(4.8, 0.42, 5.6, '#59645d', { castShadow: false });
+  tunnelRoof.position.set(0, 4.1, 26.1);
+  group.add(tunnelRoof);
+  const exitDoor = addDoorPortal(group, { id: 'exit-stadium', title: 'Exit stadium', type: 'exit', accent: '#e5c465', x: 0, z: 28.35, width: 2.7, height: 3.5 });
+  exitDoor.userData.interaction = { id: 'exit-interior', title: 'Exit stadium', type: 'exit' };
+
+  const scoreboard = box(11.2, 4.2, 0.62, '#263631', { castShadow: false, metalness: 0.12 });
+  scoreboard.position.set(0, 10.15, -28.35);
+  group.add(scoreboard);
+  const screen = box(10.4, 3.25, 0.08, '#15221f', { castShadow: false, emissive: '#08100d', emissiveIntensity: 0.3 });
+  screen.position.set(0, 10.2, -28.0);
+  group.add(screen);
+  const stadiumSign = labelSprite('UNITY STADIUM', accent);
+  stadiumSign.position.set(0, 10.8, -27.92);
+  stadiumSign.scale.set(8.2, 1.6, 1);
+  group.add(stadiumSign);
+  const matchSign = labelSprite('MATCH DAY • LIVE', '#f2d36e');
+  matchSign.position.set(0, 9.6, -27.9);
+  matchSign.scale.set(6.7, 1.2, 1);
+  group.add(matchSign);
+
+  group.add(new THREE.AmbientLight('#dce9de', 1.35));
+  for (const x of [-19, 19]) {
+    for (const z of [-21, 21]) {
+      const lamp = new THREE.PointLight('#fff1ce', 4.2, 46, 1.8);
+      lamp.position.set(x, 12.25, z);
+      group.add(lamp);
+      const floodlight = box(2.5, 0.5, 0.25, '#d7decf', { castShadow: false, emissive: '#fff1c2', emissiveIntensity: 0.78 });
+      floodlight.position.set(x, 12.8, z);
+      group.add(floodlight);
+    }
+  }
+  for (const x of [-22, 22]) {
+    const spot = new THREE.SpotLight('#fff4d7', 17, 62, Math.PI / 5.5, 0.62, 1.25);
+    spot.position.set(x, 12.5, 0);
+    spot.target.position.set(0, 0.2, 0);
+    group.add(spot);
+    group.add(spot.target);
+  }
+  group.userData.collisionRects = [
+    { x: 0, z: -20.15, halfX: 23.2, halfZ: 4.35 },
+    { x: -13.5, z: 20.15, halfX: 10.85, halfZ: 4.35 },
+    { x: 13.5, z: 20.15, halfX: 10.85, halfZ: 4.35 },
+    { x: -25.25, z: 0, halfX: 4.15, halfZ: 13.4 },
+    { x: 25.25, z: 0, halfX: 4.15, halfZ: 13.4 },
+    { x: -30.0, z: 0, halfX: 0.36, halfZ: 29.0 },
+    { x: 30.0, z: 0, halfX: 0.36, halfZ: 29.0 },
+    { x: 0, z: -29.0, halfX: 30.0, halfZ: 0.36 },
+    { x: -16.5, z: 29.0, halfX: 13.0, halfZ: 0.36 },
+    { x: 16.5, z: 29.0, halfX: 13.0, halfZ: 0.36 },
+  ];
+  return group;
+}
+
 function buildInteriorRoom(info, palette, playerColor) {
   if (info.type === 'party-office') return buildPartyOfficeInterior(info, palette, playerColor);
+  if (info.metadata?.venueType === 'stadium') return buildStadiumInterior(info, palette);
   const group = new THREE.Group();
   group.name = `interior-${info.id || info.type}`;
   const wallMaterial = '#e3d8bf';
@@ -2187,16 +2573,6 @@ function buildInteriorRoom(info, palette, playerColor) {
     const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.08, 8, 20), new THREE.MeshStandardMaterial({ color: '#242b29' }));
     wheel.position.set(-1.85, 1.58, 3.85);
     group.add(wheel);
-  } else if (info.metadata?.venueType === 'stadium') {
-    for (let tier = 0; tier < 3; tier += 1) {
-      const stand = box(8.2, 0.32, 0.8, ['#d4b958', '#597f66', '#9f6352'][tier]);
-      stand.position.set(0, 0.35 + tier * 0.38, -2.65 + tier * 0.86);
-      group.add(stand);
-    }
-    const field = new THREE.Mesh(new THREE.PlaneGeometry(7.4, 3.4), new THREE.MeshStandardMaterial({ color: '#62905c', roughness: 0.96, side: THREE.DoubleSide }));
-    field.rotation.x = -Math.PI / 2;
-    field.position.set(0, 0.08, 2.05);
-    group.add(field);
   } else if (info.type === 'venue') {
     for (let index = 0; index < 4; index += 1) {
       const x = -4.0 + index * 2.65;
@@ -2732,8 +3108,13 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
   controls.update();
   const fitInteriorCameraFov = () => {
     const aspect = camera.aspect;
-    // Keep the in-room view immersive on phones without cropping the meeting table on wider screens.
-    camera.fov = aspect < 0.68 ? 78 : aspect < 1.1 ? 62 : 48;
+    if (interiorGroup?.userData?.interiorKind === 'stadium') {
+      // A wider vertical view on narrow phones keeps the pitch and nearby stands in frame.
+      camera.fov = aspect < 0.68 ? 92 : aspect < 1.1 ? 68 : 52;
+    } else {
+      // Keep enclosed rooms immersive without cropping the meeting table on wider screens.
+      camera.fov = aspect < 0.68 ? 78 : aspect < 1.1 ? 62 : 48;
+    }
     camera.updateProjectionMatrix();
   };
 
@@ -2754,7 +3135,7 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
   const interiorColliders = [];
   const activeCollisionRects = () => (interiorActive ? interiorColliders : getWorldActorColliders());
   const activeWorldBounds = () => (interiorActive
-    ? { minX: -5.55, maxX: 5.55, minZ: -5.45, maxZ: 5.45 }
+    ? interiorGroup?.userData?.interiorBounds || { minX: -5.55, maxX: 5.55, minZ: -5.45, maxZ: 5.45 }
     : worldBounds);
   const setSafeWalkTarget = (x, z, maxRadius = 5.5) => {
     const radius = interiorActive ? 0.46 : 0.5;
@@ -2822,6 +3203,8 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
   let savedSceneBackground = null;
   let savedSceneFog = null;
   const interiorBackdrop = new THREE.Color('#d8c9ad');
+  const stadiumInteriorBackdrop = new THREE.Color('#829ca4');
+  let activeInteriorBackdrop = interiorBackdrop;
   let previousPlayerPosition = player.position.clone();
   let lastEmit = 0;
   let activePointer = null;
@@ -2872,6 +3255,7 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     }
     savedExteriorVisibility = null;
     if (savedSceneBackground) scene.background = savedSceneBackground;
+    activeInteriorBackdrop = interiorBackdrop;
     if (savedSceneFog !== null) scene.fog = savedSceneFog;
     savedSceneBackground = null;
     savedSceneFog = null;
@@ -2928,11 +3312,13 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     }
     savedSceneBackground = scene.background;
     savedSceneFog = scene.fog;
-    scene.background = interiorBackdrop.clone();
+    const stadiumInterior = info.metadata?.venueType === 'stadium';
+    activeInteriorBackdrop = stadiumInterior ? stadiumInteriorBackdrop : interiorBackdrop;
+    scene.background = activeInteriorBackdrop.clone();
     scene.fog = null;
     scene.add(interiorGroup);
     interiorGroup.add(player);
-    player.position.set(0, 0, 4.9);
+    player.position.set(0, 0, stadiumInterior ? 25.2 : 4.9);
     player.rotation.y = Math.PI;
     previousPlayerPosition.copy(player.position);
     interiorGroup.visible = true;
@@ -2952,13 +3338,23 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     movementWaypointIndex = 0;
     pendingInteraction = null;
     const aspect = (root.clientWidth || 1) / Math.max(root.clientHeight || 1, 1);
-    camera.position.set(0, aspect < 0.68 ? 2.65 : 2.5, 5.55);
-    controls.target.set(0, 1.15, -0.8);
-    fitInteriorCameraFov();
-    controls.minDistance = 2.8;
-    controls.maxDistance = 6.7;
-    controls.minPolarAngle = 1.12;
-    controls.maxPolarAngle = 1.6;
+    if (stadiumInterior) {
+      camera.position.set(0, 15.5, 26.2);
+      controls.target.set(0, 1.7, 0);
+      fitInteriorCameraFov();
+      controls.minDistance = 13;
+      controls.maxDistance = 34;
+      controls.minPolarAngle = 0.52;
+      controls.maxPolarAngle = 1.52;
+    } else {
+      camera.position.set(0, aspect < 0.68 ? 2.65 : 2.5, 5.55);
+      controls.target.set(0, 1.15, -0.8);
+      fitInteriorCameraFov();
+      controls.minDistance = 2.8;
+      controls.maxDistance = 6.7;
+      controls.minPolarAngle = 1.12;
+      controls.maxPolarAngle = 1.6;
+    }
     controls.update();
     if (executiveFocusRef) executiveFocusRef.current = (executiveId) => {
       const action = interiorExecutiveTargets.get(executiveId);
@@ -3216,7 +3612,7 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
       currentFog.lerp(fogDusk, twilight * 0.45);
     }
     if (interiorActive) {
-      scene.background.copy(interiorBackdrop);
+      scene.background.copy(activeInteriorBackdrop);
     } else {
       scene.background.copy(currentSky);
       if (scene.fog) scene.fog.color.copy(currentFog);
@@ -3407,7 +3803,7 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
       const torsoTarget = playerSeatedInOffice ? 0.59 : playerSeatedAtMeeting ? 0.735 : 0.7;
       player.userData.torso.position.y = walkingNow ? 0.7 + Math.abs(Math.sin(elapsed * 11 * 2)) * 0.03 : THREE.MathUtils.damp(player.userData.torso.position.y, torsoTarget, 8, delta);
     }
-    if (!interiorActive && !isFocusingCamera) {
+    if ((!interiorActive || interiorGroup?.userData?.interiorKind === 'stadium') && !isFocusingCamera) {
       const followDelta = new THREE.Vector3(player.position.x - previousPlayerPosition.x, 0, player.position.z - previousPlayerPosition.z);
       if (followDelta.lengthSq() > 0) { camera.position.add(followDelta); controls.target.add(followDelta); }
     }
