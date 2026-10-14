@@ -1768,10 +1768,6 @@ function addInteriorSeat(parent, { seatId, seatLabel = 'Visitor chair', x, z, ro
     rotationY,
   };
   addInteriorHotspot(anchor, interaction, { y: 0.76, width: 1.0, height: 1.65, depth: 0.95 });
-  const sign = labelSprite('TAP TO SIT', '#d8f36b');
-  sign.position.set(0, 1.72, 0.18);
-  sign.scale.set(0.98, 0.27, 1);
-  anchor.add(sign);
   parent.add(anchor);
   return interaction;
 }
@@ -2000,8 +1996,9 @@ function buildPartyOfficeInterior(info, palette, playerColor) {
     attendee.group.position.z = position.rotation === 0 ? -0.06 : 0.06;
     anchor.add(attendee.group);
     const roleTag = labelSprite(executive.position || 'WARD EXECUTIVE', accent);
-    roleTag.position.set(0, 2.0, 0.08);
-    roleTag.scale.set(2.1, 0.56, 1);
+    roleTag.position.set(0, 1.9, 0.08);
+    roleTag.scale.set(1.55, 0.42, 1);
+    roleTag.material.opacity = 0.82;
     anchor.add(roleTag);
     const interaction = {
       id: `executive-${executive.id}`,
@@ -2023,10 +2020,6 @@ function buildPartyOfficeInterior(info, palette, playerColor) {
     anchor.add(makeMeetingChair());
     const interaction = { id: `visitor-seat-${index + 1}`, title: 'Sit in visitor chair', type: 'seat', seatId: `visitor-seat-${index + 1}`, seatLabel: `Visitor chair ${index + 1}`, targetObject: anchor, approachPoint: { x, z: 4.45 }, rotationY: Math.PI };
     addInteriorHotspot(anchor, interaction, { y: 0.72, width: 0.8, height: 1.45, depth: 0.9 });
-    const seatLabel = labelSprite('TAP TO SIT', '#d8f36b');
-    seatLabel.position.set(0, 1.72, 0.18);
-    seatLabel.scale.set(0.98, 0.27, 1);
-    anchor.add(seatLabel);
     group.add(anchor);
     seatTargets.set(interaction.seatId, interaction);
   }
@@ -2873,10 +2866,12 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     movementWaypoints = [];
     movementWaypointIndex = 0;
     pendingInteraction = null;
-    camera.position.set(0, 4.0, 7.2);
-    controls.target.set(0, 1.25, -0.15);
-    controls.minDistance = 2.5;
-    controls.maxDistance = 9.2;
+    const aspect = (root.clientWidth || 1) / Math.max(root.clientHeight || 1, 1);
+    const interiorDistance = aspect < 0.78 ? 15.2 : aspect < 1.2 ? 13.2 : 11.8;
+    camera.position.set(0, 1.1 + interiorDistance * 0.39, interiorDistance * 0.92);
+    controls.target.set(0, 1.1, -0.25);
+    controls.minDistance = 4.0;
+    controls.maxDistance = 20.0;
     controls.maxPolarAngle = Math.PI / 1.9;
     controls.update();
     if (executiveFocusRef) executiveFocusRef.current = (executiveId) => {
