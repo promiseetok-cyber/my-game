@@ -3450,7 +3450,8 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
   camera.position.set(-4.2, 7.4, 16.5);
   camera.lookAt(-5.8, 1, 3.5);
 
-  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
+  // Keep context settings conservative for mobile and embedded browsers. Three.js r162 can fall back to WebGL 1 when WebGL 2 is unavailable.
+  const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false, powerPreference: 'default' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.6));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -5005,7 +5006,7 @@ export default function World({ state, locality = null, locationKey = 'state-cap
   const propertyProfileRef = useRef(propertyProfile);
   const propertyOwnerRef = useRef(propertyOwner);
   const lastFlightCommandIdRef = useRef(null);
-  const [worldError, setWorldError] = useState(false);
+  const [worldError, setWorldError] = useState('');
   remoteRef.current = remotePlayers;
   moveCallbackRef.current = onMove;
   venueCallbackRef.current = onVenueSelect;
@@ -5021,7 +5022,7 @@ export default function World({ state, locality = null, locationKey = 'state-cap
 
   useEffect(() => {
     if (!mountRef.current) return undefined;
-    setWorldError(false);
+    setWorldError('');
     try {
       const cleanup = buildWorld(
         mountRef.current,
@@ -5053,7 +5054,7 @@ export default function World({ state, locality = null, locationKey = 'state-cap
       return cleanup;
     } catch (error) {
       console.error('NIGERIA 2027 3D scene failed to initialize:', error);
-      setWorldError(true);
+      setWorldError(error?.message || String(error) || 'Unknown 3D initialization error.');
       return undefined;
     }
   }, [state, playerColor, playerAppearance?.skinTone, playerAppearance?.headStyle, playerAppearance?.outfitColor, locationKey]);
@@ -5090,7 +5091,7 @@ export default function World({ state, locality = null, locationKey = 'state-cap
   return (
     <div className="world-layer">
       <div className="world-canvas" ref={mountRef} />
-      {worldError && <div className="world-error-banner" role="status"><strong>3D view unavailable</strong><span>The interactive scene could not start in this browser. The rest of the game should still work. Refresh the page or enable WebGL/hardware acceleration.</span></div>}
+      {worldError && <div className="world-error-banner" role="status"><strong>3D view unavailable</strong><span>The 3D scene could not initialize. This version can use WebGL 2 or WebGL 1, but the browser may be blocking graphics. Try an up-to-date browser with WebGL enabled. The rest of the game should still work.</span><small>Diagnostic: {worldError}</small></div>}
     </div>
   );
 }
