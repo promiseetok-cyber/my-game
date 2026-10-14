@@ -641,9 +641,24 @@ function makePartyOffice(party, branch, x, z) {
   const base = box(3.55, 0.18, 3.65, '#b5a27f', { castShadow: false });
   base.position.y = 0.09;
   group.add(base);
-  const front = box(3.05, 2.35, 2.28, '#d8c5a4');
-  front.position.set(0, 1.28, 0.06);
-  group.add(front);
+  // Build a small open-front shell instead of a solid box so the entry reads as a real doorway.
+  const backWall = box(3.05, 2.35, 0.18, '#d8c5a4');
+  backWall.position.set(0, 1.28, -1.03);
+  group.add(backWall);
+  for (const side of [-1, 1]) {
+    const sideWall = box(0.18, 2.35, 2.18, '#d8c5a4');
+    sideWall.position.set(side * 1.435, 1.28, 0.06);
+    group.add(sideWall);
+  }
+  const frontLeft = box(1.72, 2.35, 0.18, '#d8c5a4');
+  frontLeft.position.set(-0.66, 1.28, 1.11);
+  group.add(frontLeft);
+  const frontRight = box(0.67, 2.35, 0.18, '#d8c5a4');
+  frontRight.position.set(1.185, 1.28, 1.11);
+  group.add(frontRight);
+  const frontHeader = box(3.05, 0.5, 0.18, '#d8c5a4');
+  frontHeader.position.set(0, 2.2, 1.11);
+  group.add(frontHeader);
   const roof = box(3.28, 0.22, 2.5, '#4a5248');
   roof.position.set(0, 2.58, 0.06);
   group.add(roof);
@@ -668,7 +683,10 @@ function makePartyOffice(party, branch, x, z) {
   const flag = box(0.46, 0.26, 0.035, color, { castShadow: false });
   flag.position.set(-1.28, 2.82, 0.72);
   group.add(flag);
-  addDoorPortal(group, { id: `party-office-${party.id}`, title: `${party.tag} office`, type: 'party-office', partyId: party.id, accent: color, x: 0.48, z: 1.25, width: 0.56, height: 1.26, metadata: { partyId: party.id, partyName: party.name, branch } });
+  const officeDoor = addDoorPortal(group, { id: `party-office-${party.id}`, title: `ENTER ${party.tag}`, type: 'party-office', partyId: party.id, accent: color, x: 0.48, z: 1.25, width: 0.56, height: 1.26, metadata: { partyId: party.id, partyName: party.name, branch } });
+  // The whole office facade is an entry target, so touch users do not have to hit a tiny door leaf.
+  group.userData.interaction = officeDoor.userData.interaction;
+  group.userData.interactionPortal = officeDoor.parent;
   group.position.set(x, 0, z);
   group.userData.partyId = party.id;
   group.userData.branch = branch;
@@ -1772,6 +1790,25 @@ function addInteriorSeat(parent, { seatId, seatLabel = 'Visitor chair', x, z, ro
   return interaction;
 }
 
+function addCutawayRoofFrame(group, width, depth, wallTop, color = '#715741') {
+  // Exposed beams keep the room legible as an interior while leaving the ceiling out of the camera's sightline.
+  const beamHeight = 0.14;
+  const beamWidth = 0.16;
+  const beamY = wallTop + 0.015;
+  const beams = [
+    { size: [width, beamHeight, beamWidth], pos: [0, beamY, -depth / 2 + beamWidth / 2] },
+    { size: [width, beamHeight, beamWidth], pos: [0, beamY, depth / 2 - beamWidth / 2] },
+    { size: [beamWidth, beamHeight, depth], pos: [-width / 2 + beamWidth / 2, beamY, 0] },
+    { size: [beamWidth, beamHeight, depth], pos: [width / 2 - beamWidth / 2, beamY, 0] },
+    { size: [beamWidth, beamHeight, depth], pos: [0, beamY, 0] },
+  ];
+  for (const { size, pos } of beams) {
+    const beam = box(...size, color, { castShadow: false, roughness: 0.82 });
+    beam.position.set(...pos);
+    group.add(beam);
+  }
+}
+
 function buildPartyOfficeInterior(info, palette, playerColor) {
   const group = new THREE.Group();
   group.name = `interior-${info.id || 'party-office'}`;
@@ -1793,14 +1830,14 @@ function buildPartyOfficeInterior(info, palette, playerColor) {
     { size: [0.24, wallHeight, 13], pos: [7, wallHeight / 2, 0] },
     { size: [5.8, wallHeight, 0.24], pos: [-4.1, wallHeight / 2, wallZ] },
     { size: [5.8, wallHeight, 0.24], pos: [4.1, wallHeight / 2, wallZ] },
-    { size: [2.25, 1.85, 0.24], pos: [0, 3.43, wallZ] },
-    { size: [14, 0.18, 13], pos: [0, 4.42, 0], color: '#f5eddd' },
+    { size: [2.25, 0.22, 0.24], pos: [0, 4.2, wallZ] },
   ];
   walls.forEach(({ size, pos, color }) => {
     const wall = box(...size, color || wallColor, { castShadow: true, roughness: 0.94 });
     wall.position.set(...pos);
     group.add(wall);
   });
+  addCutawayRoofFrame(group, 14, 13, wallHeight, '#775c43');
   group.userData.collisionRects = [
     { x: 0, z: -6.42, halfX: 7, halfZ: 0.14 },
     { x: -7, z: 0, halfX: 0.14, halfZ: 6.5 },
@@ -2091,10 +2128,9 @@ function buildInteriorRoom(info, palette, playerColor) {
     { size: [13, 4.5, 0.22], pos: [0, 2.2, -6.4], color: wallMaterial },
     { size: [0.22, 4.5, 13], pos: [-6.4, 2.2, 0], color: wallMaterial },
     { size: [0.22, 4.5, 13], pos: [6.4, 2.2, 0], color: wallMaterial },
-    { size: [13, 0.22, 13], pos: [0, 4.45, 0], color: '#d4c5a8' },
     { size: [5.55, 4.45, 0.22], pos: [-3.72, 2.2, 6.4], color: wallMaterial },
     { size: [5.55, 4.45, 0.22], pos: [3.72, 2.2, 6.4], color: wallMaterial },
-    { size: [1.9, 1.85, 0.22], pos: [0, 3.475, 6.4], color: '#d4c5a8' },
+    { size: [1.9, 0.22, 0.22], pos: [0, 4.33, 6.4], color: '#d4c5a8' },
   ];
   group.userData.collisionRects = [
     { x: 0, z: -6.4, halfX: 6.5, halfZ: 0.13 },
@@ -2110,6 +2146,7 @@ function buildInteriorRoom(info, palette, playerColor) {
     wall.position.set(...pos);
     group.add(wall);
   });
+  addCutawayRoofFrame(group, 13, 13, 4.45, '#745b42');
   group.add(new THREE.AmbientLight('#fff0d7', 0.9));
   const roomLight = new THREE.PointLight('#ffe6c2', 1.7, 19, 1.8);
   roomLight.position.set(0, 3.75, 0);
@@ -2729,6 +2766,13 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
   controls.rotateSpeed = 0.55;
   controls.zoomSpeed = 0.75;
   controls.update();
+  const fitInteriorCameraFov = () => {
+    const viewDistance = Math.max(1, camera.position.distanceTo(controls.target));
+    const horizontalFov = 2 * Math.atan(16 / (2 * viewDistance));
+    const verticalFov = 2 * Math.atan(Math.tan(horizontalFov / 2) / Math.max(camera.aspect, 0.12));
+    camera.fov = THREE.MathUtils.clamp(THREE.MathUtils.radToDeg(verticalFov), 43, 88);
+    camera.updateProjectionMatrix();
+  };
 
   const clickable = [];
   scene.traverse((object) => {
@@ -2810,6 +2854,7 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
   let savedExteriorPosition = null;
   let savedCameraPosition = null;
   let savedCameraTarget = null;
+  let savedCameraFov = null;
   let previousPlayerPosition = player.position.clone();
   let lastEmit = 0;
   let activePointer = null;
@@ -2858,6 +2903,11 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     if (savedExteriorPosition) player.position.copy(savedExteriorPosition);
     if (savedCameraPosition) camera.position.copy(savedCameraPosition);
     if (savedCameraTarget) controls.target.copy(savedCameraTarget);
+    if (savedCameraFov !== null) {
+      camera.fov = savedCameraFov;
+      camera.updateProjectionMatrix();
+      savedCameraFov = null;
+    }
     previousPlayerPosition.copy(player.position);
     interiorColliders.length = 0;
     interiorActive = false;
@@ -2876,6 +2926,7 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     savedExteriorPosition = player.position.clone();
     savedCameraPosition = camera.position.clone();
     savedCameraTarget = controls.target.clone();
+    savedCameraFov = camera.fov;
     if (interiorGroup) {
       scene.remove(interiorGroup);
       disposeGroup(interiorGroup);
@@ -2914,11 +2965,12 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     movementWaypointIndex = 0;
     pendingInteraction = null;
     const aspect = (root.clientWidth || 1) / Math.max(root.clientHeight || 1, 1);
-    const interiorDistance = aspect < 0.78 ? 15.2 : aspect < 1.2 ? 13.2 : 11.8;
+    const interiorDistance = aspect < 0.5 ? 21.5 : aspect < 0.62 ? 18.5 : aspect < 0.78 ? 16.4 : aspect < 1.2 ? 14 : 12.3;
     camera.position.set(0, 1.1 + interiorDistance * 0.39, interiorDistance * 0.92);
     controls.target.set(0, 1.1, -0.25);
+    fitInteriorCameraFov();
     controls.minDistance = 4.0;
-    controls.maxDistance = 20.0;
+    controls.maxDistance = 24.5;
     controls.maxPolarAngle = Math.PI / 1.9;
     controls.update();
     if (executiveFocusRef) executiveFocusRef.current = (executiveId) => {
@@ -3016,7 +3068,11 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     const facing = new THREE.Vector3(0, 0, 1).applyQuaternion(rotation).normalize();
     const approachDistance = interaction.type === 'venue' && ['office', 'court', 'assembly', 'caucus'].includes(interaction.metadata?.venueType) ? 2.35 : 1.75;
     const approach = point.add(facing.multiplyScalar(approachDistance));
-    if (!setSafeWalkTarget(approach.x, approach.z, 2.5)) return;
+    if (!setSafeWalkTarget(approach.x, approach.z, interaction.type === 'party-office' ? 4.5 : 2.5)) {
+      // Never leave a party office unusable if its compact frontage blocks automatic pathfinding.
+      if (interaction.type === 'party-office') enterInterior(interaction);
+      return;
+    }
     pendingInteraction = interaction;
     if (player.position.distanceTo(moveTarget) < 1.25) enterInterior(interaction);
   };
@@ -3033,9 +3089,28 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
   if (focusRef) focusRef.current = focusVenue;
   if (exitInteriorRef) exitInteriorRef.current = exitInterior;
   if (partyFocusRef) {
+    // The directory button is an explicit ENTER action; place the avatar at the office frontage, then open inside.
     partyFocusRef.current = (partyId) => {
       const door = partyOfficeDoors.get(partyId);
-      if (door) beginDoorInteraction(door.userData.interaction, door.parent);
+      if (!door) return;
+      if (interiorActive) exitInterior();
+      const portal = door.parent || door;
+      portal.updateWorldMatrix?.(true, false);
+      const entrance = new THREE.Vector3();
+      portal.getWorldPosition(entrance);
+      const rotation = new THREE.Quaternion();
+      portal.getWorldQuaternion(rotation);
+      const outward = new THREE.Vector3(0, 0, 1).applyQuaternion(rotation).normalize();
+      entrance.add(outward.multiplyScalar(1.75));
+      const safeEntrance = findNearestFreePoint(entrance.x, entrance.z, 0.5, worldColliders, worldBounds, 4.5);
+      if (safeEntrance) {
+        const shift = new THREE.Vector3(safeEntrance.x - player.position.x, 0, safeEntrance.z - player.position.z);
+        player.position.set(safeEntrance.x, 0, safeEntrance.z);
+        camera.position.add(shift);
+        controls.target.add(shift);
+        previousPlayerPosition.copy(player.position);
+      }
+      enterInterior(door.userData.interaction);
     };
   }
 
@@ -3046,10 +3121,15 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     raycaster.setFromCamera(pointer, camera);
     const activeTargets = interiorActive ? activeInteriorClickables : clickable.filter((object) => !activeInteriorClickables.includes(object));
     const hits = raycaster.intersectObjects(activeTargets, true);
-    const interactionHit = hits.find((hit) => hit.object.userData?.interaction);
+    const interactionHit = hits.map((hit) => {
+      let node = hit.object;
+      while (node && node !== scene && !node.userData?.interaction) node = node.parent;
+      return node?.userData?.interaction ? { hit, node } : null;
+    }).find(Boolean);
     if (interactionHit) {
-      const portalGroup = interactionHit.object.parent || interactionHit.object;
-      beginDoorInteraction(interactionHit.object.userData.interaction, portalGroup);
+      const { hit, node } = interactionHit;
+      const portalGroup = node.userData.interactionPortal || (node === hit.object ? node.parent || node : node);
+      beginDoorInteraction(node.userData.interaction, portalGroup);
       return;
     }
     const venueHit = hits.find((hit) => hit.object.userData?.venueId);
@@ -3113,7 +3193,8 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
     const width = root.clientWidth || 1;
     const height = root.clientHeight || 1;
     camera.aspect = width / height;
-    camera.updateProjectionMatrix();
+    if (interiorActive) fitInteriorCameraFov();
+    else camera.updateProjectionMatrix();
     renderer.setSize(width, height);
   };
   const observer = new ResizeObserver(resize);
