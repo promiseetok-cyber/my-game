@@ -4377,6 +4377,7 @@ function buildWorld(root, state, locality, onVenueSelect, playerRef, remoteRef, 
       deboardDuration: 3.2,
     };
     scene.add(stage);
+    standFromSeat(false);
     if (interiorGroup) interiorGroup.visible = false;
     isMoving = false;
     movementWaypoints = [];
